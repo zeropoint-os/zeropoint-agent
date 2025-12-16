@@ -1,0 +1,28 @@
+{
+	"name": "zeropoint-agent",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"context": ".."
+	},
+	"overrideCommand": true,
+	"postAttachCommand": "go mod download",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.Go",
+				"augustocdias.tasks-shell-input"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
+			}
+		}
+	},
+	"remoteUser": "vscode",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
+			"passwordLessSudo": true,
+			"additionalGroups": ["docker"]
+		}
+	}
+}
