@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,32 +11,24 @@ import (
 	"time"
 
 	"zeropoint-agent/internal/api"
-	"zeropoint-agent/internal/docker"
-	"zeropoint-agent/internal/storage"
+
+	"github.com/moby/moby/client"
 )
 
 func main() {
-	// Basic setup
-	dbPath := "data/zeropoint.db"
+	// Setup structured logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
-	var store storage.Storage
-	boltStore, err := storage.NewBoltStore(dbPath)
-	if err != nil {
-		log.Fatalf("failed to create store: %v", err)
-	}
-	store = boltStore
-	if err := store.Open(); err != nil {
-		log.Fatalf("failed to open store: %v", err)
-	}
-	defer store.Close()
-
-	dockerClient, err := docker.NewClient()
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		log.Fatalf("failed to create docker client: %v", err)
 	}
 	defer dockerClient.Close()
 
-	router := api.NewRouter(store, dockerClient)
+	router := api.NewRouter(dockerClient, logger)
 
 	srv := &http.Server{
 		Addr:    ":8080",
@@ -44,7 +37,7 @@ func main() {
 
 	// Start server
 	go func() {
-		log.Printf("starting server on %s", srv.Addr)
+		logger.Info("starting server", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server error: %v", err)
 		}
@@ -55,11 +48,11 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("shutting down server...")
+	logger.Info("shutting down server")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("server shutdown failed: %v", err)
 	}
-	log.Println("server stopped")
+	logger.Info("server stopped")
 }
