@@ -30,8 +30,14 @@ func main() {
 
 	router := api.NewRouter(dockerClient, logger)
 
+	// Get port from environment variable, default to 2370
+	port := os.Getenv("ZEROPOINT_AGENT_PORT")
+	if port == "" {
+		port = "2370"
+	}
+
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + port,
 		Handler: router,
 	}
 

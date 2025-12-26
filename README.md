@@ -49,7 +49,7 @@ This project uses VS Code Dev Containers for a consistent development environmen
    - Press `F5` to build & start debugging
    - Or run manually: `go run ./cmd/zeropoint-agent`
 
-The API server will start on `http://localhost:8080`.
+The API server will start on `http://localhost:2370` (configurable via `ZEROPOINT_AGENT_PORT` environment variable).
 
 ### What's Included in the Dev Container
 
@@ -65,7 +65,7 @@ The dev container provides a complete development environment with:
 
 ```bash
 # Install Ollama
-curl -X POST http://localhost:8080/apps/install \
+curl -X POST http://localhost:2370/apps/install \
   -H "Content-Type: application/json" \
   -d '{
     "source": "github.com/zeropoint-os/ollama",
@@ -73,7 +73,7 @@ curl -X POST http://localhost:8080/apps/install \
   }'
 
 # Check status
-curl http://localhost:8080/apps | jq
+curl http://localhost:2370/apps | jq
 ```
 
 ## Architecture
@@ -1934,7 +1934,7 @@ App module must not create docker_network resources (network is provided via var
 ### Install Ollama
 
 ```bash
-curl -X POST http://localhost:8080/apps/install \
+curl -X POST http://localhost:2370/apps/install \
   -H "Content-Type: application/json" \
   -d '{
     "module_path": "/apps/ollama",
@@ -1945,7 +1945,7 @@ curl -X POST http://localhost:8080/apps/install \
 ### Install OpenWebUI
 
 ```bash
-curl -X POST http://localhost:8080/apps/install \
+curl -X POST http://localhost:2370/apps/install \
   -H "Content-Type: application/json" \
   -d '{
     "module_path": "/apps/openwebui",
@@ -1956,7 +1956,7 @@ curl -X POST http://localhost:8080/apps/install \
 ### Link OpenWebUI to Ollama
 
 ```bash
-curl -X POST http://localhost:8080/links \
+curl -X POST http://localhost:2370/links \
   -H "Content-Type: application/json" \
   -d '{
     "from_app": "openwebui",
@@ -1969,7 +1969,7 @@ curl -X POST http://localhost:8080/links \
 ### Expose OpenWebUI to the World
 
 ```bash
-curl -X POST http://localhost:8080/exposures \
+curl -X POST http://localhost:2370/exposures \
   -H "Content-Type: application/json" \
   -d '{
     "app_id": "openwebui",
@@ -1983,7 +1983,7 @@ curl -X POST http://localhost:8080/exposures \
 ### Unlink OpenWebUI from Ollama
 
 ```bash
-curl -X DELETE http://localhost:8080/links/openwebui-to-ollama
+curl -X DELETE http://localhost:2370/links/openwebui-to-ollama
 ```
 
 **Result:** OpenWebUI can no longer reach Ollama
@@ -1991,7 +1991,7 @@ curl -X DELETE http://localhost:8080/links/openwebui-to-ollama
 ### Remove External Access
 
 ```bash
-curl -X DELETE http://localhost:8080/exposures/openwebui
+curl -X DELETE http://localhost:2370/exposures/openwebui
 ```
 
 **Result:** `openwebui.zeropoint.local` no longer resolves
@@ -1999,8 +1999,8 @@ curl -X DELETE http://localhost:8080/exposures/openwebui
 ### Uninstall Apps
 
 ```bash
-curl -X DELETE http://localhost:8080/apps/openwebui
-curl -X DELETE http://localhost:8080/apps/ollama
+curl -X DELETE http://localhost:2370/apps/openwebui
+curl -X DELETE http://localhost:2370/apps/ollama
 ```
 
 **Result:** All resources cleaned up (containers, networks, images)
