@@ -3,6 +3,7 @@ package apps
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"zeropoint-agent/internal/terraform"
@@ -160,7 +161,7 @@ func parseMounts(raw map[string]interface{}, appID string, containerName string)
 		}
 
 		// Generate host path: /data/apps/{app_id}/{container}/{mount_name}
-		hostPath := fmt.Sprintf("%s/%s/%s/%s", DataDir, appID, containerName, mountName)
+		hostPath := filepath.Join(GetDataDir(), appID, containerName, mountName)
 
 		mounts[mountName] = Mount{
 			ContainerPath: containerPath,
