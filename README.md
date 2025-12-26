@@ -1,6 +1,8 @@
 # zeropoint-agent
 
-A lightweight application lifecycle orchestrator that treats containerized applications as declarative infrastructure.
+<img src="assets/zeropoint-dark.svg" width="400" alt="Zeropoint Logo">
+
+Zeropoint application lifecycle orchestrator that treats containerized applications as declarative infrastructure.
 
 ## What is zeropoint-agent?
 
@@ -11,7 +13,7 @@ zeropoint-agent is a REST API server that manages Docker-based applications usin
 - **Install, start, stop, and uninstall** containerized applications
 - **Link applications** for inter-container communication via DNS
 - **Expose applications** to the internet via Envoy reverse proxy with xDS control plane
-- **Zero host port conflicts** - apps use service discovery instead of port bindings
+- **Zero host port conflicts** - apps use port declarations and service discovery instead of port bindings
 - **Terraform-native** - apps are standard Terraform modules using the Docker provider
 - **Automatic service discovery** - ports and protocols extracted from app contracts
 
@@ -741,13 +743,13 @@ func DiscoverApps() ([]App, error) {
         if !entry.IsDir() {
             continue
         }
-      
+  
         appID := entry.Name()
         modulePath := filepath.Join("apps", appID)
-      
+  
         // Read Terraform outputs
         outputs := getTerraformOutputs(modulePath)
-      
+  
         // Query Docker for actual state
         containers := make(map[string]ContainerInfo)
         for role, container := range outputs {
@@ -758,7 +760,7 @@ func DiscoverApps() ([]App, error) {
                 State: state,
             }
         }
-      
+  
         apps = append(apps, App{
             ID:         appID,
             ModulePath: modulePath,
@@ -1420,10 +1422,10 @@ func validateResources(planJSON []byte, appID string) error {
         case "docker_container":
             // Check if this is the main container (resource name must be exactly "${app_id}_main")
             isMainContainer := rc.Name == expectedResourceName
-          
+      
             if isMainContainer {
                 foundMainContainer = true
-              
+          
                 // Check runtime naming for main container
                 if name, ok := rc.Change.After["name"].(string); ok {
                     if name != expectedContainerName {
@@ -1535,12 +1537,12 @@ func validateMainPorts(output interface{}) []string {
             errors = append(errors, fmt.Sprintf("service '%s' is not a valid configuration map", serviceName))
             continue
         }
-      
+  
         // Validate required fields
         if _, hasPort := svcMap["port"]; !hasPort {
             errors = append(errors, fmt.Sprintf("service '%s' missing required field: 'port'", serviceName))
         }
-      
+  
         protocol, hasProtocol := svcMap["protocol"].(string)
         if !hasProtocol {
             errors = append(errors, fmt.Sprintf("service '%s' missing required field: 'protocol'", serviceName))
@@ -1549,11 +1551,11 @@ func validateMainPorts(output interface{}) []string {
                 fmt.Sprintf("service '%s' has invalid protocol: '%s' (must be http, grpc, or tcp)", 
                     serviceName, protocol))
         }
-      
+  
         if _, hasDesc := svcMap["description"]; !hasDesc {
             errors = append(errors, fmt.Sprintf("service '%s' missing required field: 'description'", serviceName))
         }
-      
+  
         // Validate optional transport field
         if transport, hasTransport := svcMap["transport"].(string); hasTransport {
             if !validTransports[transport] {
@@ -1562,12 +1564,12 @@ func validateMainPorts(output interface{}) []string {
                         serviceName, transport))
             }
         }
-      
+  
         // Track default services
         if isDefault, ok := svcMap["default"].(bool); ok && isDefault {
             defaultCount++
         }
-      
+  
         // Validate service name is a valid DNS label
         if !isValidDNSLabel(serviceName) {
             errors = append(errors, 
