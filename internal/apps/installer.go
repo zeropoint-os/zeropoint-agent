@@ -151,7 +151,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	}
 
 	// Create app storage root directory
-	appStoragePath := filepath.Join(DataDir, req.AppID)
+	appStoragePath := filepath.Join(GetDataDir(), req.AppID)
 	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
 		logger.Error("failed to create app storage directory", "path", appStoragePath, "error", err)
 		return fmt.Errorf("failed to create app storage directory: %w", err)
