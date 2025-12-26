@@ -3,6 +3,8 @@ package apps
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/moby/moby/client"
 )
@@ -50,11 +52,24 @@ const (
 	StateUnknown = "unknown"
 )
 
-// Directory paths
-const (
-	AppsDir = "./apps"      // Default apps directory
-	DataDir = "./data/apps" // Default data directory for bind mounts
-)
+// GetStorageRoot returns the storage root directory from environment or default
+func GetStorageRoot() string {
+	root := os.Getenv("APP_STORAGE_ROOT")
+	if root == "" {
+		return "."
+	}
+	return root
+}
+
+// GetAppsDir returns the apps directory path
+func GetAppsDir() string {
+	return filepath.Join(GetStorageRoot(), "apps")
+}
+
+// GetDataDir returns the data directory path for app storage
+func GetDataDir() string {
+	return filepath.Join(GetStorageRoot(), "data", "apps")
+}
 
 // GetContainerStatus queries Docker to get the container's runtime state
 func (a *App) GetContainerStatus(ctx context.Context, docker *client.Client) error {

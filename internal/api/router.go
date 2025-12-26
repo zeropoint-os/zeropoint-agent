@@ -32,10 +32,7 @@ type AppsResponse struct {
 }
 
 func NewRouter(dockerClient *client.Client, logger *slog.Logger) http.Handler {
-	appsDir := os.Getenv("ZEROPOINT_APPS_DIR")
-	if appsDir == "" {
-		appsDir = "./apps"
-	}
+	appsDir := apps.GetAppsDir()
 
 	installer := apps.NewInstaller(dockerClient, appsDir, logger)
 	uninstaller := apps.NewUninstaller(appsDir, logger)

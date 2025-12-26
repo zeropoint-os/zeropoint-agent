@@ -61,7 +61,7 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	// Destroy with auto-approve
-	appStoragePath := filepath.Join(DataDir, req.AppID)
+	appStoragePath := filepath.Join(GetDataDir(), req.AppID)
 	absAppStoragePath, err := filepath.Abs(appStoragePath)
 	if err != nil {
 		// If we can't get absolute path, try with relative (destroy should still work)
