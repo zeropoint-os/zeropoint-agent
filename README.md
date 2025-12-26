@@ -901,6 +901,17 @@ variable "arch" {
   default     = "amd64"
   description = "Target architecture (amd64, arm64, etc.) - injected by zeropoint"
 }
+
+variable "gpu_vendor" {
+  type        = string
+  default     = ""
+  description = "GPU vendor (nvidia, amd, intel, or empty) - injected by zeropoint"
+}
+
+variable "app_storage" {
+  type        = string
+  description = "Absolute path to app's persistent storage directory - injected by zeropoint"
+}
 ```
 
 **Purpose**:
@@ -908,6 +919,38 @@ variable "arch" {
 - `app_id`: Unique identifier chosen by user (e.g., `ollama`, `ollama-test`, `alice-nextcloud`). Enables multi-instance deployments with meaningful names.
 - `network_name`: zeropoint creates and manages the network lifecycle externally, then injects it into the app module
 - `arch`: Target CPU architecture, auto-detected by zeropoint from host (user-overridable via API). Module authors can use this for `platform` selection in builds or ignore it for multi-arch images
+- `gpu_vendor`: GPU vendor detected by zeropoint (`nvidia`, `amd`, `intel`, or empty string). Apps can conditionally enable GPU access based on this value
+- `app_storage`: Absolute path to the app's isolated storage directory (e.g., `/path/to/data/apps/ollama`). Apps use this for persistent data like databases, models, configuration, etc.
+
+**App Storage Usage**:
+
+Apps organize their persistent data under `app_storage` however they want:
+
+```hcl
+# Example: Ollama stores models
+volumes {
+  host_path      = "${var.app_storage}/.ollama"
+  container_path = "/root/.ollama"
+}
+
+# Example: Database app with multiple volumes
+volumes {
+  host_path      = "${var.app_storage}/data"
+  container_path = "/var/lib/postgresql/data"
+}
+
+volumes {
+  host_path      = "${var.app_storage}/config"
+  container_path = "/etc/postgresql"
+}
+```
+
+**Storage guarantees**:
+- zeropoint creates `app_storage` directory before terraform apply
+- Path is always absolute (required by Docker bind mounts)
+- Directory is unique per app instance (isolated by `app_id`)
+- Storage persists across container restarts
+- Storage is deleted when app is uninstalled
 
 **Rationale**: zeropoint creates the network **before** applying the app module. This:
 
