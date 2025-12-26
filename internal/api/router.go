@@ -149,6 +149,13 @@ func (e *apiEnv) discoverApps(ctx context.Context) ([]apps.App, error) {
 			e.logger.Warn("failed to get container status", "app_id", appID, "error", err)
 		}
 
+		// Load containers and ports from Terraform outputs
+		if containers, err := apps.LoadContainers(modulePath); err != nil {
+			e.logger.Warn("failed to load containers", "app_id", appID, "error", err)
+		} else {
+			app.Containers = containers
+		}
+
 		result = append(result, app)
 	}
 

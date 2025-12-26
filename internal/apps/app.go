@@ -7,15 +7,30 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// Port represents a port exposed by a container
+type Port struct {
+	Port        int    `json:"port"`              // Port number
+	Protocol    string `json:"protocol"`          // Application protocol: http, grpc, tcp
+	Transport   string `json:"transport"`         // Transport protocol: tcp, udp
+	Description string `json:"description"`       // Human-readable description
+	IsDefault   bool   `json:"default,omitempty"` // Is this the default/primary port?
+}
+
+// Container represents a container and its exposed ports
+type Container struct {
+	Ports map[string]Port `json:"ports"` // Port configurations (from {container}_ports output)
+}
+
 // App represents an installed application managed by zeropoint-agent.
 // State is discovered from filesystem + Terraform outputs + Docker API.
 type App struct {
-	ID            string `json:"id"`                       // App identifier (directory name)
-	ModulePath    string `json:"module_path"`              // Path to Terraform module (e.g., "apps/ollama")
-	State         string `json:"state"`                    // Runtime state: "running" | "stopped" | "crashed" | "unknown"
-	ContainerID   string `json:"container_id,omitempty"`   // Docker container ID
-	ContainerName string `json:"container_name,omitempty"` // Docker container name
-	IPAddress     string `json:"ip_address,omitempty"`     // Container IP address
+	ID            string               `json:"id"`                       // App identifier (directory name)
+	ModulePath    string               `json:"module_path"`              // Path to Terraform module (e.g., "apps/ollama")
+	State         string               `json:"state"`                    // Runtime state: "running" | "stopped" | "crashed" | "unknown"
+	ContainerID   string               `json:"container_id,omitempty"`   // Docker container ID (for main container)
+	ContainerName string               `json:"container_name,omitempty"` // Docker container name (for main container)
+	IPAddress     string               `json:"ip_address,omitempty"`     // Container IP address (for main container)
+	Containers    map[string]Container `json:"containers,omitempty"`     // App containers with their ports (from {container}_ports outputs)
 }
 
 // App states

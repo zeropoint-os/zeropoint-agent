@@ -1,15 +1,6 @@
 data/*
 bin/
 # Terraform state files (in app directories)
-apps/**/terraform.tfstate
-apps/**/terraform.tfstate.backup
-apps/**/.terraform/
-apps/**/.terraform.lock.hcl
-apps/**/plan.tfplan
-
+apps/**
 # Ignore debug binaries
 __debug_bin*
-
-# Keep app metadata files
-!apps/**/.zeropoint.json
-

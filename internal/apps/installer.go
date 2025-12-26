@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -180,7 +181,49 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 		return fmt.Errorf("missing required output 'main' - app must expose main container")
 	}
 
-	logger.Info("installation complete")
+	// Validate main_ports output
+	// Validate all {container}_ports outputs
+	containerCount := 0
+	for outputName, outputValue := range outputs {
+		if !strings.HasSuffix(outputName, "_ports") {
+			continue
+		}
+
+		containerName := strings.TrimSuffix(outputName, "_ports")
+		containerCount++
+
+		// The Value field may be json.RawMessage from terraform-exec
+		var portsValue map[string]interface{}
+
+		// Try to unmarshal if it's JSON
+		if jsonData, ok := outputValue.Value.(json.RawMessage); ok {
+			if err := json.Unmarshal(jsonData, &portsValue); err != nil {
+				logger.Error("failed to unmarshal container ports", "container", containerName, "error", err)
+				return fmt.Errorf("failed to parse %s output: %w", outputName, err)
+			}
+		} else if m, ok := outputValue.Value.(map[string]interface{}); ok {
+			// Already a map
+			portsValue = m
+		} else {
+			logger.Error("container ports output has unexpected type", "container", containerName, "type", fmt.Sprintf("%T", outputValue.Value))
+			return fmt.Errorf("%s output must be a map of port configurations (got %T)", outputName, outputValue.Value)
+		}
+
+		// Validate ports structure
+		if portErrors := validator.ValidateContainerPorts(portsValue); len(portErrors) > 0 {
+			logger.Error("container ports validation failed", "container", containerName, "errors", portErrors)
+			return fmt.Errorf("%s validation failed: %v", outputName, portErrors)
+		}
+
+		logger.Info("validated container ports", "container", containerName, "ports", len(portsValue))
+	}
+
+	if containerCount == 0 {
+		logger.Error("no container port outputs found")
+		return fmt.Errorf("app must declare at least one {container}_ports output")
+	}
+
+	logger.Info("installation complete", "containers", containerCount)
 	progress(ProgressUpdate{Status: "complete", Message: "Installation complete"})
 	return nil
 }

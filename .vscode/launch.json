@@ -9,7 +9,8 @@
             "program": "${workspaceFolder}/cmd/zeropoint-agent",
             "cwd": "${workspaceFolder}",
             "env": {},
-            "buildFlags": ""
+            "buildFlags": "",
+            "preLaunchTask": "build"
         }
     ]
 }
