@@ -107,10 +107,7 @@ func (e *apiEnv) getApps(w http.ResponseWriter, r *http.Request) {
 
 // discoverApps scans the apps/ directory for installed app modules
 func (e *apiEnv) discoverApps(ctx context.Context) ([]apps.App, error) {
-	appsDir := os.Getenv("ZEROPOINT_APPS_DIR")
-	if appsDir == "" {
-		appsDir = "./apps"
-	}
+	appsDir := apps.GetAppsDir()
 	var result []apps.App
 
 	entries, err := os.ReadDir(appsDir)
