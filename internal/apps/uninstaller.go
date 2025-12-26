@@ -61,11 +61,19 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	// Destroy with auto-approve
+	appStoragePath := filepath.Join(DataDir, req.AppID)
+	absAppStoragePath, err := filepath.Abs(appStoragePath)
+	if err != nil {
+		// If we can't get absolute path, try with relative (destroy should still work)
+		absAppStoragePath = appStoragePath
+	}
+
 	variables := map[string]string{
 		"app_id":       req.AppID,
 		"network_name": fmt.Sprintf("zeropoint-app-%s", req.AppID),
 		"arch":         "amd64", // These don't matter for destroy
-		"gpu_vendor":   "",
+		"gpu_vendor":   "",      // These don't matter for destroy
+		"app_storage":  absAppStoragePath,
 	}
 
 	if err := executor.Destroy(variables); err != nil {
