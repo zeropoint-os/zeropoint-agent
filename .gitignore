@@ -1,1 +1,6 @@
 data/*
+bin/
+# Terraform state files (in app directories)
+apps/**
+# Ignore debug binaries
+__debug_bin*

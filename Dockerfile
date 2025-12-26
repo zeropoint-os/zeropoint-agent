@@ -43,3 +43,11 @@ RUN chmod -R a+rwx /go
 
 # Ensure Go binaries installed into /go/bin are available on PATH
 ENV PATH="/go/bin:${PATH}"
+
+# Install Terraform CLI
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list && \
+    apt-get update && \
+    apt-get install -y terraform && \
+    rm -rf /var/lib/apt/lists/* &&\
+    terraform init

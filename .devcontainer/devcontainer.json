@@ -10,7 +10,8 @@
 		"vscode": {
 			"extensions": [
 				"golang.Go",
-				"augustocdias.tasks-shell-input"
+				"augustocdias.tasks-shell-input",
+				"zaaack.markdown-editor"
 			],
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "bash"
