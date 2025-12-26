@@ -142,12 +142,31 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	}
 	logger.Info("detected system", "arch", arch, "gpu_vendor", gpuVendor)
 
+	// Prepare base variables
 	variables := map[string]string{
 		"app_id":       req.AppID,
 		"network_name": networkName,
 		"arch":         arch,
 		"gpu_vendor":   gpuVendor,
 	}
+
+	// Create app storage root directory
+	appStoragePath := filepath.Join(DataDir, req.AppID)
+	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
+		logger.Error("failed to create app storage directory", "path", appStoragePath, "error", err)
+		return fmt.Errorf("failed to create app storage directory: %w", err)
+	}
+
+	// Convert to absolute path for Docker volumes
+	absAppStoragePath, err := filepath.Abs(appStoragePath)
+	if err != nil {
+		logger.Error("failed to get absolute path", "path", appStoragePath, "error", err)
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	logger.Info("created app storage directory", "path", absAppStoragePath)
+
+	// Pass app storage root to terraform (must be absolute for Docker)
+	variables["app_storage"] = absAppStoragePath
 
 	// Apply terraform
 	logger.Info("applying terraform")
@@ -170,13 +189,13 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 
 	// Validate required outputs exist after apply
 	logger.Info("validating outputs")
-	outputs, err := executor.Output()
+	tfOutputs, err := executor.Output()
 	if err != nil {
 		logger.Error("failed to read outputs", "error", err)
 		return fmt.Errorf("failed to read outputs: %w", err)
 	}
 
-	if _, exists := outputs["main"]; !exists {
+	if _, exists := tfOutputs["main"]; !exists {
 		logger.Error("missing required output 'main'")
 		return fmt.Errorf("missing required output 'main' - app must expose main container")
 	}
@@ -184,7 +203,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	// Validate main_ports output
 	// Validate all {container}_ports outputs
 	containerCount := 0
-	for outputName, outputValue := range outputs {
+	for outputName, outputValue := range tfOutputs {
 		if !strings.HasSuffix(outputName, "_ports") {
 			continue
 		}

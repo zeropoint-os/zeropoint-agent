@@ -8,9 +8,9 @@ import (
 	"zeropoint-agent/internal/terraform"
 )
 
-// LoadContainers reads all {container}_ports outputs from a Terraform module
+// LoadContainers reads all {container}_ports and {container}_mounts outputs from a Terraform module
 // and returns a map of container configurations
-func LoadContainers(modulePath string) (map[string]Container, error) {
+func LoadContainers(modulePath string, appID string) (map[string]Container, error) {
 	executor, err := terraform.NewExecutor(modulePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create terraform executor: %w", err)
@@ -23,35 +23,62 @@ func LoadContainers(modulePath string) (map[string]Container, error) {
 
 	containers := make(map[string]Container)
 
-	// Find all outputs ending in _ports
-	for outputName, outputValue := range outputs {
-		if !strings.HasSuffix(outputName, "_ports") {
-			continue
+	// First pass: find all container names from _ports outputs
+	containerNames := make(map[string]bool)
+	for outputName := range outputs {
+		if strings.HasSuffix(outputName, "_ports") {
+			containerName := strings.TrimSuffix(outputName, "_ports")
+			containerNames[containerName] = true
 		}
+	}
 
-		// Extract container name (e.g., "main_ports" -> "main")
-		containerName := strings.TrimSuffix(outputName, "_ports")
+	// Second pass: load ports and mounts for each container
+	for containerName := range containerNames {
+		container := Container{}
 
-		// Handle json.RawMessage from terraform-exec
-		var portsValue map[string]interface{}
-		if jsonData, ok := outputValue.Value.(json.RawMessage); ok {
-			if err := json.Unmarshal(jsonData, &portsValue); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal %s: %w", outputName, err)
+		// Load ports
+		portsOutputName := containerName + "_ports"
+		if portsOutput, exists := outputs[portsOutputName]; exists {
+			var portsValue map[string]interface{}
+			if jsonData, ok := portsOutput.Value.(json.RawMessage); ok {
+				if err := json.Unmarshal(jsonData, &portsValue); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal %s: %w", portsOutputName, err)
+				}
+			} else if m, ok := portsOutput.Value.(map[string]interface{}); ok {
+				portsValue = m
+			} else {
+				return nil, fmt.Errorf("%s value has unexpected type: %T", portsOutputName, portsOutput.Value)
 			}
-		} else if m, ok := outputValue.Value.(map[string]interface{}); ok {
-			portsValue = m
-		} else {
-			return nil, fmt.Errorf("%s value has unexpected type: %T", outputName, outputValue.Value)
+
+			ports, err := parsePorts(portsValue)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse %s: %w", portsOutputName, err)
+			}
+			container.Ports = ports
 		}
 
-		ports, err := parsePorts(portsValue)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse %s: %w", outputName, err)
+		// Load mounts (optional)
+		mountsOutputName := containerName + "_mounts"
+		if mountsOutput, exists := outputs[mountsOutputName]; exists {
+			var mountsValue map[string]interface{}
+			if jsonData, ok := mountsOutput.Value.(json.RawMessage); ok {
+				if err := json.Unmarshal(jsonData, &mountsValue); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal %s: %w", mountsOutputName, err)
+				}
+			} else if m, ok := mountsOutput.Value.(map[string]interface{}); ok {
+				mountsValue = m
+			} else {
+				return nil, fmt.Errorf("%s value has unexpected type: %T", mountsOutputName, mountsOutput.Value)
+			}
+
+			mounts, err := parseMounts(mountsValue, appID, containerName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse %s: %w", mountsOutputName, err)
+			}
+			container.Mounts = mounts
 		}
 
-		containers[containerName] = Container{
-			Ports: ports,
-		}
+		containers[containerName] = container
 	}
 
 	return containers, nil
@@ -104,6 +131,46 @@ func parsePorts(raw map[string]interface{}) (map[string]Port, error) {
 	}
 
 	return ports, nil
+}
+
+// parseMounts converts raw Terraform output map to Mount structs with host paths
+func parseMounts(raw map[string]interface{}, appID string, containerName string) (map[string]Mount, error) {
+	mounts := make(map[string]Mount)
+
+	for mountName, mountConfigRaw := range raw {
+		mountConfig, ok := mountConfigRaw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("mount '%s' has invalid configuration", mountName)
+		}
+
+		containerPath, ok := mountConfig["container_path"].(string)
+		if !ok {
+			return nil, fmt.Errorf("mount '%s' missing or invalid 'container_path' field", mountName)
+		}
+
+		description, ok := mountConfig["description"].(string)
+		if !ok {
+			return nil, fmt.Errorf("mount '%s' missing or invalid 'description' field", mountName)
+		}
+
+		// Read-only is optional, defaults to false
+		readOnly := false
+		if ro, ok := mountConfig["read_only"].(bool); ok {
+			readOnly = ro
+		}
+
+		// Generate host path: /data/apps/{app_id}/{container}/{mount_name}
+		hostPath := fmt.Sprintf("%s/%s/%s/%s", DataDir, appID, containerName, mountName)
+
+		mounts[mountName] = Mount{
+			ContainerPath: containerPath,
+			HostPath:      hostPath,
+			Description:   description,
+			ReadOnly:      readOnly,
+		}
+	}
+
+	return mounts, nil
 }
 
 // GetDefaultPort returns the default port from a port map, or the first port if no default is set

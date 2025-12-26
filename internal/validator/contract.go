@@ -1,13 +1,11 @@
 package validator
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 	"unicode"
 
-	"zeropoint-agent/internal/terraform"
+	"zeropoint-agent/internal/hcl"
 )
 
 // ValidationError represents a contract violation
@@ -22,163 +20,64 @@ func (e *ValidationError) Error() string {
 
 // ValidateAppModule validates that a Terraform module conforms to the zeropoint app contract
 func ValidateAppModule(modulePath, appID string) error {
-	// Step 1: Initialize Terraform
-	executor, err := terraform.NewExecutor(modulePath)
+	// Parse HCL to extract outputs
+	outputs, err := hcl.ParseModuleOutputs(modulePath)
 	if err != nil {
-		return fmt.Errorf("failed to create terraform executor: %w", err)
+		return fmt.Errorf("failed to parse module outputs: %w", err)
 	}
 
-	if err := executor.Init(); err != nil {
-		return fmt.Errorf("terraform init failed: %w", err)
+	// Validate required outputs exist
+	var errors []string
+
+	// Check for main container output
+	_, hasMain := outputs["main"]
+	if !hasMain {
+		errors = append(errors, "missing required output: 'main' (must reference docker_container resource)")
 	}
+	// Note: output value may be nil if it references a resource (e.g., docker_container.main)
+	// This is expected and OK - we just need the output to exist
 
-	// Step 2: Create plan with dummy variables (validates variables exist)
-	planFile := "plan.tfplan"                            // Relative to module directory
-	defer os.Remove(filepath.Join(modulePath, planFile)) // Clean up with full path
-
-	variables := map[string]string{
-		"app_id":       appID,
-		"network_name": fmt.Sprintf("zeropoint-app-%s", appID),
-		"arch":         "amd64",
-		"gpu_vendor":   "",
-	}
-
-	if err := executor.Plan(planFile, variables); err != nil {
-		return fmt.Errorf("terraform plan failed (check required variables): %w", err)
-	}
-
-	// Step 3: Show plan as JSON and validate resources
-	planJSON, err := executor.Show(planFile)
-	if err != nil {
-		return fmt.Errorf("terraform show failed: %w", err)
-	}
-
-	if err := validateResources(planJSON, appID); err != nil {
-		return err
-	}
-
-	// Step 4: Validate outputs (after apply, we'd read actual values)
-	// For now, validate they exist in the module definition
-	if err := validateOutputs(modulePath); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// validateResources checks the plan JSON for contract compliance
-func validateResources(planJSON []byte, appID string) error {
-	var plan struct {
-		ResourceChanges []struct {
-			Type   string `json:"type"`
-			Name   string `json:"name"`
-			Change struct {
-				After map[string]interface{} `json:"after"`
-			} `json:"change"`
-		} `json:"resource_changes"`
-	}
-
-	if err := json.Unmarshal(planJSON, &plan); err != nil {
-		return fmt.Errorf("failed to parse plan JSON: %w", err)
-	}
-
-	foundMain := false
-
-	for _, rc := range plan.ResourceChanges {
-		// Check 1: Reject docker_network resources (zeropoint manages networks)
-		if rc.Type == "docker_network" {
-			return &ValidationError{
-				Field:   "resources",
-				Message: "app modules must not create docker_network resources (network is provided via var.network_name)",
+	// Check for main_ports output
+	mainPortsOutput, hasMainPorts := outputs["main_ports"]
+	if !hasMainPorts {
+		errors = append(errors, "missing required output: 'main_ports' (must be a map of port definitions for main container)")
+	} else {
+		// Validate ports structure
+		portsMap, ok := mainPortsOutput.Value.(map[string]interface{})
+		if !ok {
+			errors = append(errors, "output 'main_ports' must be a map of port configurations")
+		} else {
+			if portErrors := ValidateContainerPorts(portsMap); len(portErrors) > 0 {
+				for _, err := range portErrors {
+					errors = append(errors, fmt.Sprintf("main_ports: %s", err))
+				}
 			}
 		}
+	}
 
-		// Check 2: Validate main container
-		if rc.Type == "docker_container" && rc.Name == appID+"_main" {
-			foundMain = true
-
-			// Validate runtime container name matches ${app_id}-main
-			if name, ok := rc.Change.After["name"].(string); ok {
-				expected := appID + "-main"
-				if name != expected {
-					return &ValidationError{
-						Field:   "docker_container." + rc.Name,
-						Message: fmt.Sprintf("container name must be '%s', got '%s'", expected, name),
+	// Validate additional container outputs (pattern: {container}_ports)
+	for outputName := range outputs {
+		if strings.HasSuffix(outputName, "_ports") && outputName != "main_ports" {
+			// Validate this container's ports
+			portsOutput := outputs[outputName]
+			portsMap, ok := portsOutput.Value.(map[string]interface{})
+			if !ok {
+				errors = append(errors, fmt.Sprintf("output '%s' must be a map of port configurations", outputName))
+			} else {
+				if portErrors := ValidateContainerPorts(portsMap); len(portErrors) > 0 {
+					for _, err := range portErrors {
+						errors = append(errors, fmt.Sprintf("%s: %s", outputName, err))
 					}
 				}
-			} else {
-				return &ValidationError{
-					Field:   "docker_container." + rc.Name,
-					Message: "container name not found in plan",
-				}
-			}
-
-			// Validate no host port bindings
-			if ports, ok := rc.Change.After["ports"].([]interface{}); ok && len(ports) > 0 {
-				return &ValidationError{
-					Field:   "docker_container." + rc.Name,
-					Message: "host port bindings not allowed (use service discovery instead)",
-				}
 			}
 		}
 	}
 
-	// Check 3: Ensure main container exists
-	if !foundMain {
-		return &ValidationError{
-			Field:   "resources",
-			Message: fmt.Sprintf("missing required resource: docker_container.%s_main", appID),
-		}
+	if len(errors) > 0 {
+		return fmt.Errorf("module validation failed:\n  - %s", strings.Join(errors, "\n  - "))
 	}
 
 	return nil
-}
-
-// validateOutputs validates that required outputs exist and conform to contract
-func validateOutputs(modulePath string) error {
-	// Read the module files to check for output declarations
-	// This is a basic check - full validation happens after terraform apply
-	mainTf := filepath.Join(modulePath, "main.tf")
-	data, err := os.ReadFile(mainTf)
-	if err != nil {
-		return fmt.Errorf("failed to read main.tf: %w", err)
-	}
-
-	content := string(data)
-
-	// Check for required outputs (basic string search)
-	if !containsOutput(content, "main") {
-		return &ValidationError{
-			Field:   "outputs",
-			Message: "missing required output: 'main' (must reference docker_container resource)",
-		}
-	}
-
-	if !containsOutput(content, "main_ports") {
-		return &ValidationError{
-			Field:   "outputs",
-			Message: "missing required output: 'main_ports' (must be a map of port definitions for main container)",
-		}
-	}
-
-	return nil
-}
-
-// containsOutput checks if an output declaration exists in the terraform content
-func containsOutput(content, outputName string) bool {
-	// Simple check for output "name" { pattern
-	return len(content) > 0 &&
-		(jsonContains(content, fmt.Sprintf(`output "%s"`, outputName)) ||
-			jsonContains(content, fmt.Sprintf("output \"%s\"", outputName)))
-}
-
-func jsonContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // ValidateContainerPorts validates the structure of a {container}_ports output
@@ -257,6 +156,67 @@ func isValidDNSLabel(s string) bool {
 	}
 	for _, ch := range s {
 		if !unicode.IsLetter(ch) && !unicode.IsDigit(ch) && ch != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateContainerMounts validates the structure of a {container}_mounts output
+func ValidateContainerMounts(mounts map[string]interface{}) []string {
+	var errors []string
+
+	if len(mounts) == 0 {
+		return []string{"container mounts is empty (at least one mount must be defined if output exists)"}
+	}
+
+	for mountName, mountConfig := range mounts {
+		mountMap, ok := mountConfig.(map[string]interface{})
+		if !ok {
+			errors = append(errors, fmt.Sprintf("mount '%s' is not a valid configuration map", mountName))
+			continue
+		}
+
+		// Validate required fields
+		containerPath, hasContainerPath := mountMap["container_path"].(string)
+		if !hasContainerPath {
+			errors = append(errors, fmt.Sprintf("mount '%s' missing required field: 'container_path'", mountName))
+		} else if containerPath == "" {
+			errors = append(errors, fmt.Sprintf("mount '%s' has empty 'container_path'", mountName))
+		} else if !strings.HasPrefix(containerPath, "/") {
+			errors = append(errors, fmt.Sprintf("mount '%s' container_path must be absolute (start with /): '%s'", mountName, containerPath))
+		}
+
+		if _, hasDesc := mountMap["description"]; !hasDesc {
+			errors = append(errors, fmt.Sprintf("mount '%s' missing required field: 'description'", mountName))
+		}
+
+		// Validate optional read_only field
+		if readOnly, hasReadOnly := mountMap["read_only"]; hasReadOnly {
+			if _, ok := readOnly.(bool); !ok {
+				errors = append(errors, fmt.Sprintf("mount '%s' has invalid 'read_only' (must be boolean)", mountName))
+			}
+		}
+
+		// Validate mount name is a valid identifier (alphanumeric + underscores/hyphens)
+		if !isValidMountName(mountName) {
+			errors = append(errors, fmt.Sprintf("mount name '%s' is not valid (use alphanumeric, hyphens, underscores)", mountName))
+		}
+	}
+
+	return errors
+}
+
+// isValidMountName checks if a string is a valid mount name
+func isValidMountName(s string) bool {
+	if len(s) == 0 || len(s) > 63 {
+		return false
+	}
+	for i, ch := range s {
+		if i == 0 && !unicode.IsLetter(ch) {
+			return false // Must start with letter
+		}
+		if !unicode.IsLetter(ch) && !unicode.IsDigit(ch) && ch != '-' && ch != '_' {
 			return false
 		}
 	}

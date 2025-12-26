@@ -16,9 +16,18 @@ type Port struct {
 	IsDefault   bool   `json:"default,omitempty"` // Is this the default/primary port?
 }
 
-// Container represents a container and its exposed ports
+// Mount represents a bind-mount for persistent storage
+type Mount struct {
+	ContainerPath string `json:"container_path"` // Path inside the container
+	HostPath      string `json:"host_path"`      // Path on the host (managed by zeropoint)
+	Description   string `json:"description"`    // Human-readable description
+	ReadOnly      bool   `json:"read_only"`      // Mount as read-only
+}
+
+// Container represents a container and its exposed ports and mounts
 type Container struct {
-	Ports map[string]Port `json:"ports"` // Port configurations (from {container}_ports output)
+	Ports  map[string]Port  `json:"ports,omitempty"`  // Port configurations (from {container}_ports output)
+	Mounts map[string]Mount `json:"mounts,omitempty"` // Mount configurations (from {container}_mounts output)
 }
 
 // App represents an installed application managed by zeropoint-agent.
@@ -39,6 +48,12 @@ const (
 	StateStopped = "stopped"
 	StateCrashed = "crashed"
 	StateUnknown = "unknown"
+)
+
+// Directory paths
+const (
+	AppsDir = "./apps"      // Default apps directory
+	DataDir = "./data/apps" // Default data directory for bind mounts
 )
 
 // GetContainerStatus queries Docker to get the container's runtime state
