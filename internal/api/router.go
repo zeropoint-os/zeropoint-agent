@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 
 	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/xds"
 
+	"github.com/gorilla/mux"
 	"github.com/moby/moby/client"
 )
 
@@ -17,6 +19,7 @@ type apiEnv struct {
 	docker      *client.Client
 	installer   *apps.Installer
 	uninstaller *apps.Uninstaller
+	exposures   *ExposureHandlers
 	logger      *slog.Logger
 }
 
@@ -31,25 +34,45 @@ type AppsResponse struct {
 	Apps []apps.App `json:"apps"`
 }
 
-func NewRouter(dockerClient *client.Client, logger *slog.Logger) http.Handler {
+func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, logger *slog.Logger) (http.Handler, error) {
 	appsDir := apps.GetAppsDir()
 
 	installer := apps.NewInstaller(dockerClient, appsDir, logger)
 	uninstaller := apps.NewUninstaller(appsDir, logger)
 
+	// Initialize exposure store
+	exposureStore, err := NewExposureStore(dockerClient, xdsServer, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	exposureHandlers := NewExposureHandlers(exposureStore, logger)
+
 	env := &apiEnv{
 		docker:      dockerClient,
 		installer:   installer,
 		uninstaller: uninstaller,
+		exposures:   exposureHandlers,
 		logger:      logger,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", env.healthHandler)
-	mux.HandleFunc("/apps", env.appsHandler)
-	mux.HandleFunc("/apps/install", env.installAppHandler)
-	mux.HandleFunc("/apps/uninstall", env.uninstallAppHandler)
-	return mux
+	r := mux.NewRouter()
+
+	// Health endpoint
+	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
+
+	// Apps endpoints
+	r.HandleFunc("/apps", env.appsHandler).Methods(http.MethodGet)
+	r.HandleFunc("/apps/install", env.installAppHandler).Methods(http.MethodPost)
+	r.HandleFunc("/apps/{name}/uninstall", env.uninstallAppHandler).Methods(http.MethodPost)
+
+	// Exposure endpoints
+	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
+	r.HandleFunc("/exposures", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/exposures/{id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/exposures/{id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+
+	return r, nil
 }
 
 // HealthHandler handles GET /health requests
