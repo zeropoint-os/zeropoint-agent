@@ -47,7 +47,7 @@ func run(cmd *cobra.Command, args []string) {
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
-	
+
 	logger.Info("zeropoint-agent starting")
 
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -67,7 +67,7 @@ func run(cmd *cobra.Command, args []string) {
 	xdsServer := xds.NewServer(logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	logger.Info("starting xDS server on port 18000")
 	if err := xdsServer.Start(ctx, 18000); err != nil {
 		log.Fatalf("failed to start xDS server: %v", err)
@@ -82,7 +82,7 @@ func run(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("failed to build initial snapshot: %v", err)
 	}
-	
+
 	logger.Info("setting initial snapshot", "version", snapshot.GetVersion("listeners"))
 	if err := xdsServer.UpdateSnapshot(context.Background(), snapshot); err != nil {
 		log.Fatalf("failed to set initial snapshot: %v", err)
