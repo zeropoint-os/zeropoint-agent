@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"zeropoint-agent/internal/api"
+	"zeropoint-agent/internal/envoy"
 
 	"github.com/moby/moby/client"
 	"github.com/spf13/cobra"
@@ -51,6 +52,12 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatalf("failed to create docker client: %v", err)
 	}
 	defer dockerClient.Close()
+
+	// Start Envoy proxy
+	envoyMgr := envoy.NewManager(dockerClient, logger)
+	if err := envoyMgr.EnsureRunning(context.Background()); err != nil {
+		log.Fatalf("failed to start envoy: %v", err)
+	}
 
 	router := api.NewRouter(dockerClient, logger)
 
