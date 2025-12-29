@@ -41,7 +41,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build -v \
-            -ldflags="-s -w -extldflags '-static'" \
+            -ldflags="-s -w -extldflags '-static' -X main.version=${{ github.event.release.tag_name }}" \
             -o zeropoint-agent \
             ./cmd/zeropoint-agent
       

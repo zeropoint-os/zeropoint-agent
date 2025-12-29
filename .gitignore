@@ -4,3 +4,5 @@ bin/
 apps/**
 # Ignore debug binaries
 __debug_bin*
+
+zeropoint-agent

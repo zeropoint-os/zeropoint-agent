@@ -13,9 +13,33 @@ import (
 	"zeropoint-agent/internal/api"
 
 	"github.com/moby/moby/client"
+	"github.com/spf13/cobra"
+)
+
+var (
+	// Version is set at build time via ldflags
+	version = "0.0.0-dev"
 )
 
 func main() {
+	rootCmd := &cobra.Command{
+		Use:     "zeropoint-agent",
+		Short:   "ZeroPoint Agent - Application management service",
+		Version: version,
+		Run:     run,
+		// Disable automatic version flag to avoid conflicts
+		SilenceUsage: true,
+	}
+	
+	// Customize version output to only print version string
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run(cmd *cobra.Command, args []string) {
 	// Setup structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

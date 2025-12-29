@@ -23,7 +23,9 @@ jobs:
         run: go mod download
       
       - name: Build
-        run: go build -v ./...
+        run: |
+          VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0')
+          go build -v -ldflags="-X main.version=$VERSION" ./...
       
       - name: Run tests
         run: go test -v ./...
