@@ -12,6 +12,7 @@ import (
 
 	"zeropoint-agent/internal/api"
 	"zeropoint-agent/internal/envoy"
+	"zeropoint-agent/internal/xds"
 
 	"github.com/moby/moby/client"
 	"github.com/spf13/cobra"
@@ -46,6 +47,8 @@ func run(cmd *cobra.Command, args []string) {
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+	
+	logger.Info("zeropoint-agent starting")
 
 	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -57,6 +60,32 @@ func run(cmd *cobra.Command, args []string) {
 	envoyMgr := envoy.NewManager(dockerClient, logger)
 	if err := envoyMgr.EnsureRunning(context.Background()); err != nil {
 		log.Fatalf("failed to start envoy: %v", err)
+	}
+
+	// Start xDS control plane
+	logger.Info("initializing xDS server")
+	xdsServer := xds.NewServer(logger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	logger.Info("starting xDS server on port 18000")
+	if err := xdsServer.Start(ctx, 18000); err != nil {
+		log.Fatalf("failed to start xDS server: %v", err)
+	}
+	logger.Info("xDS server started successfully")
+
+	// Give xDS server time to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Create initial empty snapshot
+	snapshot, err := xds.BuildSnapshot(xdsServer.NextVersion())
+	if err != nil {
+		log.Fatalf("failed to build initial snapshot: %v", err)
+	}
+	
+	logger.Info("setting initial snapshot", "version", snapshot.GetVersion("listeners"))
+	if err := xdsServer.UpdateSnapshot(context.Background(), snapshot); err != nil {
+		log.Fatalf("failed to set initial snapshot: %v", err)
 	}
 
 	router := api.NewRouter(dockerClient, logger)
@@ -86,9 +115,9 @@ func run(cmd *cobra.Command, args []string) {
 	<-stop
 
 	logger.Info("shutting down server")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("server shutdown failed: %v", err)
 	}
 	logger.Info("server stopped")
