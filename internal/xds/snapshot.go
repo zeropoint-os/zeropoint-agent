@@ -10,6 +10,7 @@ import (
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	tcpproxy "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
@@ -188,4 +189,168 @@ func mustMarshalAny(msg proto.Message) *anypb.Any {
 		panic(fmt.Sprintf("anypb.New returned empty TypeUrl for %T", msg))
 	}
 	return a
+}
+
+// Exposure represents a service exposure (minimal interface to avoid import cycle)
+type Exposure struct {
+	ID            string
+	AppName       string
+	Protocol      string
+	Hostname      string
+	ContainerPort uint32
+	HostPort      uint32
+}
+
+// BuildSnapshotFromExposures creates a snapshot from a list of exposures
+func BuildSnapshotFromExposures(version string, exposures []*Exposure) (*cache.Snapshot, error) {
+	var listeners []types.Resource
+	var routes []types.Resource
+	var clusters []types.Resource
+
+	// Separate HTTP and TCP exposures
+	var httpExposures []*Exposure
+	var tcpExposures []*Exposure
+
+	for _, exp := range exposures {
+		if exp.Protocol == "http" {
+			httpExposures = append(httpExposures, exp)
+		} else if exp.Protocol == "tcp" {
+			tcpExposures = append(tcpExposures, exp)
+		}
+	}
+
+	// Build HTTP listener and routes if we have HTTP exposures
+	if len(httpExposures) > 0 {
+		httpListener, err := makeHTTPListener()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HTTP listener: %w", err)
+		}
+		listeners = append(listeners, httpListener)
+
+		// Build route config with all HTTP exposures
+		routeConfig := makeRouteConfigFromExposures(httpExposures)
+		routes = append(routes, routeConfig)
+
+		// Build clusters for HTTP exposures
+		for _, exp := range httpExposures {
+			clusterName := fmt.Sprintf("cluster_%s", exp.ID)
+			cluster := makeCluster(clusterName, exp.AppName, exp.ContainerPort)
+			clusters = append(clusters, cluster)
+		}
+	} else {
+		// No HTTP exposures, use empty route config
+		httpListener, err := makeHTTPListener()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HTTP listener: %w", err)
+		}
+		listeners = append(listeners, httpListener)
+		routes = append(routes, makeEmptyRouteConfig())
+	}
+
+	// Build TCP listeners for TCP exposures
+	for _, exp := range tcpExposures {
+		tcpListener, err := makeTCPListener(exp.ID, exp.HostPort, exp.AppName, exp.ContainerPort)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TCP listener for %s: %w", exp.ID, err)
+		}
+		listeners = append(listeners, tcpListener)
+
+		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
+		cluster := makeCluster(clusterName, exp.AppName, exp.ContainerPort)
+		clusters = append(clusters, cluster)
+	}
+
+	// Build snapshot
+	snapshot, err := cache.NewSnapshot(
+		version,
+		map[resource.Type][]types.Resource{
+			resource.ClusterType:  clusters,
+			resource.RouteType:    routes,
+			resource.ListenerType: listeners,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create snapshot: %w", err)
+	}
+
+	return snapshot, nil
+}
+
+// makeRouteConfigFromExposures creates a route configuration from HTTP exposures
+func makeRouteConfigFromExposures(exposures []*Exposure) *route.RouteConfiguration {
+	virtualHosts := make([]*route.VirtualHost, 0, len(exposures))
+
+	for _, exp := range exposures {
+		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
+		virtualHost := &route.VirtualHost{
+			Name:    exp.Hostname,
+			Domains: []string{exp.Hostname},
+			Routes: []*route.Route{
+				{
+					Match: &route.RouteMatch{
+						PathSpecifier: &route.RouteMatch_Prefix{
+							Prefix: "/",
+						},
+					},
+					Action: &route.Route_Route{
+						Route: &route.RouteAction{
+							ClusterSpecifier: &route.RouteAction_Cluster{
+								Cluster: clusterName,
+							},
+						},
+					},
+				},
+			},
+		}
+		virtualHosts = append(virtualHosts, virtualHost)
+	}
+
+	return &route.RouteConfiguration{
+		Name:         "http_routes",
+		VirtualHosts: virtualHosts,
+	}
+}
+
+// makeTCPListener creates a TCP listener for a specific port
+func makeTCPListener(id string, hostPort uint32, targetHost string, targetPort uint32) (*listener.Listener, error) {
+	clusterName := fmt.Sprintf("cluster_%s", id)
+
+	tcpProxy := &tcpproxy.TcpProxy{
+		StatPrefix: fmt.Sprintf("tcp_%s", id),
+		ClusterSpecifier: &tcpproxy.TcpProxy_Cluster{
+			Cluster: clusterName,
+		},
+	}
+
+	pbst, err := anypb.New(tcpProxy)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listener.Listener{
+		Name: fmt.Sprintf("tcp_listener_%s", id),
+		Address: &core.Address{
+			Address: &core.Address_SocketAddress{
+				SocketAddress: &core.SocketAddress{
+					Protocol: core.SocketAddress_TCP,
+					Address:  "0.0.0.0",
+					PortSpecifier: &core.SocketAddress_PortValue{
+						PortValue: hostPort,
+					},
+				},
+			},
+		},
+		FilterChains: []*listener.FilterChain{
+			{
+				Filters: []*listener.Filter{
+					{
+						Name: wellknown.TCPProxy,
+						ConfigType: &listener.Filter_TypedConfig{
+							TypedConfig: pbst,
+						},
+					},
+				},
+			},
+		},
+	}, nil
 }

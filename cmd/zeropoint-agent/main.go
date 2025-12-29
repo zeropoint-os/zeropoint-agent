@@ -88,7 +88,10 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatalf("failed to set initial snapshot: %v", err)
 	}
 
-	router := api.NewRouter(dockerClient, logger)
+	router, err := api.NewRouter(dockerClient, xdsServer, logger)
+	if err != nil {
+		log.Fatalf("failed to create router: %v", err)
+	}
 
 	// Get port from environment variable, default to 2370
 	port := os.Getenv("ZEROPOINT_AGENT_PORT")

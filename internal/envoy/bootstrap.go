@@ -34,7 +34,7 @@ static_resources:
               - endpoint:
                   address:
                     socket_address:
-                      address: 127.0.0.1
+                      address: %s
                       port_value: %d
 
 admin:
@@ -46,7 +46,7 @@ admin:
 
 // GetBootstrapPath returns the path to the Envoy bootstrap configuration file.
 // Creates the file if it doesn't exist.
-func GetBootstrapPath(xdsPort int) (string, error) {
+func GetBootstrapPath(xdsHost string, xdsPort int) (string, error) {
 	envoyDir := filepath.Join(apps.GetStorageRoot(), "envoy")
 
 	// Convert to absolute path for Docker bind mount
@@ -61,8 +61,8 @@ func GetBootstrapPath(xdsPort int) (string, error) {
 
 	bootstrapPath := filepath.Join(absEnvoyDir, "bootstrap.yaml")
 
-	// Generate bootstrap config with xDS port
-	config := fmt.Sprintf(bootstrapTemplate, xdsPort)
+	// Generate bootstrap config with xDS host and port
+	config := fmt.Sprintf(bootstrapTemplate, xdsHost, xdsPort)
 
 	// Write bootstrap config
 	if err := os.WriteFile(bootstrapPath, []byte(config), 0644); err != nil {

@@ -1,5 +1,6 @@
 data/*
 bin/
+envoy/*
 # Terraform state files (in app directories)
 apps/**
 # Ignore debug binaries

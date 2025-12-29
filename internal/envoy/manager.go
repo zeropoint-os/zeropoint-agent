@@ -143,8 +143,16 @@ func (m *Manager) createAndStart(ctx context.Context) error {
 		return err
 	}
 
-	// Generate bootstrap config
-	bootstrapPath, err := GetBootstrapPath(m.xdsPort)
+	// Detect the gateway IP for the zeropoint-network
+	xdsHost, err := m.getNetworkGateway(ctx, "zeropoint-network")
+	if err != nil {
+		return fmt.Errorf("failed to get network gateway: %w", err)
+	}
+
+	m.logger.Info("detected xDS host", "host", xdsHost)
+
+	// Generate bootstrap config with detected gateway
+	bootstrapPath, err := GetBootstrapPath(xdsHost, m.xdsPort)
 	if err != nil {
 		return fmt.Errorf("failed to get bootstrap path: %w", err)
 	}
@@ -164,7 +172,17 @@ func (m *Manager) createAndStart(ctx context.Context) error {
 			},
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode: "host", // Use host networking for simplicity
+			PortBindings: network.PortMap{
+				network.MustParsePort(fmt.Sprintf("%d/tcp", m.httpPort)): []network.PortBinding{
+					{HostPort: fmt.Sprintf("%d", m.httpPort)},
+				},
+				network.MustParsePort(fmt.Sprintf("%d/tcp", m.httpsPort)): []network.PortBinding{
+					{HostPort: fmt.Sprintf("%d", m.httpsPort)},
+				},
+				network.MustParsePort("9901/tcp"): []network.PortBinding{
+					{HostPort: "9901"},
+				},
+			},
 			Binds: []string{
 				fmt.Sprintf("%s:/etc/envoy/bootstrap.yaml:ro", bootstrapPath),
 			},
@@ -178,6 +196,12 @@ func (m *Manager) createAndStart(ctx context.Context) error {
 	}
 
 	m.logger.Info("envoy container created", "id", resp.ID[:12])
+
+	// Connect to zeropoint-network
+	if err := m.ensureZeropointNetwork(ctx, resp.ID); err != nil {
+		// Don't fail if network connection fails, log warning
+		m.logger.Warn("failed to connect envoy to zeropoint-network", "error", err)
+	}
 
 	// Start container
 	_, err = m.docker.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
@@ -237,4 +261,113 @@ func getEnvString(key, defaultValue string) string {
 		return val
 	}
 	return defaultValue
+}
+
+// ensureZeropointNetwork connects Envoy to the zeropoint-network
+func (m *Manager) ensureZeropointNetwork(ctx context.Context, containerID string) error {
+	networkName := "zeropoint-network"
+
+	// Create network if it doesn't exist
+	networkList, err := m.docker.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	networkExists := false
+	var networkID string
+	for _, network := range networkList.Items {
+		if network.Name == networkName {
+			networkExists = true
+			networkID = network.ID
+			break
+		}
+	}
+
+	if !networkExists {
+		resp, err := m.docker.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
+			Driver: "bridge",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create network: %w", err)
+		}
+		networkID = resp.ID
+		m.logger.Info("created zeropoint-network", "id", networkID)
+	}
+
+	// Connect container to network
+	_, err = m.docker.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: containerID,
+	})
+	if err != nil && !isAlreadyConnectedError(err) {
+		return fmt.Errorf("failed to connect to network: %w", err)
+	}
+
+	m.logger.Info("connected envoy to zeropoint-network")
+	return nil
+}
+
+func isAlreadyConnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return len(errStr) > 0 && (contains(errStr, "already connected") ||
+		contains(errStr, "already exists in network") ||
+		contains(errStr, "already attached"))
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// getNetworkGateway inspects a Docker network and returns its gateway IP
+func (m *Manager) getNetworkGateway(ctx context.Context, networkName string) (string, error) {
+	// Create network if it doesn't exist
+	networkList, err := m.docker.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	var networkID string
+	for _, network := range networkList.Items {
+		if network.Name == networkName {
+			networkID = network.ID
+			break
+		}
+	}
+
+	if networkID == "" {
+		// Network doesn't exist, create it
+		resp, err := m.docker.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
+			Driver: "bridge",
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to create network: %w", err)
+		}
+		networkID = resp.ID
+		m.logger.Info("created network", "name", networkName, "id", networkID)
+	}
+
+	// Inspect the network to get its gateway
+	networkInfo, err := m.docker.NetworkInspect(ctx, networkID, client.NetworkInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect network: %w", err)
+	}
+
+	// Get the gateway from IPAM config
+	if len(networkInfo.Network.IPAM.Config) == 0 {
+		return "", fmt.Errorf("network has no IPAM configuration")
+	}
+
+	gateway := networkInfo.Network.IPAM.Config[0].Gateway
+	if !gateway.IsValid() {
+		return "", fmt.Errorf("network has no gateway configured")
+	}
+
+	return gateway.String(), nil
 }
