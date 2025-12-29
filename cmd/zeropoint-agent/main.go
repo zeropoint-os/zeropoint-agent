@@ -30,7 +30,7 @@ func main() {
 		// Disable automatic version flag to avoid conflicts
 		SilenceUsage: true,
 	}
-	
+
 	// Customize version output to only print version string
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
