@@ -18,6 +18,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// @title ZeroPoint Agent API
+// @version 0.0.0-dev
+// @description Zeropoint OS agent REST API specification
+
+// @contact.name API Support
+// @contact.url https://github.com/zeropoint-os/zeropoint-agent
+
+// @license.name Apache 2.0
+// @license.url https://www.apache.org/licenses/LICENSE-2.0
+
+// @BasePath /
+
 var (
 	// Version is set at build time via ldflags
 	version = "0.0.0-dev"

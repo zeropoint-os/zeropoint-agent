@@ -35,8 +35,10 @@ RUN go install github.com/swaggo/swag/cmd/swag@latest
 
 # Install OpenAPI Generator CLI
 RUN npm install -g @openapitools/openapi-generator-cli
+# Make npm global modules writable for all users
+RUN chmod -R a+rwx /usr/lib/node_modules/@openapitools
 # Initialize OpenAPI generator with specific version
-RUN npx @openapitools/openapi-generator-cli version-manager set 7.0.1 || true
+RUN npx @openapitools/openapi-generator-cli version-manager set 7.0.1
 
 # Ensure the /go directory is writable for all users (for development purposes)
 RUN chmod -R a+rwx /go
