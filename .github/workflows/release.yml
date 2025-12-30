@@ -82,67 +82,21 @@ jobs:
           tar -czf zeropoint-agent-typescript-client.tar.gz -C artifacts/clients typescript
           tar -czf zeropoint-agent-python-client.tar.gz -C artifacts/clients python
       
-      - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload binary
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./zeropoint-agent-${{ matrix.suffix }}.tar.gz
-          asset_name: zeropoint-agent-${{ matrix.suffix }}.tar.gz
-          asset_content_type: application/gzip
+          files: zeropoint-agent-${{ matrix.suffix }}.tar.gz
       
-      - name: Upload OpenAPI spec (YAML)
+      - name: Upload OpenAPI specs and clients
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/swagger.yaml
-          asset_name: openapi.yaml
-          asset_content_type: text/yaml
-      
-      - name: Upload OpenAPI spec (JSON)
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/swagger.json
-          asset_name: openapi.json
-          asset_content_type: application/json
-      
-      - name: Upload Go client
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./zeropoint-agent-go-client.tar.gz
-          asset_name: zeropoint-agent-go-client.tar.gz
-          asset_content_type: application/gzip
-      
-      - name: Upload TypeScript client
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./zeropoint-agent-typescript-client.tar.gz
-          asset_name: zeropoint-agent-typescript-client.tar.gz
-          asset_content_type: application/gzip
-      
-      - name: Upload Python client
-        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
+          files: |
+            artifacts/swagger.yaml
+            artifacts/swagger.json
+            zeropoint-agent-go-client.tar.gz
+            zeropoint-agent-typescript-client.tar.gz
+            zeropoint-agent-python-client.tar.gz
           asset_path: ./zeropoint-agent-python-client.tar.gz
           asset_name: zeropoint-agent-python-client.tar.gz
           asset_content_type: application/gzip
