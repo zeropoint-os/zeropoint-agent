@@ -24,6 +24,7 @@ type ExposureResponse struct {
 	Hostname      string `json:"hostname,omitempty"`
 	ContainerPort uint32 `json:"container_port"`
 	HostPort      uint32 `json:"host_port,omitempty"`
+	Status        string `json:"status"` // "available" or "unavailable"
 	CreatedAt     string `json:"created_at"`
 }
 
@@ -75,7 +76,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resp := toExposureResponse(exposure)
+	resp := toExposureResponse(exposure, h.store)
 
 	w.Header().Set("Content-Type", "application/json")
 	if created {
@@ -95,7 +96,7 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 	}
 
 	for i, exp := range exposures {
-		resp.Exposures[i] = toExposureResponse(exp)
+		resp.Exposures[i] = toExposureResponse(exp, h.store)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -113,7 +114,7 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := toExposureResponse(exposure)
+	resp := toExposureResponse(exposure, h.store)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -134,12 +135,13 @@ func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request
 }
 
 // toExposureResponse converts an Exposure to ExposureResponse
-func toExposureResponse(exp *Exposure) ExposureResponse {
+func toExposureResponse(exp *Exposure, store *ExposureStore) ExposureResponse {
 	resp := ExposureResponse{
 		ID:            exp.ID,
 		AppID:         exp.AppID,
 		Protocol:      exp.Protocol,
 		ContainerPort: exp.ContainerPort,
+		Status:        store.getContainerStatus(exp.AppID),
 		CreatedAt:     exp.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
