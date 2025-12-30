@@ -534,7 +534,7 @@ DELETE /exposures/openwebui
 7. **xDS control plane**: Configure Envoy dynamically via gRPC (listeners, clusters, routes)
 8. **Service discovery**: Use `main_ports` output to automatically configure proxy routes without manual port specification
 
-### What zeropoint DOES NOT
+### What zeropoint DOES NOT do
 
 1. ❌ Compute dependency graphs (Terraform does this)
 2. ❌ Track resource handles manually (Terraform state does this)
@@ -552,27 +552,21 @@ DELETE /exposures/openwebui
 #### Install App
 
 ```http
-POST /apps/install
+POST /apps/{name}
 Content-Type: application/json
 
 {
-  "module_path": "/workspaces/zeropoint-agent/apps/ollama",
-  "app_id": "ollama",
-  "arch": "arm64"  // Optional: override auto-detected architecture
+  "source": "https://github.com/zeropoint-os/ollama.git",
+  "local_path": "/path/to/module"  // Optional: use local module instead
 }
 
-Response: 200 OK
+Response: 200 OK (streaming JSON progress updates)
 {
-  "id": "ollama",
-  "state": "running",
-  "containers": {
-    "main": {
-      "id": "abc123...",
-      "name": "ollama-main",
-      "ports": [11434]
-    }
-  }
+  "status": "downloading",
+  "message": "Cloning repository...",
+  "progress": 10
 }
+```
 ```
 
 #### List Apps
@@ -622,9 +616,9 @@ Response: 200 OK
 #### Uninstall App
 
 ```http
-DELETE /apps/{id}
+DELETE /apps/{name}
 
-Response: 204 No Content
+Response: 200 OK (streaming JSON progress updates)
 ```
 
 ### Links
@@ -678,22 +672,23 @@ Response: 204 No Content
 #### Create Exposure
 
 ```http
-POST /exposures
+POST /exposures/{app_id}
 Content-Type: application/json
 
 {
-  "app_id": "openwebui",
+  "protocol": "http",
   "hostname": "openwebui.zeropoint.local",
   "container_port": 3000
 }
 
-Response: 200 OK
+Response: 201 Created
 {
-  "id": "openwebui",
+  "id": "abc123",
   "app_id": "openwebui",
+  "protocol": "http",
   "hostname": "openwebui.zeropoint.local",
   "container_port": 3000,
-  "external_url": "https://openwebui.zeropoint.local"
+  "status": "available"
 }
 ```
 
@@ -703,14 +698,18 @@ Response: 200 OK
 GET /exposures
 
 Response: 200 OK
-[
-  {
-    "id": "openwebui",
-    "app_id": "openwebui",
-    "hostname": "openwebui.zeropoint.local",
-    "container_port": 3000
-  }
-]
+{
+  "exposures": [
+    {
+      "id": "abc123",
+      "app_id": "openwebui",
+      "protocol": "http",
+      "hostname": "openwebui.zeropoint.local",
+      "container_port": 3000,
+      "status": "available"
+    }
+  ]
+}
 ```
 
 #### Delete Exposure
@@ -1343,13 +1342,12 @@ resource "docker_container" "main" {
 
 #### Dry-Run Validation
 
-When a user installs an app via `POST /apps/install`:
+When a user installs an app via `POST /apps/{name}`:
 
 ```http
-POST /apps/install
+POST /apps/mycustomapp
 {
-  "module_path": "/workspaces/zeropoint-agent/apps/mycustomapp",
-  "app_id": "mycustomapp"
+  "source": "https://github.com/user/mycustomapp.git"
 }
 ```
 
