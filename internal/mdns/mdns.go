@@ -31,48 +31,91 @@ func (s *Service) Register(ctx context.Context, port int) error {
 		return fmt.Errorf("failed to get hostname: %w", err)
 	}
 
-	// Check for manual IP override
-	var ips []string
-	if manualIP := os.Getenv("ZEROPOINT_IP"); manualIP != "" {
-		ips = []string{manualIP}
-		s.logger.Info("using manual IP override", "ip", manualIP)
-	} else if ifaceName := os.Getenv("ZEROPOINT_INTERFACE"); ifaceName != "" {
-		// Get IP from specific interface
+	// Determine which interfaces to use
+	var ifaces []net.Interface
+
+	// Check for manual interface override
+	if ifaceName := os.Getenv("ZEROPOINT_INTERFACE"); ifaceName != "" {
 		iface, err := net.InterfaceByName(ifaceName)
 		if err != nil {
 			return fmt.Errorf("failed to get interface %s: %w", ifaceName, err)
 		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return fmt.Errorf("failed to get addresses for interface %s: %w", ifaceName, err)
-		}
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
-				ips = append(ips, ipnet.IP.String())
-			}
-		}
-		s.logger.Info("using interface", "interface", ifaceName, "ips", ips)
-	} else {
-		// Auto-detect: get all IPs excluding Docker/internal networks
-		addrs, err := net.InterfaceAddrs()
-		if err != nil {
-			return fmt.Errorf("failed to get network interfaces: %w", err)
+		ifaces = []net.Interface{*iface}
+		s.logger.Info("using manual interface", "interface", ifaceName)
+	} else if manualIP := os.Getenv("ZEROPOINT_IP"); manualIP != "" {
+		// Find interface with matching IP
+		targetIP := net.ParseIP(manualIP)
+		if targetIP == nil {
+			return fmt.Errorf("invalid IP address: %s", manualIP)
 		}
 
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !isDockerNetwork(ipv4) {
-					ips = append(ips, ipv4.String())
+		allIfaces, err := net.Interfaces()
+		if err != nil {
+			return fmt.Errorf("failed to list interfaces: %w", err)
+		}
+
+		found := false
+		for _, iface := range allIfaces {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.Equal(targetIP) {
+					ifaces = []net.Interface{iface}
+					found = true
+					break
 				}
+			}
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("no interface found with IP %s", manualIP)
+		}
+		s.logger.Info("using interface for IP", "ip", manualIP, "interface", ifaces[0].Name)
+	} else {
+		// Auto-detect: exclude Docker/internal networks
+		allIfaces, err := net.Interfaces()
+		if err != nil {
+			return fmt.Errorf("failed to list interfaces: %w", err)
+		}
+
+		for _, iface := range allIfaces {
+			// Skip loopback and down interfaces
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			// Check if interface has non-Docker IPv4 address
+			hasValidIP := false
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok {
+					if ipv4 := ipnet.IP.To4(); ipv4 != nil && !isDockerNetwork(ipv4) {
+						hasValidIP = true
+						break
+					}
+				}
+			}
+
+			if hasValidIP {
+				ifaces = append(ifaces, iface)
 			}
 		}
 	}
 
-	if len(ips) == 0 {
+	if len(ifaces) == 0 {
 		return fmt.Errorf("no suitable network interfaces found")
 	}
 
-	// Register the service
+	// Register the service on selected interfaces
 	server, err := zeroconf.Register(
 		hostname,                // instance name
 		"_zeropoint-agent._tcp", // service type
@@ -82,18 +125,25 @@ func (s *Service) Register(ctx context.Context, port int) error {
 			"version=0.0.0-dev",
 			"api=rest",
 		},
-		nil, // use all network interfaces
+		ifaces, // use specific interfaces (not all)
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register mDNS service: %w", err)
 	}
 
 	s.server = server
+
+	// Log selected interfaces
+	ifaceNames := make([]string, len(ifaces))
+	for i, iface := range ifaces {
+		ifaceNames[i] = iface.Name
+	}
+
 	s.logger.Info("registered mDNS service",
 		"hostname", hostname,
 		"service", "_zeropoint-agent._tcp",
 		"port", port,
-		"ips", ips,
+		"interfaces", ifaceNames,
 	)
 
 	return nil
