@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"zeropoint-agent/internal/api"
 	"zeropoint-agent/internal/envoy"
+	"zeropoint-agent/internal/mdns"
 	"zeropoint-agent/internal/xds"
 
 	"github.com/moby/moby/client"
@@ -106,15 +108,27 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// Get port from environment variable, default to 2370
-	port := os.Getenv("ZEROPOINT_AGENT_PORT")
-	if port == "" {
-		port = "2370"
+	portStr := os.Getenv("ZEROPOINT_AGENT_PORT")
+	if portStr == "" {
+		portStr = "2370"
+	}
+
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Fatalf("invalid port number: %v", err)
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
+		Addr:    ":" + portStr,
 		Handler: router,
 	}
+
+	// Register mDNS service
+	mdnsService := mdns.NewService(logger)
+	if err := mdnsService.Register(context.Background(), portNum); err != nil {
+		logger.Warn("failed to register mDNS service", "error", err)
+	}
+	defer mdnsService.Shutdown()
 
 	// Start server
 	go func() {
