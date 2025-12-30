@@ -200,6 +200,52 @@ func (s *ExposureStore) DeleteExposure(ctx context.Context, id string) error {
 	return nil
 }
 
+// GetExposureByAppID returns an exposure by app ID
+func (s *ExposureStore) GetExposureByAppID(appID string) *Exposure {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, exp := range s.exposures {
+		if exp.AppID == appID {
+			return exp
+		}
+	}
+	return nil
+}
+
+// DeleteExposureByAppID removes an exposure by app ID
+func (s *ExposureStore) DeleteExposureByAppID(ctx context.Context, appID string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Find exposure with matching app_id
+	var exposureID string
+	for id, exp := range s.exposures {
+		if exp.AppID == appID {
+			exposureID = id
+			break
+		}
+	}
+
+	if exposureID == "" {
+		return fmt.Errorf("exposure not found for app_id: %s", appID)
+	}
+
+	delete(s.exposures, exposureID)
+
+	// Save to disk
+	if err := s.save(); err != nil {
+		return fmt.Errorf("failed to save exposures: %w", err)
+	}
+
+	// Update xDS snapshot
+	if err := s.updateSnapshot(ctx); err != nil {
+		s.logger.Error("failed to update xDS snapshot", "error", err)
+	}
+
+	return nil
+}
+
 // findExposure checks if an exposure already exists
 func (s *ExposureStore) findExposure(appID, protocol, hostname string, containerPort uint32) *Exposure {
 	for _, exp := range s.exposures {

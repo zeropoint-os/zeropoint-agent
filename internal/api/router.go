@@ -63,14 +63,14 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, logger *slog.
 
 	// Apps endpoints
 	r.HandleFunc("/apps", env.appsHandler).Methods(http.MethodGet)
-	r.HandleFunc("/apps/install", env.installAppHandler).Methods(http.MethodPost)
-	r.HandleFunc("/apps/{name}/uninstall", env.uninstallAppHandler).Methods(http.MethodPost)
+	r.HandleFunc("/apps/{name}", env.installAppHandler).Methods(http.MethodPost)
+	r.HandleFunc("/apps/{name}", env.uninstallAppHandler).Methods(http.MethodDelete)
 
 	// Exposure endpoints
 	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/exposures", exposureHandlers.CreateExposure).Methods(http.MethodPost)
-	r.HandleFunc("/exposures/{id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/exposures/{app_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/exposures/{app_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/exposures/{app_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
 
 	return r, nil
 }
@@ -102,6 +102,7 @@ func (e *apiEnv) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 // AppsHandler handles /apps routes
 // @Summary List installed apps
+// @Summary List all applications
 // @Description Returns installed apps metadata
 // @Tags apps
 // @Produce json
@@ -179,27 +180,47 @@ func (e *apiEnv) discoverApps(ctx context.Context) ([]apps.App, error) {
 	return result, nil
 }
 
-// installAppHandler handles POST /apps/install with streaming progress updates
+// installAppHandler handles POST /apps/{name} with streaming progress updates
+// @Summary Install an application
+// @Description Installs an application by name with optional configuration
+// @Summary Install an application
+// @Description Installs an application by name with optional configuration
+// @Tags apps
+// @Param name path string true "App name"
+// @Param body body apps.InstallRequest false "Installation configuration"
+// @Success 200 {object} apps.ProgressUpdate
+// @Failure 400 {string} string "Bad request"
+// @Failure 500 {string} string "Internal server error"
+// @Router /apps/{name} [post]
 func (e *apiEnv) installAppHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req apps.InstallRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	// Get app name from URL path
+	vars := mux.Vars(r)
+	appName := vars["name"]
+	if appName == "" {
+		http.Error(w, "app name is required", http.StatusBadRequest)
 		return
 	}
+
+	// Parse optional request body
+	var req apps.InstallRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Use path parameter as app_id
+	req.AppID = appName
 
 	// Validate request
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
-		return
-	}
-
 	if req.Source == "" && req.LocalPath == "" {
-		http.Error(w, "either source or local_path is required", http.StatusBadRequest)
+		http.Error(w, "either source or local_path is required in request body", http.StatusBadRequest)
 		return
 	}
 
@@ -233,23 +254,31 @@ func (e *apiEnv) installAppHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// uninstallAppHandler handles POST /apps/uninstall with streaming progress updates
+// uninstallAppHandler handles DELETE /apps/{name} with streaming progress updates
+// @Summary Uninstall an application
+// @Description Uninstalls an application by name with streaming progress updates
+// @Tags apps
+// @Param name path string true "App name"
+// @Success 200 {object} apps.ProgressUpdate
+// @Failure 400 {string} string "Bad request"
+// @Failure 500 {string} string "Internal server error"
+// @Router /apps/{name} [delete]
 func (e *apiEnv) uninstallAppHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req apps.UninstallRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	// Get app name from URL path
+	vars := mux.Vars(r)
+	appName := vars["name"]
+	if appName == "" {
+		http.Error(w, "app name is required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate request
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
-		return
+	req := apps.UninstallRequest{
+		AppID: appName,
 	}
 
 	// Setup streaming response
