@@ -353,10 +353,10 @@ func (s *Service) supervise() {
 			return
 		case <-ticker.C:
 			s.logger.Debug("refreshing mDNS TTL for all services")
-			
+
 			// Refresh agent registration without downtime
 			s.refreshAgent()
-			
+
 			// Refresh all exposure registrations without downtime
 			s.refreshAllExposures()
 		}
@@ -366,7 +366,7 @@ func (s *Service) supervise() {
 // refreshAgent refreshes the agent mDNS registration without downtime
 func (s *Service) refreshAgent() {
 	oldServer := s.server
-	
+
 	// Create new registration
 	newServer, err := zeroconf.Register(
 		s.hostname,
@@ -383,10 +383,10 @@ func (s *Service) refreshAgent() {
 		s.logger.Error("failed to refresh agent mDNS service", "error", err)
 		return
 	}
-	
+
 	// Update to new server
 	s.server = newServer
-	
+
 	// Shutdown old server after new one is live
 	if oldServer != nil {
 		oldServer.Shutdown()
@@ -397,7 +397,7 @@ func (s *Service) refreshAgent() {
 func (s *Service) refreshAllExposures() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	for hostname, oldServer := range s.exposures {
 		// Get IP addresses from interfaces
 		var ips []string
@@ -414,15 +414,15 @@ func (s *Service) refreshAllExposures() {
 				}
 			}
 		}
-		
+
 		if len(ips) == 0 {
 			s.logger.Warn("no IPs found for exposure refresh", "hostname", hostname)
 			continue
 		}
-		
+
 		// Convert dots to dashes for instance name
 		instanceName := strings.ReplaceAll(hostname, ".", "-")
-		
+
 		// Create new registration
 		newServer, err := zeroconf.RegisterProxy(
 			instanceName,
@@ -441,10 +441,10 @@ func (s *Service) refreshAllExposures() {
 			s.logger.Warn("failed to refresh mDNS for exposure", "hostname", hostname, "error", err)
 			continue
 		}
-		
+
 		// Update to new server
 		s.exposures[hostname] = newServer
-		
+
 		// Shutdown old server after new one is live
 		if oldServer != nil {
 			oldServer.Shutdown()
