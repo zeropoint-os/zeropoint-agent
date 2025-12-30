@@ -4,7 +4,7 @@
 		{
 			"type": "shell",
 			"label": "build",
-			"command": "VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0') && go build -v -ldflags=\"-X main.version=$VERSION\" ./...",
+			"command": "VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0') && go build -v -ldflags=\"-X main.version=$VERSION\" $(go list ./... | grep -v '/docs')",
 			"group": "build",
 			"problemMatcher": [
 				"$go"
@@ -12,15 +12,4 @@
 			"isBackground": false
 		}
 	]
-} *  The terminal process "/usr/bin/bash '-c', 'go build -v ./...'" failed to launch (exit code: 1). 
- *  Terminal will be reused by tasks, press any key to close it. 
-
- *  Executing task: go build -v ./... 
-
-internal/docker/docker.go:6:2: no required module provides package github.com/docker/docker/client; to add it:
-        go get github.com/docker/docker/client
-
- *  The terminal process "/usr/bin/bash '-c', 'go build -v ./...'" failed to launch (exit code: 1). 
- *  Terminal will be reused by tasks, press any key to close it. 
-
-
+}
