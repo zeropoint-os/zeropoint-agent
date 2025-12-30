@@ -4,7 +4,7 @@
 		{
 			"type": "shell",
 			"label": "build",
-			"command": "VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0') && go build -v -ldflags=\"-X main.version=$VERSION\" $(go list ./... | grep -v '/docs')",
+			"command": "VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0') && go build -v -ldflags=\"-X main.version=$VERSION\" -o bin/zeropoint-agent ./cmd/zeropoint-agent",
 			"group": "build",
 			"problemMatcher": [
 				"$go"

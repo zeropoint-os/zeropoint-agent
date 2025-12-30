@@ -31,19 +31,45 @@ func (s *Service) Register(ctx context.Context, port int) error {
 		return fmt.Errorf("failed to get hostname: %w", err)
 	}
 
-	// Get local IP addresses
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return fmt.Errorf("failed to get network interfaces: %w", err)
-	}
-
+	// Check for manual IP override
 	var ips []string
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
+	if manualIP := os.Getenv("ZEROPOINT_IP"); manualIP != "" {
+		ips = []string{manualIP}
+		s.logger.Info("using manual IP override", "ip", manualIP)
+	} else if ifaceName := os.Getenv("ZEROPOINT_INTERFACE"); ifaceName != "" {
+		// Get IP from specific interface
+		iface, err := net.InterfaceByName(ifaceName)
+		if err != nil {
+			return fmt.Errorf("failed to get interface %s: %w", ifaceName, err)
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return fmt.Errorf("failed to get addresses for interface %s: %w", ifaceName, err)
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
 				ips = append(ips, ipnet.IP.String())
 			}
 		}
+		s.logger.Info("using interface", "interface", ifaceName, "ips", ips)
+	} else {
+		// Auto-detect: get all IPs excluding Docker/internal networks
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return fmt.Errorf("failed to get network interfaces: %w", err)
+		}
+
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil && !isDockerNetwork(ipv4) {
+					ips = append(ips, ipv4.String())
+				}
+			}
+		}
+	}
+
+	if len(ips) == 0 {
+		return fmt.Errorf("no suitable network interfaces found")
 	}
 
 	// Register the service
@@ -71,6 +97,26 @@ func (s *Service) Register(ctx context.Context, port int) error {
 	)
 
 	return nil
+}
+
+// isDockerNetwork checks if an IP is in common Docker network ranges
+func isDockerNetwork(ip net.IP) bool {
+	// Docker default bridge: 172.17.0.0/16
+	// Docker custom bridges: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+	// Docker compose: 172.x.x.x ranges
+	// Common internal ranges: 10.0.0.0/8
+	dockerRanges := []string{
+		"172.16.0.0/12", // Docker user-defined networks
+		"10.0.0.0/8",    // Common internal networks
+	}
+
+	for _, cidr := range dockerRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Shutdown stops the mDNS service announcement
