@@ -2,6 +2,7 @@ package xds
 
 import (
 	"fmt"
+	"strings"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -282,9 +283,16 @@ func makeRouteConfigFromExposures(exposures []*Exposure) *route.RouteConfigurati
 
 	for _, exp := range exposures {
 		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
+
+		// Match both hostname and hostname.local for mDNS compatibility
+		domains := []string{exp.Hostname}
+		if !strings.HasSuffix(exp.Hostname, ".local") {
+			domains = append(domains, exp.Hostname+".local")
+		}
+
 		virtualHost := &route.VirtualHost{
 			Name:    exp.Hostname,
-			Domains: []string{exp.Hostname},
+			Domains: domains,
 			Routes: []*route.Route{
 				{
 					Match: &route.RouteMatch{
