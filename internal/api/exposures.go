@@ -242,6 +242,19 @@ func (s *ExposureStore) verifyContainer(ctx context.Context, appID string) error
 	return nil
 }
 
+// getContainerStatus checks if a container exists and is running
+func (s *ExposureStore) getContainerStatus(appID string) string {
+	containerName := appID + "-main"
+	info, err := s.dockerClient.ContainerInspect(context.Background(), containerName, client.ContainerInspectOptions{})
+	if err != nil {
+		return "unavailable"
+	}
+	if string(info.Container.State.Status) == "running" {
+		return "available"
+	}
+	return "unavailable"
+}
+
 // ensureNetwork connects container to zeropoint-network
 func (s *ExposureStore) ensureNetwork(ctx context.Context, appID string) error {
 	networkName := "zeropoint-network"
