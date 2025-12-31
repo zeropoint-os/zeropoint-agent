@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ type apiEnv struct {
 	installer   *apps.Installer
 	uninstaller *apps.Uninstaller
 	exposures   *ExposureHandlers
+	inspect     *InspectHandlers
 	logger      *slog.Logger
 }
 
@@ -47,12 +49,14 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	}
 
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
+	inspectHandlers := NewInspectHandlers(appsDir, logger)
 
 	env := &apiEnv{
 		docker:      dockerClient,
 		installer:   installer,
 		uninstaller: uninstaller,
 		exposures:   exposureHandlers,
+		inspect:     inspectHandlers,
 		logger:      logger,
 	}
 
@@ -65,6 +69,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/apps", env.appsHandler).Methods(http.MethodGet)
 	r.HandleFunc("/apps/{name}", env.installAppHandler).Methods(http.MethodPost)
 	r.HandleFunc("/apps/{name}", env.uninstallAppHandler).Methods(http.MethodDelete)
+	r.HandleFunc("/apps/{app_id}/inspect", inspectHandlers.InspectApp).Methods(http.MethodGet)
 
 	// Exposure endpoints
 	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
@@ -217,6 +222,14 @@ func (e *apiEnv) installAppHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Use path parameter as app_id
 	req.AppID = appName
+
+	// Check if app already exists
+	appsDir := apps.GetAppsDir()
+	appPath := filepath.Join(appsDir, appName)
+	if _, err := os.Stat(appPath); err == nil {
+		http.Error(w, fmt.Sprintf("app '%s' already exists", appName), http.StatusConflict)
+		return
+	}
 
 	// Validate request
 	if req.Source == "" && req.LocalPath == "" {

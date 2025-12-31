@@ -156,61 +156,60 @@ terraform {
   }
 }
 
-variable "app_id" {
+variable "zp_app_id" {
   type        = string
-  default     = "ollama"
-  description = "Unique identifier for this app instance (user-defined, freeform)"
+  description = "Unique identifier for this app instance (auto-generated or user-provided)"
 }
 
-variable "network_name" {
+variable "zp_network_name" {
   type        = string
   description = "Pre-created Docker network name for this app (managed by zeropoint)"
 }
 
-variable "arch" {
+variable "zp_arch" {
   type        = string
   default     = "amd64"
-  description = "Target architecture - amd64, arm64, etc. (injected by zeropoint)"
+  description = "Target architecture - amd64, arm64, etc. (auto-detected by zeropoint)"
 }
 
-variable "gpu_vendor" {
+variable "zp_gpu_vendor" {
   type        = string
   default     = ""
-  description = "GPU vendor - nvidia, amd, intel, or empty for no GPU (injected by zeropoint)"
+  description = "GPU vendor - nvidia, amd, intel, or empty for no GPU (auto-detected by zeropoint)"
 }
 
-variable "app_storage" {
+variable "zp_app_storage" {
   type        = string
-  description = "Host path for persistent storage (injected by zeropoint)"
+  description = "Host path for persistent storage (managed by zeropoint)"
 }
 
 # Build Ollama image from local Dockerfile
 resource "docker_image" "ollama" {
-  name = "${var.app_id}:latest"
+  name = "${var.zp_app_id}:latest"
   build {
     context    = path.module
     dockerfile = "Dockerfile"
-    platform   = "linux/${var.arch}"  # Uses injected arch variable
+    platform   = "linux/${var.zp_arch}"  # Uses auto-detected arch variable
   }
   keep_locally = true
 }
 
 # Main Ollama container (no host port binding)
 resource "docker_container" "ollama_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.zp_app_id}-main"
   image = docker_image.ollama.image_id
 
   # Network configuration (provided by zeropoint)
   networks_advanced {
-    name = var.network_name
+    name = var.zp_network_name
   }
 
   # Restart policy
   restart = "unless-stopped"
 
   # GPU access (conditional based on vendor)
-  runtime = var.gpu_vendor == "nvidia" ? "nvidia" : null
-  gpus    = var.gpu_vendor != "" ? "all" : null
+  runtime = var.zp_gpu_vendor == "nvidia" ? "nvidia" : null
+  gpus    = var.zp_gpu_vendor != "" ? "all" : null
 
   # Environment variables
   env = [
@@ -219,7 +218,7 @@ resource "docker_container" "ollama_main" {
 
   # Persistent storage
   volumes {
-    host_path      = "${var.app_storage}/.ollama"
+    host_path      = "${var.zp_app_storage}/.ollama"
     container_path = "/root/.ollama"
   }
 
@@ -621,6 +620,86 @@ DELETE /apps/{name}
 Response: 200 OK (streaming JSON progress updates)
 ```
 
+#### Inspect App
+
+```http
+GET /apps/{app_id}/inspect
+
+Response: 200 OK
+{
+  "app_id": "ollama",
+  "inputs": {
+    "zp_app_id": {
+      "type": "string",
+      "description": "Unique identifier for this app instance",
+      "current_value": "ollama",
+      "required": true,
+      "system_managed": true
+    },
+    "zp_network_name": {
+      "type": "string",
+      "description": "Pre-created Docker network name",
+      "current_value": "zeropoint-app-ollama",
+      "required": true,
+      "system_managed": true
+    },
+    "zp_arch": {
+      "type": "string",
+      "description": "Target architecture",
+      "default_value": "amd64",
+      "current_value": "amd64",
+      "required": false,
+      "system_managed": true
+    },
+    "zp_gpu_vendor": {
+      "type": "string",
+      "description": "GPU vendor",
+      "default_value": "",
+      "current_value": "",
+      "required": false,
+      "system_managed": true
+    },
+    "zp_app_storage": {
+      "type": "string",
+      "description": "Host path for persistent storage",
+      "current_value": "/workspaces/zeropoint-agent/data/apps/ollama",
+      "required": true,
+      "system_managed": true
+    }
+  },
+  "outputs": {
+    "main": {
+      "description": "Main Ollama container",
+      "current_value": { ... }
+    },
+    "main_ports": {
+      "description": "Service ports for external access",
+      "current_value": {
+        "api": {
+          "port": 11434,
+          "protocol": "http",
+          "transport": "tcp",
+          "description": "Ollama API endpoint",
+          "default": true
+        }
+      }
+    }
+  }
+}
+
+# Or inspect from remote source (not yet installed)
+GET /apps/{app_id}/inspect?source_url=https://github.com/zeropoint-os/ollama.git
+
+Response: 200 OK
+{
+  "app_id": "ollama",
+  "inputs": { ... },
+  "outputs": { ... }
+}
+```
+
+**Purpose**: Inspect Terraform module to see inputs (variables) and outputs before or after installation. The `system_managed` field indicates which variables are controlled by zeropoint (all `zp_*` variables) vs user-configurable variables.
+
 ### Links
 
 #### Create Link
@@ -882,72 +961,77 @@ zeropoint enforces a minimum contract for app modules to ensure predictable beha
 
 #### 1. Required Variables
 
-Every app module MUST accept the following variables:
+Every app module MUST accept the following system-managed variables (all prefixed with `zp_`):
 
 ```hcl
-variable "app_id" {
+variable "zp_app_id" {
   type        = string
-  description = "Unique identifier for this app instance (user-defined, freeform)"
+  description = "Unique identifier for this app instance (provided via API path parameter)"
 }
 
-variable "network_name" {
+variable "zp_network_name" {
   type        = string
   description = "Pre-created Docker network name for this app (managed by zeropoint)"
 }
 
-variable "arch" {
+variable "zp_arch" {
   type        = string
   default     = "amd64"
-  description = "Target architecture (amd64, arm64, etc.) - injected by zeropoint"
+  description = "Target architecture (amd64, arm64, etc.) - auto-detected by zeropoint"
 }
 
-variable "gpu_vendor" {
+variable "zp_gpu_vendor" {
   type        = string
   default     = ""
-  description = "GPU vendor (nvidia, amd, intel, or empty) - injected by zeropoint"
+  description = "GPU vendor (nvidia, amd, intel, or empty) - auto-detected by zeropoint"
 }
 
-variable "app_storage" {
+variable "zp_app_storage" {
   type        = string
-  description = "Absolute path to app's persistent storage directory - injected by zeropoint"
+  description = "Absolute path to app's persistent storage directory - managed by zeropoint"
 }
 ```
 
 **Purpose**:
 
-- `app_id`: Unique identifier chosen by user (e.g., `ollama`, `ollama-test`, `alice-nextcloud`). Enables multi-instance deployments with meaningful names.
-- `network_name`: zeropoint creates and manages the network lifecycle externally, then injects it into the app module
-- `arch`: Target CPU architecture, auto-detected by zeropoint from host (user-overridable via API). Module authors can use this for `platform` selection in builds or ignore it for multi-arch images
-- `gpu_vendor`: GPU vendor detected by zeropoint (`nvidia`, `amd`, `intel`, or empty string). Apps can conditionally enable GPU access based on this value
-- `app_storage`: Absolute path to the app's isolated storage directory (e.g., `/path/to/data/apps/ollama`). Apps use this for persistent data like databases, models, configuration, etc.
+- `zp_app_id`: Unique identifier from API request path (e.g., `POST /apps/production-ollama` → `zp_app_id = "production-ollama"`). Enables multi-instance deployments.
+- `zp_network_name`: zeropoint creates and manages the network lifecycle externally, then injects it into the app module
+- `zp_arch`: Target CPU architecture, auto-detected by zeropoint from host (user-overridable via API). Module authors can use this for `platform` selection in builds or ignore it for multi-arch images
+- `zp_gpu_vendor`: GPU vendor detected by zeropoint (`nvidia`, `amd`, `intel`, or empty string). Apps can conditionally enable GPU access based on this value
+- `zp_app_storage`: Absolute path to the app's isolated storage directory (e.g., `/workspaces/zeropoint-agent/data/apps/production-ollama`). Apps use this for persistent data like databases, models, configuration, etc.
+
+**Variable Contract**:
+- All `zp_*` variables are **system-managed** - injected by zeropoint, not user-editable
+- Apps can define additional user-configurable variables (e.g., `model_size`, `db_password`)
+- The `system_managed` field in the inspect API distinguishes between zeropoint variables and user variables
 
 **App Storage Usage**:
 
-Apps organize their persistent data under `app_storage` however they want:
+Apps organize their persistent data under `zp_app_storage` however they want:
 
 ```hcl
 # Example: Ollama stores models
 volumes {
-  host_path      = "${var.app_storage}/.ollama"
+  host_path      = "${var.zp_app_storage}/.ollama"
   container_path = "/root/.ollama"
 }
 
 # Example: Database app with multiple volumes
 volumes {
-  host_path      = "${var.app_storage}/data"
+  host_path      = "${var.zp_app_storage}/data"
   container_path = "/var/lib/postgresql/data"
 }
 
 volumes {
-  host_path      = "${var.app_storage}/config"
+  host_path      = "${var.zp_app_storage}/config"
   container_path = "/etc/postgresql"
 }
 ```
 
 **Storage guarantees**:
-- zeropoint creates `app_storage` directory before terraform apply
+- zeropoint creates `zp_app_storage` directory before terraform apply
 - Path is always absolute (required by Docker bind mounts)
-- Directory is unique per app instance (isolated by `app_id`)
+- Directory is unique per app instance (isolated by `zp_app_id`)
 - Storage persists across container restarts
 - Storage is deleted when app is uninstalled
 
