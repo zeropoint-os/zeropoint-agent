@@ -34,14 +34,14 @@ type AppsResponse struct {
 	Apps []apps.App `json:"apps"`
 }
 
-func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, logger *slog.Logger) (http.Handler, error) {
+func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
 	appsDir := apps.GetAppsDir()
 
 	installer := apps.NewInstaller(dockerClient, appsDir, logger)
 	uninstaller := apps.NewUninstaller(appsDir, logger)
 
 	// Initialize exposure store
-	exposureStore, err := NewExposureStore(dockerClient, xdsServer, logger)
+	exposureStore, err := NewExposureStore(dockerClient, xdsServer, mdnsService, logger)
 	if err != nil {
 		return nil, err
 	}

@@ -102,11 +102,6 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatalf("failed to set initial snapshot: %v", err)
 	}
 
-	router, err := api.NewRouter(dockerClient, xdsServer, logger)
-	if err != nil {
-		log.Fatalf("failed to create router: %v", err)
-	}
-
 	// Get port from environment variable, default to 2370
 	portStr := os.Getenv("ZEROPOINT_AGENT_PORT")
 	if portStr == "" {
@@ -118,17 +113,22 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatalf("invalid port number: %v", err)
 	}
 
-	srv := &http.Server{
-		Addr:    ":" + portStr,
-		Handler: router,
-	}
-
-	// Register mDNS service
+	// Register mDNS service (before router so it's available for exposures)
 	mdnsService := mdns.NewService(logger)
 	if err := mdnsService.Register(context.Background(), portNum); err != nil {
 		logger.Warn("failed to register mDNS service", "error", err)
 	}
 	defer mdnsService.Shutdown()
+
+	router, err := api.NewRouter(dockerClient, xdsServer, mdnsService, logger)
+	if err != nil {
+		log.Fatalf("failed to create router: %v", err)
+	}
+
+	srv := &http.Server{
+		Addr:    ":" + portStr,
+		Handler: router,
+	}
 
 	// Start server
 	go func() {

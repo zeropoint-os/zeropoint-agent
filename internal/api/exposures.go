@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"zeropoint-agent/internal/mdns"
 	"zeropoint-agent/internal/xds"
 
 	"github.com/moby/moby/client"
@@ -34,6 +35,13 @@ type Exposure struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// MDNSService interface for mDNS operations
+type MDNSService interface {
+	RegisterExposure(hostname string, port int) error
+	UnregisterExposure(hostname string) error
+	ReregisterAllExposures(exposures []mdns.ExposureInfo) error
+}
+
 // ExposureStore manages exposures with persistent storage
 type ExposureStore struct {
 	exposures    map[string]*Exposure // keyed by ID
@@ -42,10 +50,11 @@ type ExposureStore struct {
 	dockerClient *client.Client
 	storagePath  string
 	logger       *slog.Logger
+	mdnsService  MDNSService
 }
 
 // NewExposureStore creates a new exposure store
-func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, logger *slog.Logger) (*ExposureStore, error) {
+func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (*ExposureStore, error) {
 	storageRoot := os.Getenv("APP_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
@@ -64,6 +73,7 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, logger
 		dockerClient: dockerClient,
 		storagePath:  storagePath,
 		logger:       logger,
+		mdnsService:  mdnsService,
 	}
 
 	// Load existing exposures from disk
@@ -79,6 +89,14 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, logger
 	// Rebuild xDS snapshot from loaded exposures
 	if err := store.updateSnapshot(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to build initial snapshot: %w", err)
+	}
+
+	// Re-register all exposures via mDNS
+	if mdnsService != nil {
+		exposureInfos := store.getExposureInfos()
+		if err := mdnsService.ReregisterAllExposures(exposureInfos); err != nil {
+			logger.Warn("failed to re-register mDNS exposures on startup", "error", err)
+		}
 	}
 
 	return store, nil
@@ -148,6 +166,14 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, appID, protocol, hos
 		// Don't fail the request, just log
 	}
 
+	// Register mDNS for HTTP exposures with hostname
+	if protocol == "http" && hostname != "" && s.mdnsService != nil {
+		if err := s.mdnsService.RegisterExposure(hostname, 80); err != nil {
+			s.logger.Warn("failed to register mDNS for exposure", "hostname", hostname, "error", err)
+			// Don't fail the request, just log
+		}
+	}
+
 	return exposure, true, nil
 }
 
@@ -180,9 +206,16 @@ func (s *ExposureStore) DeleteExposure(ctx context.Context, id string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	_, ok := s.exposures[id]
+	exposure, ok := s.exposures[id]
 	if !ok {
 		return fmt.Errorf("exposure not found")
+	}
+
+	// Unregister mDNS if it's an HTTP exposure with hostname
+	if exposure.Protocol == "http" && exposure.Hostname != "" && s.mdnsService != nil {
+		if err := s.mdnsService.UnregisterExposure(exposure.Hostname); err != nil {
+			s.logger.Warn("failed to unregister mDNS for exposure", "hostname", exposure.Hostname, "error", err)
+		}
 	}
 
 	delete(s.exposures, id)
@@ -220,15 +253,24 @@ func (s *ExposureStore) DeleteExposureByAppID(ctx context.Context, appID string)
 
 	// Find exposure with matching app_id
 	var exposureID string
+	var exposure *Exposure
 	for id, exp := range s.exposures {
 		if exp.AppID == appID {
 			exposureID = id
+			exposure = exp
 			break
 		}
 	}
 
 	if exposureID == "" {
 		return fmt.Errorf("exposure not found for app_id: %s", appID)
+	}
+
+	// Unregister mDNS if it's an HTTP exposure with hostname
+	if exposure.Protocol == "http" && exposure.Hostname != "" && s.mdnsService != nil {
+		if err := s.mdnsService.UnregisterExposure(exposure.Hostname); err != nil {
+			s.logger.Warn("failed to unregister mDNS for exposure", "hostname", exposure.Hostname, "error", err)
+		}
 	}
 
 	delete(s.exposures, exposureID)
@@ -413,6 +455,21 @@ func generateID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return "exp_" + hex.EncodeToString(b)
+}
+
+// getExposureInfos returns exposure info for mDNS registration
+func (s *ExposureStore) getExposureInfos() []mdns.ExposureInfo {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	infos := make([]mdns.ExposureInfo, 0, len(s.exposures))
+	for _, exp := range s.exposures {
+		infos = append(infos, mdns.ExposureInfo{
+			Protocol: exp.Protocol,
+			Hostname: exp.Hostname,
+		})
+	}
+	return infos
 }
 
 // isAlreadyConnectedError checks if error is "already connected"
