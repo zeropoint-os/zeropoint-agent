@@ -142,12 +142,12 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	}
 	logger.Info("detected system", "arch", arch, "gpu_vendor", gpuVendor)
 
-	// Prepare base variables
+	// Prepare base variables (all zp_ prefixed)
 	variables := map[string]string{
-		"app_id":       req.AppID,
-		"network_name": networkName,
-		"arch":         arch,
-		"gpu_vendor":   gpuVendor,
+		"zp_app_id":       req.AppID,
+		"zp_network_name": networkName,
+		"zp_arch":         arch,
+		"zp_gpu_vendor":   gpuVendor,
 	}
 
 	// Create app storage root directory
@@ -166,7 +166,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	logger.Info("created app storage directory", "path", absAppStoragePath)
 
 	// Pass app storage root to terraform (must be absolute for Docker)
-	variables["app_storage"] = absAppStoragePath
+	variables["zp_app_storage"] = absAppStoragePath
 
 	// Apply terraform
 	logger.Info("applying terraform")

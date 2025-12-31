@@ -18,6 +18,15 @@ type Output struct {
 	Description string
 }
 
+// Variable represents a parsed HCL variable block
+type Variable struct {
+	Name        string
+	Type        string      // "string", "number", "bool", etc.
+	Default     interface{} // Default value if specified
+	Description string
+	Required    bool // true if no default value
+}
+
 // ParseModuleOutputs parses main.tf and extracts all output blocks
 func ParseModuleOutputs(modulePath string) (map[string]Output, error) {
 	mainTfPath := filepath.Join(modulePath, "main.tf")
@@ -80,6 +89,121 @@ func ParseModuleOutputs(modulePath string) (map[string]Output, error) {
 	}
 
 	return outputs, nil
+}
+
+// ParseModuleInputs parses main.tf and extracts all variable blocks
+func ParseModuleInputs(modulePath string) (map[string]Variable, error) {
+	mainTfPath := filepath.Join(modulePath, "main.tf")
+
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCLFile(mainTfPath)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("failed to parse HCL: %s", diags.Error())
+	}
+
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil, fmt.Errorf("unexpected body type: %T", file.Body)
+	}
+
+	variables := make(map[string]Variable)
+
+	for _, block := range body.Blocks {
+		if block.Type != "variable" {
+			continue
+		}
+
+		if len(block.Labels) == 0 {
+			continue
+		}
+
+		varName := block.Labels[0]
+		variable := Variable{
+			Name:     varName,
+			Required: true, // Default to required unless we find a default
+		}
+
+		attrs, diags := block.Body.JustAttributes()
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("failed to get attributes for variable %s: %s", varName, diags.Error())
+		}
+
+		// Parse type attribute
+		if typeAttr, ok := attrs["type"]; ok {
+			variable.Type = extractTypeFromExpr(typeAttr.Expr)
+		}
+
+		// Parse default attribute
+		if defaultAttr, ok := attrs["default"]; ok {
+			val, err := evaluateExpression(defaultAttr.Expr)
+			if err == nil {
+				variable.Default = val
+				variable.Required = false
+			}
+		}
+
+		// Parse description attribute
+		if descAttr, ok := attrs["description"]; ok {
+			val, diags := descAttr.Expr.Value(nil)
+			if !diags.HasErrors() && val.Type() == cty.String {
+				variable.Description = val.AsString()
+			}
+		}
+
+		variables[varName] = variable
+	}
+
+	return variables, nil
+}
+
+// extractTypeFromExpr extracts the type string from a Terraform type expression
+func extractTypeFromExpr(expr hcl.Expression) string {
+	// For type expressions, we need to look at the syntax directly
+	// Type expressions are typically scope traversals like "string", "number", "bool"
+	// or function calls like "list(string)", "map(string)", "object({...})"
+
+	switch e := expr.(type) {
+	case *hclsyntax.ScopeTraversalExpr:
+		// Simple types: string, number, bool, any
+		if len(e.Traversal) > 0 {
+			if root, ok := e.Traversal[0].(hcl.TraverseRoot); ok {
+				return root.Name
+			}
+		}
+		return "unknown"
+
+	case *hclsyntax.FunctionCallExpr:
+		// Complex types: list(...), map(...), set(...), object(...), tuple(...)
+		funcName := e.Name
+
+		// For simple generic types, append the element type
+		if len(e.Args) == 1 {
+			elementType := extractTypeFromExpr(e.Args[0])
+			return fmt.Sprintf("%s(%s)", funcName, elementType)
+		}
+
+		// For object/tuple types with multiple args, just return the base type
+		return funcName
+
+	default:
+		// Fallback: try to evaluate and get friendly name
+		val, diags := expr.Value(nil)
+		if !diags.HasErrors() {
+			return val.Type().FriendlyName()
+		}
+		return "unknown"
+	}
+}
+
+// extractTypeString converts a cty type value to a string representation
+// This is kept for backward compatibility but is no longer used for variable types
+func extractTypeString(val cty.Value) string {
+	if val.Type() == cty.String {
+		// Simple type like "string", "number", "bool"
+		return val.AsString()
+	}
+	// For complex types, use friendly name
+	return val.Type().FriendlyName()
 }
 
 // evaluateExpression attempts to evaluate an HCL expression to a Go value
