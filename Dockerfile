@@ -33,10 +33,10 @@ RUN go install github.com/go-delve/delve/cmd/dlv@v1.25.2
 # Install Swag tool for generating Swagger docs
 RUN go install github.com/swaggo/swag/cmd/swag@latest
 
-# Install OpenAPI Generator CLI
-RUN npm install -g @openapitools/openapi-generator-cli
+# Install OpenAPI Generator CLI and swagger2openapi converter
+RUN npm install -g @openapitools/openapi-generator-cli swagger2openapi js-yaml
 # Make npm global modules writable for all users
-RUN chmod -R a+rwx /usr/lib/node_modules/@openapitools
+RUN chmod -R a+rwx /usr/lib/node_modules/@openapitools /usr/lib/node_modules/swagger2openapi /usr/lib/node_modules/js-yaml
 # Initialize OpenAPI generator with specific version
 RUN npx @openapitools/openapi-generator-cli version-manager set 7.0.1
 
