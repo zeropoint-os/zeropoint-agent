@@ -41,8 +41,8 @@ type InspectResponse struct {
 type InputSchema struct {
 	Type          string      `json:"type"`
 	Description   string      `json:"description,omitempty"`
-	DefaultValue  interface{} `json:"default_value,omitempty"`
-	CurrentValue  interface{} `json:"current_value,omitempty"`
+	DefaultValue  interface{} `json:"default_value,omitempty" swaggertype:"primitive,string" example:"amd64"`
+	CurrentValue  interface{} `json:"current_value,omitempty" swaggertype:"primitive,string" example:"amd64"`
 	Required      bool        `json:"required"`
 	SystemManaged bool        `json:"system_managed"` // True for zp_* variables
 }
@@ -50,7 +50,7 @@ type InputSchema struct {
 // OutputSchema represents metadata about an output
 type OutputSchema struct {
 	Description  string      `json:"description,omitempty"`
-	CurrentValue interface{} `json:"current_value,omitempty"`
+	CurrentValue interface{} `json:"current_value,omitempty" swaggertype:"object"`
 }
 
 // InspectApp handles GET /apps/{app_id}/inspect?source_url=...
