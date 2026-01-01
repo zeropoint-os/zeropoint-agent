@@ -50,6 +50,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(appsDir, logger)
+	linkHandlers := NewLinkHandlers(appsDir, exposureStore, logger)
 
 	env := &apiEnv{
 		docker:      dockerClient,
@@ -70,6 +71,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/apps/{name}", env.installAppHandler).Methods(http.MethodPost)
 	r.HandleFunc("/apps/{name}", env.uninstallAppHandler).Methods(http.MethodDelete)
 	r.HandleFunc("/apps/{app_id}/inspect", inspectHandlers.InspectApp).Methods(http.MethodGet)
+
+	// Link endpoints
+	linkHandlers.RegisterRoutes(r)
 
 	// Exposure endpoints
 	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)

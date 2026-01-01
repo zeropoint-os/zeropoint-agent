@@ -387,6 +387,54 @@ func (s *ExposureStore) ensureNetwork(ctx context.Context, appID string) error {
 	return nil
 }
 
+// EnsureNetwork connects a container to zeropoint-network (public wrapper)
+func (s *ExposureStore) EnsureNetwork(ctx context.Context, appID string) error {
+	return s.ensureNetwork(ctx, appID)
+}
+
+// EnsureAppOnNetwork connects a container to a specified network (for shared networks)
+func (s *ExposureStore) EnsureAppOnNetwork(ctx context.Context, appID, networkName string) error {
+	containerName := appID + "-main"
+
+	// Create network if it doesn't exist
+	networkList, err := s.dockerClient.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	networkExists := false
+	var networkID string
+	for _, network := range networkList.Items {
+		if network.Name == networkName {
+			networkExists = true
+			networkID = network.ID
+			break
+		}
+	}
+
+	if !networkExists {
+		resp, err := s.dockerClient.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
+			Driver: "bridge",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create network %s: %w", networkName, err)
+		}
+		networkID = resp.ID
+		s.logger.Info("created shared network", "network", networkName, "id", networkID)
+	}
+
+	// Connect container to network (idempotent)
+	_, err = s.dockerClient.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: containerName,
+	})
+	if err != nil && !isAlreadyConnectedError(err) {
+		return fmt.Errorf("failed to connect container %s to network %s: %w", containerName, networkName, err)
+	}
+
+	s.logger.Info("connected container to shared network", "container", containerName, "network", networkName)
+	return nil
+}
+
 // reconcileNetworks ensures all containers are connected to zeropoint-network
 func (s *ExposureStore) reconcileNetworks(ctx context.Context) error {
 	for _, exp := range s.exposures {
