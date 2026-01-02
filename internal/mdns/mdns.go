@@ -249,12 +249,12 @@ func (s *Service) RegisterExposure(hostname string, port int) error {
 	}
 
 	// Register as HTTP service with custom hostname using RegisterProxy
-	// Convert dots to dashes for instance name (mDNS compatibility)
-	// e.g., "ollama.zeropoint-gentle-mountain" -> "ollama-zeropoint-gentle-mountain"
-	instanceName := strings.ReplaceAll(hostname, ".", "-")
+	// Strip .local suffix if present since zeroconf adds it automatically
+	// e.g., "openwebui-zeropoint-bright-river.local" -> "openwebui-zeropoint-bright-river"
+	instanceName := strings.TrimSuffix(hostname, ".local")
 
 	server, err := zeroconf.RegisterProxy(
-		instanceName, // instance name (no dots)
+		instanceName, // instance name (without .local)
 		"_http._tcp", // service type (HTTP service)
 		"local.",     // domain
 		port,         // port (80 for HTTP through Envoy)
@@ -421,7 +421,7 @@ func (s *Service) refreshAllExposures() {
 		}
 
 		// Convert dots to dashes for instance name
-		instanceName := strings.ReplaceAll(hostname, ".", "-")
+		instanceName := strings.TrimSuffix(hostname, ".local")
 
 		// Create new registration
 		newServer, err := zeroconf.RegisterProxy(
