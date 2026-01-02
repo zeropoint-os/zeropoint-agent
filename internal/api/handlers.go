@@ -69,16 +69,16 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 	}
 }
 
-// CreateExposure handles POST /exposures/{app_id}
+// CreateExposure handles POST /exposures/{module_id}
 // @Summary Create an exposure for an application
 // @Description Exposes an application externally via Envoy reverse proxy
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param module_id path string true "Module ID"
 // @Param body body CreateExposureRequest true "Exposure configuration"
 // @Success 201 {object} ExposureResponse
 // @Success 200 {object} ExposureResponse "Exposure already exists"
 // @Failure 400 {string} string "Bad request"
-// @Router /exposures/{app_id} [post]
+// @Router /exposures/{module_id} [post]
 func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request) {
 	// Get module_id from URL path
 	vars := mux.Vars(r)
@@ -149,14 +149,14 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
-// GetExposure handles GET /exposures/{app_id}
+// GetExposure handles GET /exposures/{module_id}
 // @Summary Get exposure for an application
 // @Description Returns the exposure details for a specific application
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param module_id path string true "Module ID"
 // @Success 200 {object} ExposureResponse
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{app_id} [get]
+// @Router /exposures/{module_id} [get]
 func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	moduleID := vars["module_id"]
@@ -173,14 +173,14 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// DeleteExposure handles DELETE /exposures/{app_id}
+// DeleteExposure handles DELETE /exposures/{module_id}
 // @Summary Delete an exposure
 // @Description Removes external access for an application
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param module_id path string true "Module ID"
 // @Success 204 "No content"
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{app_id} [delete]
+// @Router /exposures/{module_id} [delete]
 func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	moduleID := vars["module_id"]
@@ -430,19 +430,19 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 	// Step 4: Apply configurations in dependency order
 	errors := make(map[string]string)
-	appliedApps := []string{}
+	appliedModules := []string{}
 
-	for _, appName := range order {
-		config, exists := apps[appName]
+	for _, moduleName := range order {
+		config, exists := apps[moduleName]
 		if !exists {
-			continue // App not in this link request
+			continue // Module not in this link request
 		}
 
-		h.logger.Info("Applying configuration", "app", appName, "config", config)
+		h.logger.Info("Applying configuration", "module", moduleName, "config", config)
 
-		if err := h.applyAppConfiguration(appName, config); err != nil {
-			errors[appName] = err.Error()
-			h.logger.Error("Failed to apply configuration", "app", appName, "error", err)
+		if err := h.applyModuleConfiguration(moduleName, config); err != nil {
+			errors[moduleName] = err.Error()
+			h.logger.Error("Failed to apply configuration", "module", moduleName, "error", err)
 
 			// Rollback on first failure
 			h.logger.Info("Rolling back states due to failure")
@@ -453,17 +453,17 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 			return LinkResponse{
 				Success:      false,
-				Message:      fmt.Sprintf("Configuration failed for app %s", appName),
-				AppliedOrder: appliedApps,
+				Message:      fmt.Sprintf("Configuration failed for module %s", moduleName),
+				AppliedOrder: appliedModules,
 				Errors:       errors,
 			}
 		}
 
-		appliedApps = append(appliedApps, appName)
+		appliedModules = append(appliedModules, moduleName)
 
 		// Create shared networks for any apps this app references
-		if err := h.createSharedNetworksForReferences(appName, config); err != nil {
-			h.logger.Warn("Failed to create shared networks", "app", appName, "error", err)
+		if err := h.createSharedNetworksForReferences(moduleName, config); err != nil {
+			h.logger.Warn("Failed to create shared networks", "module", moduleName, "error", err)
 			// Don't fail the entire operation for network creation failures
 		}
 	}
@@ -511,8 +511,8 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 	return LinkResponse{
 		Success:      true,
-		Message:      "All apps linked successfully",
-		AppliedOrder: appliedApps,
+		Message:      "All modules linked successfully",
+		AppliedOrder: appliedModules,
 	}
 }
 
@@ -549,9 +549,9 @@ func (h *LinkHandlers) validateAppsExist(apps map[string]map[string]interface{})
 	return nil
 }
 
-// applyAppConfiguration applies configuration to a single app
-func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]interface{}) error {
-	h.logger.Info("Applying configuration to app", "app", appName)
+// applyModuleConfiguration applies configuration to a single module
+func (h *LinkHandlers) applyModuleConfiguration(moduleName string, config map[string]interface{}) error {
+	h.logger.Info("Applying configuration to module", "module", moduleName)
 
 	// Resolve app references to actual values
 	resolvedConfig, err := h.resolveAppReferences(config)
@@ -560,7 +560,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 	}
 
 	// Inject system variables (same as installer does)
-	variables, err := h.prepareSystemVariables(appName)
+	variables, err := h.prepareSystemVariables(moduleName)
 	if err != nil {
 		return fmt.Errorf("failed to prepare system variables: %w", err)
 	}
@@ -591,7 +591,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 	}
 
 	// Apply configuration using Terraform
-	appDir := filepath.Join(h.appsDir, appName)
+	appDir := filepath.Join(h.appsDir, moduleName)
 	executor, err := terraform.NewExecutor(appDir)
 	if err != nil {
 		return fmt.Errorf("failed to create terraform executor: %w", err)
@@ -601,7 +601,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 		return fmt.Errorf("terraform apply failed: %w", err)
 	}
 
-	h.logger.Info("Configuration applied successfully", "app", appName)
+	h.logger.Info("Configuration applied successfully", "module", moduleName)
 	return nil
 }
 
@@ -648,10 +648,10 @@ func (h *LinkHandlers) getAppOutput(appName, outputName string) (interface{}, er
 	return output.Value, nil
 }
 
-// prepareSystemVariables creates the standard zp_ variables that all apps need
-func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string, error) {
+// prepareSystemVariables creates the standard zp_ variables that all modules need
+func (h *LinkHandlers) prepareSystemVariables(moduleName string) (map[string]string, error) {
 	// Create network name using the same convention as installer
-	networkName := fmt.Sprintf("zeropoint-app-%s", appName)
+	networkName := fmt.Sprintf("zeropoint-module-%s", moduleName)
 
 	// Get system info
 	arch := runtime.GOARCH
@@ -659,7 +659,7 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 
 	// Prepare base variables (all zp_ prefixed)
 	variables := map[string]string{
-		"zp_app_id":       appName,
+		"zp_module_id":    moduleName,
 		"zp_network_name": networkName,
 		"zp_arch":         arch,
 		"zp_gpu_vendor":   gpuVendor,
@@ -670,7 +670,7 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	if storageRoot == "" {
 		storageRoot = "./data" // default fallback
 	}
-	appStoragePath := filepath.Join(storageRoot, "apps", appName)
+	appStoragePath := filepath.Join(storageRoot, "modules", moduleName)
 	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create app storage directory: %w", err)
 	}
@@ -682,9 +682,9 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	}
 
 	// Pass app storage root to terraform (must be absolute for Docker)
-	variables["zp_app_storage"] = absAppStoragePath
+	variables["zp_module_storage"] = absAppStoragePath
 
-	h.logger.Info("Prepared system variables", "app", appName, "variables", variables)
+	h.logger.Info("Prepared system variables", "module", moduleName, "variables", variables)
 	return variables, nil
 }
 

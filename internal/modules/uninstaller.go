@@ -69,10 +69,10 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	variables := map[string]string{
-		"zp_module_id":    req.ModuleID,
-		"zp_network_name": fmt.Sprintf("zeropoint-module-%s", req.ModuleID),
-		"zp_arch":         "amd64", // These don't matter for destroy
-		"zp_gpu_vendor":   "",      // These don't matter for destroy
+		"zp_module_id":      req.ModuleID,
+		"zp_network_name":   fmt.Sprintf("zeropoint-module-%s", req.ModuleID),
+		"zp_arch":           "amd64", // These don't matter for destroy
+		"zp_gpu_vendor":     "",      // These don't matter for destroy
 		"zp_module_storage": absModuleStoragePath,
 	}
 

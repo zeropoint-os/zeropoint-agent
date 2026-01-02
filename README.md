@@ -156,7 +156,7 @@ terraform {
   }
 }
 
-variable "zp_app_id" {
+variable "zp_module_id" {
   type        = string
   description = "Unique identifier for this app instance (auto-generated or user-provided)"
 }
@@ -178,14 +178,14 @@ variable "zp_gpu_vendor" {
   description = "GPU vendor - nvidia, amd, intel, or empty for no GPU (auto-detected by zeropoint)"
 }
 
-variable "zp_app_storage" {
+variable "zp_module_storage" {
   type        = string
   description = "Host path for persistent storage (managed by zeropoint)"
 }
 
 # Build Ollama image from local Dockerfile
 resource "docker_image" "ollama" {
-  name = "${var.zp_app_id}:latest"
+  name = "${var.zp_module_id}:latest"
   build {
     context    = path.module
     dockerfile = "Dockerfile"
@@ -196,7 +196,7 @@ resource "docker_image" "ollama" {
 
 # Main Ollama container (no host port binding)
 resource "docker_container" "ollama_main" {
-  name  = "${var.zp_app_id}-main"
+  name  = "${var.zp_module_id}-main"
   image = docker_image.ollama.image_id
 
   # Network configuration (provided by zeropoint)
@@ -218,7 +218,7 @@ resource "docker_container" "ollama_main" {
 
   # Persistent storage
   volumes {
-    host_path      = "${var.zp_app_storage}/.ollama"
+    host_path      = "${var.zp_module_storage}/.ollama"
     container_path = "/root/.ollama"
   }
 
@@ -318,7 +318,7 @@ data "docker_container" "openwebui" {
 }
 
 data "docker_network" "ollama_net" {
-  name = "zeropoint-app-ollama"
+  name = "zeropoint-module-ollama"
 }
 
 # Create network attachment
@@ -337,8 +337,8 @@ output "link_established" {
 **Result:**
 
 - OpenWebUI container is now attached to both networks:
-  - `zeropoint-app-openwebui` (its own)
-  - `zeropoint-app-ollama` (Ollama's)
+  - `zeropoint-module-openwebui` (its own)
+  - `zeropoint-module-ollama` (Ollama's)
 - OpenWebUI can resolve `ollama-main:11434` via DNS
 - No restart or configuration change needed
 
@@ -390,7 +390,7 @@ POST /exposures
 Content-Type: application/json
 
 {
-  "app_id": "openwebui",
+  "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local"
 }
 ```
@@ -442,7 +442,7 @@ Content-Type: application/json
    ```json
    // exposures/openwebui/metadata.json
    {
-     "app_id": "openwebui",
+     "module_id": "openwebui",
      "hostname": "openwebui.zeropoint.local",
      "services": {
        "web": {
@@ -457,7 +457,7 @@ Content-Type: application/json
 
 **Result:**
 
-- Envoy is attached to `zeropoint-app-openwebui` network (Terraform state tracks this)
+- Envoy is attached to `zeropoint-module-openwebui` network (Terraform state tracks this)
 - Envoy xDS configuration includes route: `openwebui.zeropoint.local` → `openwebui-main:3000`
 - External traffic to `https://openwebui.zeropoint.local` reaches OpenWebUI
 - No Terraform destroy needed for route updates (xDS is dynamic)
@@ -648,9 +648,9 @@ GET /modules/{module_id}/inspect
 
 Response: 200 OK
 {
-  "app_id": "ollama",
+  "module_id": "ollama",
   "inputs": {
-    "zp_app_id": {
+    "zp_module_id": {
       "type": "string",
       "description": "Unique identifier for this app instance",
       "current_value": "ollama",
@@ -660,7 +660,7 @@ Response: 200 OK
     "zp_network_name": {
       "type": "string",
       "description": "Pre-created Docker network name",
-      "current_value": "zeropoint-app-ollama",
+      "current_value": "zeropoint-module-ollama",
       "required": true,
       "system_managed": true
     },
@@ -680,7 +680,7 @@ Response: 200 OK
       "required": false,
       "system_managed": true
     },
-    "zp_app_storage": {
+    "zp_module_storage": {
       "type": "string",
       "description": "Host path for persistent storage",
       "current_value": "/workspaces/zeropoint-agent/data/modules/ollama",
@@ -713,7 +713,7 @@ GET /modules/{module_id}/inspect?source_url=https://github.com/zeropoint-os/olla
 
 Response: 200 OK
 {
-  "app_id": "ollama",
+  "module_id": "ollama",
   "inputs": { ... },
   "outputs": { ... }
 }
@@ -833,7 +833,7 @@ Response: 404 Not Found
 #### Create Exposure
 
 ```http
-POST /exposures/{app_id}
+POST /exposures/{module_id}
 Content-Type: application/json
 
 {
@@ -845,7 +845,7 @@ Content-Type: application/json
 Response: 201 Created
 {
   "id": "abc123",
-  "app_id": "openwebui",
+  "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
   "container_port": 3000,
@@ -857,7 +857,7 @@ Response: 201 Created
 Response: 200 OK (exposure already exists)
 {
   "id": "abc123",
-  "app_id": "openwebui",
+  "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
   "container_port": 3000,
@@ -877,7 +877,7 @@ Response: 200 OK
   "exposures": [
     {
       "id": "abc123",
-      "app_id": "openwebui",
+      "module_id": "openwebui",
       "hostname": "openwebui.zeropoint.local",
       "protocol": "http",
       "container_port": 3000,
@@ -892,12 +892,12 @@ Response: 200 OK
 #### Get Exposure
 
 ```http
-GET /exposures/{app_id}
+GET /exposures/{module_id}
 
 Response: 200 OK
 {
   "id": "abc123",
-  "app_id": "openwebui",
+  "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
   "container_port": 3000,
@@ -913,7 +913,7 @@ Response: 404 Not Found
 #### Delete Exposure
 
 ```http
-DELETE /exposures/{app_id}
+DELETE /exposures/{module_id}
 
 Response: 204 No Content
 
@@ -1056,7 +1056,7 @@ zeropoint enforces a minimum contract for app modules to ensure predictable beha
 Every app module MUST accept the following system-managed variables (all prefixed with `zp_`):
 
 ```hcl
-variable "zp_app_id" {
+variable "zp_module_id" {
   type        = string
   description = "Unique identifier for this app instance (provided via API path parameter)"
 }
@@ -1078,7 +1078,7 @@ variable "zp_gpu_vendor" {
   description = "GPU vendor (nvidia, amd, intel, or empty) - auto-detected by zeropoint"
 }
 
-variable "zp_app_storage" {
+variable "zp_module_storage" {
   type        = string
   description = "Absolute path to app's persistent storage directory - managed by zeropoint"
 }
@@ -1099,31 +1099,31 @@ variable "zp_app_storage" {
 
 **App Storage Usage**:
 
-Apps organize their persistent data under `zp_app_storage` however they want:
+Apps organize their persistent data under `zp_module_storage` however they want:
 
 ```hcl
 # Example: Ollama stores models
 volumes {
-  host_path      = "${var.zp_app_storage}/.ollama"
+  host_path      = "${var.zp_module_storage}/.ollama"
   container_path = "/root/.ollama"
 }
 
 # Example: Database app with multiple volumes
 volumes {
-  host_path      = "${var.zp_app_storage}/data"
+  host_path      = "${var.zp_module_storage}/data"
   container_path = "/var/lib/postgresql/data"
 }
 
 volumes {
-  host_path      = "${var.zp_app_storage}/config"
+  host_path      = "${var.zp_module_storage}/config"
   container_path = "/etc/postgresql"
 }
 ```
 
 **Storage guarantees**:
-- zeropoint creates `zp_app_storage` directory before terraform apply
+- zeropoint creates `zp_module_storage` directory before terraform apply
 - Path is always absolute (required by Docker bind mounts)
-- Directory is unique per app instance (isolated by `zp_app_id`)
+- Directory is unique per app instance (isolated by `zp_module_id`)
 - Storage persists across container restarts
 - Storage is deleted when app is uninstalled
 
@@ -1134,22 +1134,22 @@ volumes {
 - Reduces boilerplate in app modules
 - Enables network to exist independently of containers
 
-**Validation**: Module must declare both `app_id` and `network_name` variables. zeropoint will inject these during installation.
+**Validation**: Module must declare both `module_id` and `network_name` variables. zeropoint will inject these during installation.
 
 #### 2. Required Resources
 
 Every app module MUST declare at minimum:
 
-- **One `docker_container` resource named `${var.app_id}_main`**: The primary application container
+- **One `docker_container` resource named `${var.module_id}_main`**: The primary application container
 - **Additional containers** (optional): Sidecars, databases, workers, etc.
 
 **Note**: Networks are **NOT** declared in app modules. zeropoint creates the network externally and passes it via `var.network_name`.
 
-**Single-Container Example (app_id="ollama"):**
+**Single-Container Example (module_id="ollama"):**
 
 ```hcl
 resource "docker_container" "ollama_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = docker_image.app.image_id
   
   networks_advanced {
@@ -1158,12 +1158,12 @@ resource "docker_container" "ollama_main" {
 }
 ```
 
-**Multi-Container Example (app_id="myapp"):**
+**Multi-Container Example (module_id="myapp"):**
 
 ```hcl
 # Main application container (REQUIRED)
 resource "docker_container" "myapp_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = docker_image.app.image_id
   
   networks_advanced {
@@ -1177,7 +1177,7 @@ resource "docker_container" "myapp_main" {
 
 # Database sidecar (OPTIONAL)
 resource "docker_container" "myapp_db" {
-  name  = "${var.app_id}-db"
+  name  = "${var.module_id}-db"
   image = "postgres:15"
   
   networks_advanced {
@@ -1187,7 +1187,7 @@ resource "docker_container" "myapp_db" {
 
 # Worker sidecar (OPTIONAL)
 resource "docker_container" "myapp_worker" {
-  name  = "${var.app_id}-worker"
+  name  = "${var.module_id}-worker"
   image = docker_image.app.image_id
   
   networks_advanced {
@@ -1200,9 +1200,9 @@ resource "docker_container" "myapp_worker" {
 
 **Key Points:**
 
-- The `${var.app_id}_main` container is the **primary entry point** for service discovery
-- Terraform resource names MUST use pattern: `${var.app_id}_<role>` (e.g., `ollama_main`, `ollama_db`)
-- Runtime container names use hyphens: `${var.app_id}-<role>` (e.g., `ollama-main`, `ollama-db`)
+- The `${var.module_id}_main` container is the **primary entry point** for service discovery
+- Terraform resource names MUST use pattern: `${var.module_id}_<role>` (e.g., `ollama_main`, `ollama_db`)
+- Runtime container names use hyphens: `${var.module_id}-<role>` (e.g., `ollama-main`, `ollama-db`)
 - Additional containers MUST use `var.network_name` (same network for internal communication)
 - Additional containers SHOULD follow role naming: `_db`, `_worker`, `_redis`, etc.
 - All containers within an app communicate via container names on the shared network
@@ -1210,16 +1210,16 @@ resource "docker_container" "myapp_worker" {
 
 **Multi-Instance Support:**
 
-Users can deploy multiple instances of the same app module by providing unique `app_id` values:
+Users can deploy multiple instances of the same app module by providing unique `module_id` values:
 
-- Production: `app_id="ollama"` → resources: `ollama_main`, `ollama_db`
-- Testing: `app_id="ollama-test"` → resources: `ollama-test_main`, `ollama-test_db`
-- Alice's instance: `app_id="ollama-alice"` → resources: `ollama-alice_main`, `ollama-alice_db`
-- Project A: `app_id="projecta-db"` → resources: `projecta-db_main`
+- Production: `module_id="ollama"` → resources: `ollama_main`, `ollama_db`
+- Testing: `module_id="ollama-test"` → resources: `ollama-test_main`, `ollama-test_db`
+- Alice's instance: `module_id="ollama-alice"` → resources: `ollama-alice_main`, `ollama-alice_db`
+- Project A: `module_id="projecta-db"` → resources: `projecta-db_main`
 
-**Note**: `app_id` is a freeform unique identifier. Users choose meaningful names for their use case.
+**Note**: `module_id` is a freeform unique identifier. Users choose meaningful names for their use case.
 
-**Validation**: `terraform plan` must show at least one `docker_container` resource with Terraform resource name exactly matching `${app_id}_main`.
+**Validation**: `terraform plan` must show at least one `docker_container` resource with Terraform resource name exactly matching `${module_id}_main`.
 
 #### 3. Required Outputs
 
@@ -1229,7 +1229,7 @@ Every app module MUST expose outputs for containers and service ports.
 
 All container outputs MUST be `docker_container` resource references, named by role.
 
-**Single-Container Example (app_id="ollama"):**
+**Single-Container Example (module_id="ollama"):**
 
 ```hcl
 output "main" {
@@ -1238,7 +1238,7 @@ output "main" {
 }
 ```
 
-**Multi-Container Example (app_id="myapp"):**
+**Multi-Container Example (module_id="myapp"):**
 
 ```hcl
 output "main" {
@@ -1358,8 +1358,8 @@ output "main_ports" {
 4. **Multi-service support**: Users can expose individual services from same app:
 
    ```bash
-   POST /exposures {"app_id": "myapp", "service": "web", "hostname": "app.example.com"}
-   POST /exposures {"app_id": "myapp", "service": "api", "hostname": "api.example.com"}
+   POST /exposures {"module_id": "myapp", "service": "web", "hostname": "app.example.com"}
+   POST /exposures {"module_id": "myapp", "service": "api", "hostname": "api.example.com"}
    ```
 5. **Info endpoints**: Agent can expose metadata about available services:
 
@@ -1415,28 +1415,28 @@ App modules MUST follow these naming patterns:
 
 | Resource                            | Pattern                             | Example                        | Notes                                  |
 | ------------------------------------- | ------------------------------------- | -------------------------------- | ---------------------------------------- |
-| Main container (Terraform resource) | `${var.app_id}_main`                | `docker_container.ollama_main` | Exact match required                   |
-| Main container (runtime name)       | `${var.app_id}-main`                | `ollama-main`                  | DNS-resolvable name (hyphen)           |
-| Additional containers (Terraform)   | `${var.app_id}_<role>`              | `docker_container.ollama_db`   | Underscores in resource names          |
-| Additional containers (runtime)     | `${var.app_id}-<role>`              | `ollama-db`, `ollama-worker`   | Hyphens in runtime names               |
-| Network                             | `zeropoint-app-${var.app_id}`       | `zeropoint-app-ollama`         | Created by zeropoint, passed to module |
-| Images                              | `zeropoint-app-${var.app_id}:<tag>` | `zeropoint-app-ollama:latest`  | Optional, can use registry images      |
+| Main container (Terraform resource) | `${var.module_id}_main`                | `docker_container.ollama_main` | Exact match required                   |
+| Main container (runtime name)       | `${var.module_id}-main`                | `ollama-main`                  | DNS-resolvable name (hyphen)           |
+| Additional containers (Terraform)   | `${var.module_id}_<role>`              | `docker_container.ollama_db`   | Underscores in resource names          |
+| Additional containers (runtime)     | `${var.module_id}-<role>`              | `ollama-db`, `ollama-worker`   | Hyphens in runtime names               |
+| Network                             | `zeropoint-module-${var.module_id}`       | `zeropoint-module-ollama`         | Created by zeropoint, passed to module |
+| Images                              | `zeropoint-module-${var.module_id}:<tag>` | `zeropoint-module-ollama:latest`  | Optional, can use registry images      |
 
 **Purpose**: Predictable resource discovery for link/exposure generation.
 
-**Multi-Container Naming Example (app_id="myapp"):**
+**Multi-Container Naming Example (module_id="myapp"):****
 
 ```hcl
 resource "docker_container" "myapp_main" {
-  name = "${var.app_id}-main"  # Runtime: "myapp-main"
+  name = "${var.module_id}-main"  # Runtime: "myapp-main"
   
   networks_advanced {
-    name = var.network_name  # "zeropoint-app-myapp" (created by zeropoint)
+    name = var.network_name  # "zeropoint-module-myapp" (created by zeropoint)
   }
 }
 
 resource "docker_container" "myapp_db" {
-  name = "${var.app_id}-db"    # Runtime: "myapp-db"
+  name = "${var.module_id}-db"    # Runtime: "myapp-db"
   
   networks_advanced {
     name = var.network_name
@@ -1444,7 +1444,7 @@ resource "docker_container" "myapp_db" {
 }
 
 resource "docker_container" "myapp_worker" {
-  name = "${var.app_id}-worker" # Runtime: "myapp-worker"
+  name = "${var.module_id}-worker" # Runtime: "myapp-worker"
   
   networks_advanced {
     name = var.network_name
@@ -1452,19 +1452,19 @@ resource "docker_container" "myapp_worker" {
 }
 ```
 
-**Multi-Instance Example (app_id="myapp-test"):**
+**Multi-Instance Example (module_id="myapp-test"):**
 
 ```hcl
 resource "docker_container" "myapp-test_main" {
-  name = "${var.app_id}-main"  # Runtime: "myapp-test-main"
+  name = "${var.module_id}-main"  # Runtime: "myapp-test-main"
   
   networks_advanced {
-    name = var.network_name  # "zeropoint-app-myapp-test"
+    name = var.network_name  # "zeropoint-module-myapp-test"
   }
 }
 
 resource "docker_container" "myapp-test_db" {
-  name = "${var.app_id}-db"    # Runtime: "myapp-test-db"
+  name = "${var.module_id}-db"    # Runtime: "myapp-test-db"
   
   networks_advanced {
     name = var.network_name
@@ -1472,12 +1472,12 @@ resource "docker_container" "myapp-test_db" {
 }
 ```
 
-**Note**: Network (`zeropoint-app-${var.app_id}`) is created by zeropoint **before** app module is applied.
+**Note**: Network (`zeropoint-module-${var.module_id}`) is created by zeropoint **before** app module is applied.
 
 **Validation**: zeropoint inspects `terraform plan` JSON output to verify:
 
-- Exactly one container resource with Terraform name `${app_id}_main` (exact match)
-- Main container runtime name matches `${app_id}-main` (hyphenated)
+- Exactly one container resource with Terraform name `${module_id}_main` (exact match)
+- Main container runtime name matches `${module_id}-main` (hyphenated)
 - All containers reference `var.network_name` (not a local resource)
 - No `docker_network` resources declared in module
 
@@ -1489,7 +1489,7 @@ App modules MUST NOT include `ports` blocks in `docker_container` resources:
 
 ```hcl
 resource "docker_container" "main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = docker_image.app.image_id
   
   ports {
@@ -1503,7 +1503,7 @@ resource "docker_container" "main" {
 
 ```hcl
 resource "docker_container" "main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = docker_image.app.image_id
   
   # Ports exposed internally via Dockerfile EXPOSE, no host binding
@@ -1540,7 +1540,7 @@ POST /modules/mycustomapp
 2. **Terraform Plan (Dry-Run)**
 
    ```bash
-   terraform plan -var="app_id=mycustomapp" -out=/tmp/plan.tfplan
+   terraform plan -var="module_id=mycustomapp" -out=/tmp/plan.tfplan
    ```
 
    **Success criteria**: Exit code 0, plan file generated
@@ -1558,7 +1558,7 @@ POST /modules/mycustomapp
    - Additional containers (sidecars, etc.) are permitted but not required
 5. **Validate Naming Conventions**
 
-   - Check main `docker_container.name` == `"${app_id}-main"`
+   - Check main `docker_container.name` == `"${module_id}-main"`
    - Verify containers use `var.network_name` (not a locally-created network)
 6. **Validate No Host Ports**
 
@@ -1592,7 +1592,7 @@ POST /modules/mycustomapp
     "Service 'web' in main_ports has invalid protocol: 'websocket' (must be http, grpc, or tcp)",
     "Multiple services have default=true (only one allowed): web, api",
     "Output 'config' is not a docker_container resource (non-container outputs not allowed)",
-    "Container name 'mycustomapp-app' does not match required pattern '${app_id}-main'",
+    "Container name 'mycustomapp-app' does not match required pattern '${module_id}-main'",
     "Host port binding detected on container 'mycustomapp-app' (port 8080:30001)"
   ]
 }
@@ -1670,7 +1670,7 @@ func validateResources(planJSON []byte, appID string) error {
     for _, rc := range plan.ResourceChanges {
         switch rc.Type {
         case "docker_container":
-            // Check if this is the main container (resource name must be exactly "${app_id}_main")
+            // Check if this is the main container (resource name must be exactly "${module_id}_main")
             isMainContainer := rc.Name == expectedResourceName
       
             if isMainContainer {
@@ -1701,7 +1701,7 @@ func validateResources(planJSON []byte, appID string) error {
     }
 
     if !foundMainContainer {
-        errors = append(errors, fmt.Sprintf("Missing required resource: docker_container.%s (Terraform resource name must be exactly '${app_id}_main')", expectedResourceName))
+        errors = append(errors, fmt.Sprintf("Missing required resource: docker_container.%s (Terraform resource name must be exactly '${module_id}_main')", expectedResourceName))
     }
 
     if len(errors) > 0 {
@@ -1875,12 +1875,12 @@ func isContainerResource(output interface{}) bool {
 
 App modules MAY include:
 
-- **Additional containers**: Sidecars, init containers, databases, workers (follow `${app_id}-<role>` naming)
+- **Additional containers**: Sidecars, init containers, databases, workers (follow `${module_id}-<role>` naming)
 - **Volumes**: For persistent data (`docker_volume` resources)
 - **Images from registry**: Pull from Docker Hub instead of building locally
 - **Environment variables**: Via `env` blocks in containers
 - **Health checks**: Via `healthcheck` blocks
-- **Custom variables**: Beyond `app_id`, for user configuration
+- **Custom variables**: Beyond `module_id`, for user configuration
 - **Dependencies between containers**: Use `depends_on` to ensure ordering
 
 **Example of optional components (multi-container app with database):**
@@ -1903,17 +1903,17 @@ variable "db_password" {
 
 # Persistent volume for database
 resource "docker_volume" "db_data" {
-  name = "zeropoint-app-${var.app_id}-db"
+  name = "zeropoint-module-${var.module_id}-db"
 }
 
 # Persistent volume for app data
 resource "docker_volume" "app_data" {
-  name = "zeropoint-app-${var.app_id}-data"
+  name = "zeropoint-module-${var.module_id}-data"
 }
 
 # Database sidecar (starts first)
 resource "docker_container" "myapp_db" {
-  name  = "${var.app_id}-db"
+  name  = "${var.module_id}-db"
   image = "postgres:15"
 
   networks_advanced {
@@ -1940,7 +1940,7 @@ resource "docker_container" "myapp_db" {
 
 # Main application container (waits for db)
 resource "docker_container" "myapp_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = docker_image.app.image_id
 
   networks_advanced {
@@ -1971,7 +1971,7 @@ resource "docker_container" "myapp_main" {
 
 # Background worker (optional)
 resource "docker_container" "myapp_worker" {
-  name  = "${var.app_id}-worker"
+  name  = "${var.module_id}-worker"
   image = docker_image.app.image_id
 
   networks_advanced {
@@ -2005,7 +2005,7 @@ output "worker" {
 **Key Notes for Multi-Container Apps:**
 
 - All containers share the same network (provided via `var.network_name`, created by zeropoint)
-- Containers communicate via DNS (e.g., main container reaches db at `${app_id}-db:5432`)
+- Containers communicate via DNS (e.g., main container reaches db at `${module_id}-db:5432`)
 - Use `depends_on` to ensure containers start in the correct order
 - Outputs always reference the **main** container (the primary service endpoint)
 - Links attach external apps to the shared network, giving them access to all containers
@@ -2054,14 +2054,14 @@ App module validation failed: output 'admin_password' is not a docker_container 
 
 ```hcl
 # Wrong Terraform resource name
-resource "docker_container" "main" {  # ❌ Should be "${var.app_id}_main" e.g., "myapp_main"
-  name  = "${var.app_id}-main"
+resource "docker_container" "main" {  # ❌ Should be "${var.module_id}_main" e.g., "myapp_main"
+  name  = "${var.module_id}-main"
   image = "myapp:latest"
 }
 
 # Or wrong runtime container name
 resource "docker_container" "myapp_main" {
-  name  = "myapp-container"  # ❌ Should be "${var.app_id}-main"
+  name  = "myapp-container"  # ❌ Should be "${var.module_id}-main"
   image = "myapp:latest"
 }
 ```
@@ -2069,7 +2069,7 @@ resource "docker_container" "myapp_main" {
 **Errors:**
 
 ```
-Missing required resource: docker_container.myapp_main (Terraform resource name must be exactly '${app_id}_main')
+Missing required resource: docker_container.myapp_main (Terraform resource name must be exactly '${module_id}_main')
 ```
 
 or
@@ -2082,7 +2082,7 @@ Main container runtime name 'myapp-container' does not match required pattern 'm
 
 ```hcl
 resource "docker_container" "myapp_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = "myapp:latest"
 
   ports {
@@ -2103,11 +2103,11 @@ Host port bindings detected on container 'main' (not allowed)
 ```hcl
 # ❌ App modules must NOT create networks
 resource "docker_network" "app_net" {
-  name = "zeropoint-app-${var.app_id}"
+  name = "zeropoint-module-${var.module_id}"
 }
 
 resource "docker_container" "myapp_main" {
-  name  = "${var.app_id}-main"
+  name  = "${var.module_id}-main"
   image = "myapp:latest"
   
   networks_advanced {
@@ -2224,7 +2224,7 @@ curl -X POST http://localhost:2370/links \
 curl -X POST http://localhost:2370/exposures \
   -H "Content-Type: application/json" \
   -d '{
-    "app_id": "openwebui",
+    "module_id": "openwebui",
     "hostname": "openwebui.zeropoint.local",
     "container_port": 3000
   }'
