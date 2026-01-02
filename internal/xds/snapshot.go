@@ -203,7 +203,7 @@ func mustMarshalAny(msg proto.Message) *anypb.Any {
 // Exposure represents a service exposure (minimal interface to avoid import cycle)
 type Exposure struct {
 	ID            string
-	AppName       string
+	ModuleName    string
 	Protocol      string
 	Hostname      string
 	ContainerPort uint32

@@ -11,7 +11,7 @@ import (
 
 // LoadContainers reads all {container}_ports and {container}_mounts outputs from a Terraform module
 // and returns a map of container configurations
-func LoadContainers(modulePath string, appID string) (map[string]Container, error) {
+func LoadContainers(modulePath string, moduleID string) (map[string]Container, error) {
 	executor, err := terraform.NewExecutor(modulePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create terraform executor: %w", err)
@@ -72,7 +72,7 @@ func LoadContainers(modulePath string, appID string) (map[string]Container, erro
 				return nil, fmt.Errorf("%s value has unexpected type: %T", mountsOutputName, mountsOutput.Value)
 			}
 
-			mounts, err := parseMounts(mountsValue, appID, containerName)
+			mounts, err := parseMounts(mountsValue, moduleID, containerName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse %s: %w", mountsOutputName, err)
 			}
@@ -135,7 +135,7 @@ func parsePorts(raw map[string]interface{}) (map[string]Port, error) {
 }
 
 // parseMounts converts raw Terraform output map to Mount structs with host paths
-func parseMounts(raw map[string]interface{}, appID string, containerName string) (map[string]Mount, error) {
+func parseMounts(raw map[string]interface{}, moduleID string, containerName string) (map[string]Mount, error) {
 	mounts := make(map[string]Mount)
 
 	for mountName, mountConfigRaw := range raw {
@@ -160,8 +160,8 @@ func parseMounts(raw map[string]interface{}, appID string, containerName string)
 			readOnly = ro
 		}
 
-		// Generate host path: /data/apps/{app_id}/{container}/{mount_name}
-		hostPath := filepath.Join(GetDataDir(), appID, containerName, mountName)
+		// Generate host path: /data/modules/{module_id}/{container}/{mount_name}
+		hostPath := filepath.Join(GetDataDir(), moduleID, containerName, mountName)
 
 		mounts[mountName] = Mount{
 			ContainerPath: containerPath,

@@ -23,25 +23,25 @@ func NewUninstaller(appsDir string, logger *slog.Logger) *Uninstaller {
 	}
 }
 
-// UninstallRequest represents an app uninstallation request
+// UninstallRequest represents a module uninstallation request
 type UninstallRequest struct {
-	AppID string `json:"app_id"` // App identifier to uninstall
+	ModuleID string `json:"module_id"` // Module identifier to uninstall
 }
 
-// Uninstall removes an app by destroying terraform resources and deleting the module directory
+// Uninstall removes a module by destroying terraform resources and deleting the module directory
 func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback) error {
-	logger := u.logger.With("app_id", req.AppID)
+	logger := u.logger.With("module_id", req.ModuleID)
 	logger.Info("starting uninstallation")
 
 	if progress == nil {
 		progress = func(ProgressUpdate) {} // No-op if not provided
 	}
 
-	modulePath := filepath.Join(u.appsDir, req.AppID)
+	modulePath := filepath.Join(u.appsDir, req.ModuleID)
 
-	// Check if app exists
+	// Check if module exists
 	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		return fmt.Errorf("app '%s' not found", req.AppID)
+		return fmt.Errorf("module '%s' not found", req.ModuleID)
 	}
 
 	// Destroy terraform resources
@@ -61,19 +61,19 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	// Destroy with auto-approve
-	appStoragePath := filepath.Join(GetDataDir(), req.AppID)
-	absAppStoragePath, err := filepath.Abs(appStoragePath)
+	moduleStoragePath := filepath.Join(GetDataDir(), req.ModuleID)
+	absModuleStoragePath, err := filepath.Abs(moduleStoragePath)
 	if err != nil {
 		// If we can't get absolute path, try with relative (destroy should still work)
-		absAppStoragePath = appStoragePath
+		absModuleStoragePath = moduleStoragePath
 	}
 
 	variables := map[string]string{
-		"zp_app_id":       req.AppID,
-		"zp_network_name": fmt.Sprintf("zeropoint-app-%s", req.AppID),
+		"zp_module_id":    req.ModuleID,
+		"zp_network_name": fmt.Sprintf("zeropoint-module-%s", req.ModuleID),
 		"zp_arch":         "amd64", // These don't matter for destroy
 		"zp_gpu_vendor":   "",      // These don't matter for destroy
-		"zp_app_storage":  absAppStoragePath,
+		"zp_module_storage": absModuleStoragePath,
 	}
 
 	if err := executor.Destroy(variables); err != nil {

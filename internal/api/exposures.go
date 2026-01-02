@@ -28,7 +28,7 @@ const (
 // Exposure represents a service exposure
 type Exposure struct {
 	ID            string    `json:"id"`
-	AppID         string    `json:"app_id"`         // References App.ID
+	ModuleID      string    `json:"module_id"`       // References Module.ID
 	Protocol      string    `json:"protocol"`       // "http" or "tcp"
 	Hostname      string    `json:"hostname"`       // required for http, optional for tcp
 	ContainerPort uint32    `json:"container_port"` // port inside container

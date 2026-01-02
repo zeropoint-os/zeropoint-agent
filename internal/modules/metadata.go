@@ -7,17 +7,17 @@ import (
 	"time"
 )
 
-// Metadata represents the source information for an installed app
+// Metadata represents the source information for an installed module
 type Metadata struct {
 	Source   string    `json:"source"`        // Git URL or local path
 	Ref      string    `json:"ref,omitempty"` // Git branch/tag if cloned from git
-	ClonedAt time.Time `json:"cloned_at"`     // When the app was installed
-	AppID    string    `json:"app_id"`        // Unique app identifier
+	ClonedAt time.Time `json:"cloned_at"`     // When the module was installed
+	ModuleID string    `json:"module_id"`     // Unique module identifier
 }
 
 const metadataFileName = ".zeropoint.json"
 
-// SaveMetadata writes app metadata to .zeropoint.json in the module directory
+// SaveMetadata writes module metadata to .zeropoint.json in the module directory
 func SaveMetadata(modulePath string, metadata *Metadata) error {
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {

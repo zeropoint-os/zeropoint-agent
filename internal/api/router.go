@@ -15,7 +15,7 @@ import (
 
 type apiEnv struct {
 	docker    *client.Client
-	apps      *AppHandlers
+	modules   *ModuleHandlers
 	exposures *ExposureHandlers
 	inspect   *InspectHandlers
 	logger    *slog.Logger
@@ -28,10 +28,10 @@ type HealthResponse struct {
 }
 
 func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
-	appsDir := apps.GetAppsDir()
+	modulesDir := modules.GetModulesDir()
 
-	installer := apps.NewInstaller(dockerClient, appsDir, logger)
-	uninstaller := apps.NewUninstaller(appsDir, logger)
+	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
+	uninstaller := modules.NewUninstaller(modulesDir, logger)
 
 	// Initialize exposure store
 	exposureStore, err := NewExposureStore(dockerClient, xdsServer, mdnsService, logger)
@@ -45,14 +45,14 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		return nil, fmt.Errorf("failed to initialize link store: %w", err)
 	}
 
-	appHandlers := NewAppHandlers(installer, uninstaller, dockerClient, logger)
+	moduleHandlers := NewModuleHandlers(installer, uninstaller, dockerClient, logger)
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
-	inspectHandlers := NewInspectHandlers(appsDir, logger)
-	linkHandlers := NewLinkHandlers(appsDir, linkStore, logger)
+	inspectHandlers := NewInspectHandlers(modulesDir, logger)
+	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
 
 	env := &apiEnv{
 		docker:    dockerClient,
-		apps:      appHandlers,
+		modules:   moduleHandlers,
 		exposures: exposureHandlers,
 		inspect:   inspectHandlers,
 		logger:    logger,
@@ -64,19 +64,19 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
 
 	// Module endpoints
-	r.HandleFunc("/modules", appHandlers.ListApps).Methods(http.MethodGet)
-	r.HandleFunc("/modules/{name}", appHandlers.InstallApp).Methods(http.MethodPost)
-	r.HandleFunc("/modules/{name}", appHandlers.UninstallApp).Methods(http.MethodDelete)
-	r.HandleFunc("/modules/{module_id}/inspect", inspectHandlers.InspectApp).Methods(http.MethodGet)
+	r.HandleFunc("/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
+	r.HandleFunc("/modules/{name}", moduleHandlers.InstallModule).Methods(http.MethodPost)
+	r.HandleFunc("/modules/{name}", moduleHandlers.UninstallModule).Methods(http.MethodDelete)
+	r.HandleFunc("/modules/{module_id}/inspect", inspectHandlers.InspectModule).Methods(http.MethodGet)
 
 	// Link endpoints
 	linkHandlers.RegisterRoutes(r)
 
 	// Exposure endpoints
 	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{app_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
-	r.HandleFunc("/exposures/{app_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{app_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/exposures/{module_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/exposures/{module_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/exposures/{module_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
 
 	return r, nil
 }

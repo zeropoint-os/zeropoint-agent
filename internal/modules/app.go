@@ -32,19 +32,19 @@ type Container struct {
 	Mounts map[string]Mount `json:"mounts,omitempty"` // Mount configurations (from {container}_mounts output)
 }
 
-// App represents an installed application managed by zeropoint-agent.
+// Module represents an installed module managed by zeropoint-agent.
 // State is discovered from filesystem + Terraform outputs + Docker API.
-type App struct {
-	ID            string               `json:"id"`                       // App identifier (directory name)
-	ModulePath    string               `json:"module_path"`              // Path to Terraform module (e.g., "apps/ollama")
+type Module struct {
+	ID            string               `json:"id"`                       // Module identifier (directory name)
+	ModulePath    string               `json:"module_path"`              // Path to Terraform module (e.g., "modules/ollama")
 	State         string               `json:"state"`                    // Runtime state: "running" | "stopped" | "crashed" | "unknown"
 	ContainerID   string               `json:"container_id,omitempty"`   // Docker container ID (for main container)
 	ContainerName string               `json:"container_name,omitempty"` // Docker container name (for main container)
 	IPAddress     string               `json:"ip_address,omitempty"`     // Container IP address (for main container)
-	Containers    map[string]Container `json:"containers,omitempty"`     // App containers with their ports (from {container}_ports outputs)
+	Containers    map[string]Container `json:"containers,omitempty"`     // Module containers with their ports (from {container}_ports outputs)
 }
 
-// App states
+// Module states
 const (
 	StateRunning = "running"
 	StateStopped = "stopped"
@@ -61,19 +61,19 @@ func GetStorageRoot() string {
 	return root
 }
 
-// GetAppsDir returns the apps directory path
-func GetAppsDir() string {
-	return filepath.Join(GetStorageRoot(), "apps")
+// GetModulesDir returns the modules directory path
+func GetModulesDir() string {
+	return filepath.Join(GetStorageRoot(), "modules")
 }
 
-// GetDataDir returns the data directory path for app storage
+// GetDataDir returns the data directory path for module storage
 func GetDataDir() string {
-	return filepath.Join(GetStorageRoot(), "data", "apps")
+	return filepath.Join(GetStorageRoot(), "data", "modules")
 }
 
 // GetContainerStatus queries Docker to get the container's runtime state
-func (a *App) GetContainerStatus(ctx context.Context, docker *client.Client) error {
-	containerName := fmt.Sprintf("%s-main", a.ID)
+func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) error {
+	containerName := fmt.Sprintf("%s-main", m.ID)
 
 	containers, err := docker.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
@@ -83,9 +83,9 @@ func (a *App) GetContainerStatus(ctx context.Context, docker *client.Client) err
 	for _, c := range containers.Items {
 		for _, name := range c.Names {
 			if name == "/"+containerName || name == containerName {
-				a.ContainerID = c.ID[:12]
-				a.ContainerName = containerName
-				a.State = string(c.State)
+				m.ContainerID = c.ID[:12]
+				m.ContainerName = containerName
+				m.State = string(c.State)
 
 				// Get IP address if running
 				if c.State == "running" {
@@ -93,7 +93,7 @@ func (a *App) GetContainerStatus(ctx context.Context, docker *client.Client) err
 					if err == nil {
 						for _, network := range inspect.Container.NetworkSettings.Networks {
 							if network.IPAddress.IsValid() {
-								a.IPAddress = network.IPAddress.String()
+								m.IPAddress = network.IPAddress.String()
 								break
 							}
 						}
@@ -105,6 +105,6 @@ func (a *App) GetContainerStatus(ctx context.Context, docker *client.Client) err
 	}
 
 	// Container not found
-	a.State = StateUnknown
+	m.State = StateUnknown
 	return nil
 }

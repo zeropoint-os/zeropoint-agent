@@ -49,18 +49,18 @@ func NewInstaller(docker *client.Client, appsDir string, logger *slog.Logger) *I
 	}
 }
 
-// InstallRequest represents an app installation request
+// InstallRequest represents a module installation request
 type InstallRequest struct {
 	Source    string `json:"source,omitempty"`     // Git URL (e.g., https://user:pat@github.com/org/repo.git@v1.0)
 	LocalPath string `json:"local_path,omitempty"` // Local module path (alternative to Source)
-	AppID     string `json:"app_id"`               // Unique app identifier
+	ModuleID  string `json:"module_id"`            // Unique module identifier
 	Arch      string `json:"arch,omitempty"`       // Optional architecture override
 	GPUVendor string `json:"gpu_vendor,omitempty"` // Optional GPU vendor override
 }
 
-// Install installs an app from git or local source
+// Install installs a module from git or local source
 func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error {
-	logger := i.logger.With("app_id", req.AppID)
+	logger := i.logger.With("module_id", req.ModuleID)
 	logger.Info("starting installation")
 
 	if progress == nil {
@@ -84,9 +84,9 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 		}
 		defer os.RemoveAll(tmpDir)
 
-		// Copy to apps directory (without .git)
-		targetPath := filepath.Join(i.appsDir, req.AppID)
-		logger.Info("copying module to apps directory", "target", targetPath)
+		// Copy to modules directory (without .git)
+		targetPath := filepath.Join(i.appsDir, req.ModuleID)
+		logger.Info("copying module to modules directory", "target", targetPath)
 		if err := copyDirWithoutGit(tmpDir, targetPath); err != nil {
 			logger.Error("failed to copy module", "error", err)
 			return fmt.Errorf("failed to copy module: %w", err)
@@ -97,7 +97,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 			Source:   gitURL,
 			Ref:      ref,
 			ClonedAt: time.Now(),
-			AppID:    req.AppID,
+			ModuleID: req.ModuleID,
 		}
 		if err := SaveMetadata(targetPath, metadata); err != nil {
 			logger.Error("failed to save metadata", "error", err)
@@ -116,13 +116,13 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	// Validate module conforms to contract
 	logger.Info("validating module")
 	progress(ProgressUpdate{Status: "validating", Message: "Validating module"})
-	if err := validator.ValidateAppModule(modulePath, req.AppID); err != nil {
+	if err := validator.ValidateAppModule(modulePath, req.ModuleID); err != nil {
 		logger.Error("module validation failed", "error", err)
 		return fmt.Errorf("module validation failed: %w", err)
 	}
 
 	// Create network
-	networkName := fmt.Sprintf("zeropoint-app-%s", req.AppID)
+	networkName := fmt.Sprintf("zeropoint-module-%s", req.ModuleID)
 	logger.Info("creating docker network", "network", networkName)
 	progress(ProgressUpdate{Status: "network", Message: "Creating Docker network"})
 	if err := i.createNetwork(networkName); err != nil {
@@ -144,29 +144,29 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 
 	// Prepare base variables (all zp_ prefixed)
 	variables := map[string]string{
-		"zp_app_id":       req.AppID,
+		"zp_module_id":    req.ModuleID,
 		"zp_network_name": networkName,
 		"zp_arch":         arch,
 		"zp_gpu_vendor":   gpuVendor,
 	}
 
-	// Create app storage root directory
-	appStoragePath := filepath.Join(GetDataDir(), req.AppID)
-	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
-		logger.Error("failed to create app storage directory", "path", appStoragePath, "error", err)
-		return fmt.Errorf("failed to create app storage directory: %w", err)
+	// Create module storage root directory
+	moduleStoragePath := filepath.Join(GetDataDir(), req.ModuleID)
+	if err := os.MkdirAll(moduleStoragePath, 0755); err != nil {
+		logger.Error("failed to create module storage directory", "path", moduleStoragePath, "error", err)
+		return fmt.Errorf("failed to create module storage directory: %w", err)
 	}
 
 	// Convert to absolute path for Docker volumes
-	absAppStoragePath, err := filepath.Abs(appStoragePath)
+	absModuleStoragePath, err := filepath.Abs(moduleStoragePath)
 	if err != nil {
-		logger.Error("failed to get absolute path", "path", appStoragePath, "error", err)
+		logger.Error("failed to get absolute path", "path", moduleStoragePath, "error", err)
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
-	logger.Info("created app storage directory", "path", absAppStoragePath)
+	logger.Info("created module storage directory", "path", absModuleStoragePath)
 
-	// Pass app storage root to terraform (must be absolute for Docker)
-	variables["zp_app_storage"] = absAppStoragePath
+	// Pass module storage root to terraform (must be absolute for Docker)
+	variables["zp_module_storage"] = absModuleStoragePath
 
 	// Apply terraform
 	logger.Info("applying terraform")
