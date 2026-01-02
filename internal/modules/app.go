@@ -54,7 +54,7 @@ const (
 
 // GetStorageRoot returns the storage root directory from environment or default
 func GetStorageRoot() string {
-	root := os.Getenv("APP_STORAGE_ROOT")
+	root := os.Getenv("MODULE_STORAGE_ROOT")
 	if root == "" {
 		return "."
 	}

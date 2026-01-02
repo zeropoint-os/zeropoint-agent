@@ -57,7 +57,7 @@ type ExposureStore struct {
 
 // NewExposureStore creates a new exposure store
 func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (*ExposureStore, error) {
-	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
 	}

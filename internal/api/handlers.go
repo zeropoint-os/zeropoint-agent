@@ -656,7 +656,7 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	}
 
 	// Create app storage directory if needed
-	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = "./data" // default fallback
 	}
