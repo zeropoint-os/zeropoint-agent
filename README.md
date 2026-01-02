@@ -546,6 +546,25 @@ DELETE /exposures/openwebui
 
 ## API Reference
 
+### System
+
+#### Health Check
+
+```http
+GET /health
+
+Response: 200 OK
+{
+  "status": "healthy"
+}
+
+Response: 503 Service Unavailable (Docker unavailable)
+{
+  "status": "unhealthy",
+  "error": "Docker daemon not available"
+}
+```
+
 ### Apps
 
 #### Install App
@@ -556,16 +575,17 @@ Content-Type: application/json
 
 {
   "source": "https://github.com/zeropoint-os/ollama.git",
-  "local_path": "/path/to/module"  // Optional: use local module instead
+  "app_id": "ollama",
+  "local_path": "/path/to/module",  // Optional: use local module instead
+  "arch": "amd64",                   // Optional: architecture override
+  "gpu_vendor": "nvidia"             // Optional: GPU vendor override
 }
 
 Response: 200 OK (streaming JSON progress updates)
 {
   "status": "downloading",
-  "message": "Cloning repository...",
-  "progress": 10
+  "message": "Cloning repository..."
 }
-```
 ```
 
 #### List Apps
@@ -574,41 +594,38 @@ Response: 200 OK (streaming JSON progress updates)
 GET /apps
 
 Response: 200 OK
-[
-  {
-    "id": "ollama",
-    "state": "running",
-    "module_path": "apps/ollama"
-  },
-  {
-    "id": "openwebui",
-    "state": "running",
-    "module_path": "apps/openwebui"
-  }
-]
-```
-
-#### Start App
-
-```http
-POST /apps/{id}/start
-
-Response: 200 OK
 {
-  "id": "ollama",
-  "state": "running"
-}
-```
-
-#### Stop App
-
-```http
-POST /apps/{id}/stop
-
-Response: 200 OK
-{
-  "id": "ollama",
-  "state": "stopped"
+  "apps": [
+    {
+      "id": "ollama",
+      "state": "running",
+      "module_path": "apps/ollama",
+      "container_id": "abc123",
+      "container_name": "ollama-main",
+      "ip_address": "172.20.0.2",
+      "containers": {
+        "main": {
+          "ports": {
+            "api": {
+              "port": 11434,
+              "protocol": "http",
+              "transport": "tcp",
+              "description": "Ollama API endpoint",
+              "default": true
+            }
+          },
+          "mounts": {
+            "models": {
+              "host_path": "/workspaces/zeropoint-agent/data/apps/ollama/.ollama",
+              "container_path": "/root/.ollama",
+              "description": "Model storage",
+              "read_only": false
+            }
+          }
+        }
+      }
+    }
+  ]
 }
 ```
 
@@ -618,6 +635,10 @@ Response: 200 OK
 DELETE /apps/{name}
 
 Response: 200 OK (streaming JSON progress updates)
+{
+  "status": "destroying",
+  "message": "Removing containers..."
+}
 ```
 
 #### Inspect App
@@ -705,20 +726,25 @@ Response: 200 OK
 #### Create Link
 
 ```http
-POST /links
+POST /links/{id}
 Content-Type: application/json
 
 {
-  "from_app": "openwebui",
-  "to_app": "ollama"
+  "apps": {
+    "openwebui": {
+      "ollama_host": "ollama-main",
+      "ollama_port": 11434
+    },
+    "ollama": {}
+  }
 }
 
 Response: 200 OK
 {
-  "id": "openwebui-to-ollama",
-  "from_app": "openwebui",
-  "to_app": "ollama",
-  "state": "active"
+  "success": true,
+  "message": "Link created successfully",
+  "applied_order": ["ollama", "openwebui"],
+  "errors": {}
 }
 ```
 
@@ -728,14 +754,64 @@ Response: 200 OK
 GET /links
 
 Response: 200 OK
-[
-  {
-    "id": "openwebui-to-ollama",
-    "from_app": "openwebui",
-    "to_app": "ollama",
-    "state": "active"
-  }
-]
+{
+  "links": [
+    {
+      "id": "openwebui-to-ollama",
+      "apps": {
+        "openwebui": {
+          "ollama_host": "ollama-main",
+          "ollama_port": 11434
+        },
+        "ollama": {}
+      },
+      "references": {
+        "openwebui": {
+          "ollama_host": "ollama-main",
+          "ollama_port": "11434"
+        }
+      },
+      "shared_networks": ["zeropoint-link-openwebui-to-ollama"],
+      "dependency_order": ["ollama", "openwebui"],
+      "created_at": "2025-01-02T10:00:00Z",
+      "updated_at": "2025-01-02T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### Get Link
+
+```http
+GET /links/{id}
+
+Response: 200 OK
+{
+  "id": "openwebui-to-ollama",
+  "apps": {
+    "openwebui": {
+      "ollama_host": "ollama-main",
+      "ollama_port": 11434
+    },
+    "ollama": {}
+  },
+  "references": {
+    "openwebui": {
+      "ollama_host": "ollama-main",
+      "ollama_port": "11434"
+    }
+  },
+  "shared_networks": ["zeropoint-link-openwebui-to-ollama"],
+  "dependency_order": ["ollama", "openwebui"],
+  "created_at": "2025-01-02T10:00:00Z",
+  "updated_at": "2025-01-02T10:00:00Z"
+}
+
+Response: 404 Not Found
+{
+  "error": "not_found",
+  "message": "Link not found"
+}
 ```
 
 #### Delete Link
@@ -744,6 +820,12 @@ Response: 200 OK
 DELETE /links/{id}
 
 Response: 204 No Content
+
+Response: 404 Not Found
+{
+  "error": "not_found",
+  "message": "Link not found"
+}
 ```
 
 ### Exposures
@@ -755,8 +837,8 @@ POST /exposures/{app_id}
 Content-Type: application/json
 
 {
-  "protocol": "http",
   "hostname": "openwebui.zeropoint.local",
+  "protocol": "http",
   "container_port": 3000
 }
 
@@ -764,10 +846,24 @@ Response: 201 Created
 {
   "id": "abc123",
   "app_id": "openwebui",
-  "protocol": "http",
   "hostname": "openwebui.zeropoint.local",
+  "protocol": "http",
   "container_port": 3000,
-  "status": "available"
+  "host_port": 80,
+  "status": "available",
+  "created_at": "2025-01-02T10:00:00Z"
+}
+
+Response: 200 OK (exposure already exists)
+{
+  "id": "abc123",
+  "app_id": "openwebui",
+  "hostname": "openwebui.zeropoint.local",
+  "protocol": "http",
+  "container_port": 3000,
+  "host_port": 80,
+  "status": "available",
+  "created_at": "2025-01-02T10:00:00Z"
 }
 ```
 
@@ -782,52 +878,48 @@ Response: 200 OK
     {
       "id": "abc123",
       "app_id": "openwebui",
-      "protocol": "http",
       "hostname": "openwebui.zeropoint.local",
+      "protocol": "http",
       "container_port": 3000,
-      "status": "available"
+      "host_port": 80,
+      "status": "available",
+      "created_at": "2025-01-02T10:00:00Z"
     }
   ]
 }
 ```
 
-#### Delete Exposure
+#### Get Exposure
 
 ```http
-DELETE /exposures/{id}
-
-Response: 204 No Content
-```
-
-#### Get App Services (Info Endpoint)
-
-```http
-GET /apps/{id}/services
+GET /exposures/{app_id}
 
 Response: 200 OK
 {
+  "id": "abc123",
   "app_id": "openwebui",
-  "services": {
-    "web": {
-      "port": 3000,
-      "protocol": "http",
-      "transport": "tcp",
-      "description": "Web UI",
-      "default": true,
-      "container_target": "openwebui-main:3000"
-    },
-    "api": {
-      "port": 8080,
-      "protocol": "grpc",
-      "transport": "tcp",
-      "description": "gRPC API",
-      "container_target": "openwebui-main:8080"
-    }
-  }
+  "hostname": "openwebui.zeropoint.local",
+  "protocol": "http",
+  "container_port": 3000,
+  "host_port": 80,
+  "status": "available",
+  "created_at": "2025-01-02T10:00:00Z"
 }
+
+Response: 404 Not Found
+"Exposure not found"
 ```
 
-**Purpose**: Discover available services from app contract without querying containers. Uses `main_ports` output from Terraform.
+#### Delete Exposure
+
+```http
+DELETE /exposures/{app_id}
+
+Response: 204 No Content
+
+Response: 404 Not Found
+"Exposure not found"
+```
 
 ---
 

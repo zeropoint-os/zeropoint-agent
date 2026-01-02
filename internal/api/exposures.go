@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"zeropoint-agent/internal/mdns"
+	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/xds"
 
 	"github.com/moby/moby/client"
@@ -44,13 +45,14 @@ type MDNSService interface {
 
 // ExposureStore manages exposures with persistent storage
 type ExposureStore struct {
-	exposures    map[string]*Exposure // keyed by ID
-	mutex        sync.RWMutex
-	xdsServer    *xds.Server
-	dockerClient *client.Client
-	storagePath  string
-	logger       *slog.Logger
-	mdnsService  MDNSService
+	exposures      map[string]*Exposure // keyed by ID
+	mutex          sync.RWMutex
+	xdsServer      *xds.Server
+	dockerClient   *client.Client   // Keep for container inspection
+	networkManager *network.Manager // Use for network operations
+	storagePath    string
+	logger         *slog.Logger
+	mdnsService    MDNSService
 }
 
 // NewExposureStore creates a new exposure store
@@ -68,12 +70,13 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsSe
 	storagePath := filepath.Join(storageRoot, exposuresFileName)
 
 	store := &ExposureStore{
-		exposures:    make(map[string]*Exposure),
-		xdsServer:    xdsServer,
-		dockerClient: dockerClient,
-		storagePath:  storagePath,
-		logger:       logger,
-		mdnsService:  mdnsService,
+		exposures:      make(map[string]*Exposure),
+		xdsServer:      xdsServer,
+		dockerClient:   dockerClient,
+		networkManager: network.NewManager(dockerClient, logger),
+		storagePath:    storagePath,
+		logger:         logger,
+		mdnsService:    mdnsService,
 	}
 
 	// Load existing exposures from disk
@@ -149,6 +152,12 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, appID, protocol, hos
 	// Ensure container is on zeropoint-network
 	if err := s.ensureNetwork(ctx, appID); err != nil {
 		return nil, false, err
+	}
+
+	// Ensure Envoy is also connected to zeropoint-network (critical for xDS to work)
+	if err := s.ensureEnvoyNetwork(ctx); err != nil {
+		s.logger.Warn("Failed to connect Envoy to zeropoint-network", "error", err)
+		// Don't fail the exposure creation, but log the issue
 	}
 
 	// Store exposure
@@ -387,6 +396,54 @@ func (s *ExposureStore) ensureNetwork(ctx context.Context, appID string) error {
 	return nil
 }
 
+// EnsureNetwork connects a container to zeropoint-network (public wrapper)
+func (s *ExposureStore) EnsureNetwork(ctx context.Context, appID string) error {
+	return s.ensureNetwork(ctx, appID)
+}
+
+// EnsureAppOnNetwork connects a container to a specified network (for shared networks)
+func (s *ExposureStore) EnsureAppOnNetwork(ctx context.Context, appID, networkName string) error {
+	containerName := appID + "-main"
+
+	// Create network if it doesn't exist
+	networkList, err := s.dockerClient.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	networkExists := false
+	var networkID string
+	for _, network := range networkList.Items {
+		if network.Name == networkName {
+			networkExists = true
+			networkID = network.ID
+			break
+		}
+	}
+
+	if !networkExists {
+		resp, err := s.dockerClient.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
+			Driver: "bridge",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create network %s: %w", networkName, err)
+		}
+		networkID = resp.ID
+		s.logger.Info("created shared network", "network", networkName, "id", networkID)
+	}
+
+	// Connect container to network (idempotent)
+	_, err = s.dockerClient.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: containerName,
+	})
+	if err != nil && !isAlreadyConnectedError(err) {
+		return fmt.Errorf("failed to connect container %s to network %s: %w", containerName, networkName, err)
+	}
+
+	s.logger.Info("connected container to shared network", "container", containerName, "network", networkName)
+	return nil
+}
+
 // reconcileNetworks ensures all containers are connected to zeropoint-network
 func (s *ExposureStore) reconcileNetworks(ctx context.Context) error {
 	for _, exp := range s.exposures {
@@ -470,6 +527,11 @@ func (s *ExposureStore) getExposureInfos() []mdns.ExposureInfo {
 		})
 	}
 	return infos
+}
+
+// ensureEnvoyNetwork connects Envoy container to zeropoint-network
+func (s *ExposureStore) ensureEnvoyNetwork(ctx context.Context) error {
+	return s.networkManager.ConnectContainerToNetwork(ctx, "zeropoint-envoy", "zeropoint-network")
 }
 
 // isAlreadyConnectedError checks if error is "already connected"

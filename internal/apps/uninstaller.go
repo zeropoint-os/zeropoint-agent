@@ -69,11 +69,11 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	variables := map[string]string{
-		"app_id":       req.AppID,
-		"network_name": fmt.Sprintf("zeropoint-app-%s", req.AppID),
-		"arch":         "amd64", // These don't matter for destroy
-		"gpu_vendor":   "",      // These don't matter for destroy
-		"app_storage":  absAppStoragePath,
+		"zp_app_id":       req.AppID,
+		"zp_network_name": fmt.Sprintf("zeropoint-app-%s", req.AppID),
+		"zp_arch":         "amd64", // These don't matter for destroy
+		"zp_gpu_vendor":   "",      // These don't matter for destroy
+		"zp_app_storage":  absAppStoragePath,
 	}
 
 	if err := executor.Destroy(variables); err != nil {
