@@ -47,7 +47,7 @@ admin:
 // GetBootstrapPath returns the path to the Envoy bootstrap configuration file.
 // Creates the file if it doesn't exist.
 func GetBootstrapPath(xdsHost string, xdsPort int) (string, error) {
-	envoyDir := filepath.Join(apps.GetStorageRoot(), "envoy")
+	envoyDir := filepath.Join(modules.GetStorageRoot(), "envoy")
 
 	// Convert to absolute path for Docker bind mount
 	absEnvoyDir, err := filepath.Abs(envoyDir)

@@ -20,6 +20,16 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// Type aliases for cleaner code
+type (
+	Module           = modules.Module
+	Installer        = modules.Installer
+	Uninstaller      = modules.Uninstaller
+	InstallRequest   = modules.InstallRequest
+	UninstallRequest = modules.UninstallRequest
+	ProgressUpdate   = modules.ProgressUpdate
+)
+
 // CreateExposureRequest represents the request body for creating an exposure
 type CreateExposureRequest struct {
 	ModuleID      string `json:"module_id"`
@@ -149,9 +159,9 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 // @Router /exposures/{app_id} [get]
 func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
+	moduleID := vars["module_id"]
 
-	exposure := h.store.GetExposureByAppID(appID)
+	exposure := h.store.GetExposureByModuleID(moduleID)
 	if exposure == nil {
 		http.Error(w, "exposure not found", http.StatusNotFound)
 		return
@@ -173,9 +183,9 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 // @Router /exposures/{app_id} [delete]
 func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
+	moduleID := vars["module_id"]
 
-	if err := h.store.DeleteExposureByAppID(r.Context(), appID); err != nil {
+	if err := h.store.DeleteExposureByModuleID(r.Context(), moduleID); err != nil {
 		h.logger.Error("failed to delete exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -261,7 +271,7 @@ type LinkResponse struct {
 
 // ModulesResponse encapsulates a list of modules
 type ModulesResponse struct {
-	Modules []modules.Module `json:"modules"`
+	Modules []Module `json:"modules"`
 }
 
 // RegisterRoutes registers the link-related routes
@@ -763,14 +773,14 @@ func (h *LinkHandlers) getAppOutputs(appName string) (map[string]interface{}, er
 
 // ModuleHandlers holds HTTP handlers for module management
 type ModuleHandlers struct {
-	installer   *modules.Installer
-	uninstaller *modules.Uninstaller
+	installer   *Installer
+	uninstaller *Uninstaller
 	docker      *client.Client
 	logger      *slog.Logger
 }
 
 // NewModuleHandlers creates a new module handlers instance
-func NewModuleHandlers(installer *modules.Installer, uninstaller *modules.Uninstaller, docker *client.Client, logger *slog.Logger) *ModuleHandlers {
+func NewModuleHandlers(installer *Installer, uninstaller *Uninstaller, docker *client.Client, logger *slog.Logger) *ModuleHandlers {
 	return &ModuleHandlers{
 		installer:   installer,
 		uninstaller: uninstaller,
@@ -804,7 +814,7 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse optional request body
-	var req modules.InstallRequest
+	var req InstallRequest
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -841,15 +851,15 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stream progress updates
-	progressCallback := func(update apps.ProgressUpdate) {
+	progressCallback := func(update ProgressUpdate) {
 		json.NewEncoder(w).Encode(update)
 		flusher.Flush()
 	}
 
 	// Run installation with progress streaming
 	if err := h.installer.Install(req, progressCallback); err != nil {
-		h.logger.Error("installation failed", "app_id", req.AppID, "error", err)
-		json.NewEncoder(w).Encode(apps.ProgressUpdate{
+		h.logger.Error("installation failed", "module_id", req.ModuleID, "error", err)
+		json.NewEncoder(w).Encode(ProgressUpdate{
 			Status:  "failed",
 			Message: "Installation failed",
 			Error:   err.Error(),
@@ -882,7 +892,7 @@ func (h *ModuleHandlers) UninstallModule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	req := modules.UninstallRequest{
+	req := UninstallRequest{
 		ModuleID: moduleName,
 	}
 
@@ -898,15 +908,15 @@ func (h *ModuleHandlers) UninstallModule(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Stream progress updates
-	progressCallback := func(update apps.ProgressUpdate) {
+	progressCallback := func(update ProgressUpdate) {
 		json.NewEncoder(w).Encode(update)
 		flusher.Flush()
 	}
 
 	// Run uninstallation with progress streaming
 	if err := h.uninstaller.Uninstall(req, progressCallback); err != nil {
-		h.logger.Error("uninstallation failed", "app_id", req.AppID, "error", err)
-		json.NewEncoder(w).Encode(apps.ProgressUpdate{
+		h.logger.Error("uninstallation failed", "module_id", req.ModuleID, "error", err)
+		json.NewEncoder(w).Encode(ProgressUpdate{
 			Status:  "failed",
 			Message: "Uninstallation failed",
 			Error:   err.Error(),
@@ -936,9 +946,9 @@ func (h *ModuleHandlers) ListModules(w http.ResponseWriter, r *http.Request) {
 }
 
 // discoverModules scans the modules/ directory for installed modules
-func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]modules.Module, error) {
+func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]Module, error) {
 	modulesDir := modules.GetModulesDir()
-	var result []modules.Module
+	var result []Module
 
 	entries, err := os.ReadDir(modulesDir)
 	if err != nil {
@@ -962,7 +972,7 @@ func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]modules.Module,
 			continue // Not a valid module
 		}
 
-		module := modules.Module{
+		module := Module{
 			ID:         moduleID,
 			ModulePath: modulePath,
 			State:      modules.StateUnknown,
