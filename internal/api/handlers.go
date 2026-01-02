@@ -656,7 +656,11 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	}
 
 	// Create app storage directory if needed
-	appStoragePath := filepath.Join("/workspaces/zeropoint-agent/data/apps", appName)
+	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	if storageRoot == "" {
+		storageRoot = "./data" // default fallback
+	}
+	appStoragePath := filepath.Join(storageRoot, "apps", appName)
 	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create app storage directory: %w", err)
 	}
