@@ -67,11 +67,11 @@ The dev container provides a complete development environment with:
 
 ```bash
 # Install Ollama
-curl -X POST http://localhost:2370/apps/install \
+curl -X POST http://localhost:2370/modules/install \
   -H "Content-Type: application/json" \
   -d '{
     "source": "github.com/zeropoint-os/ollama",
-    "app_id": "ollama"
+    "module_id": "ollama"
   }'
 
 # Check status
@@ -96,7 +96,7 @@ curl http://localhost:2370/apps | jq
 
 zeropoint manages three types of Terraform modules:
 
-1. **App Modules** (`apps/<app-id>/`)
+1. **Module Definitions** (`modules/<module-id>/`)
 
    - Define application resources: image, container, network, volumes
    - Standalone, no dependencies on other apps
@@ -117,7 +117,7 @@ zeropoint manages three types of Terraform modules:
 
 ```
 zeropoint-agent/
-├── apps/                          # Application modules
+├── modules/                       # Module definitions
 │   ├── ollama/
 │   │   ├── main.tf
 │   │   ├── Dockerfile
@@ -144,7 +144,7 @@ zeropoint-agent/
 
 ### Example: Ollama App Module
 
-**`apps/ollama/main.tf`:**
+**`modules/ollama/main.tf`:**
 
 ```hcl
 terraform {
@@ -524,7 +524,7 @@ DELETE /exposures/openwebui
 
 ### What zeropoint DOES
 
-1. **Discover apps**: Scan `apps/` directory for Terraform modules
+1. **Discover modules**: Scan `modules/` directory for Terraform modules
 2. **Invoke Terraform**: Run `terraform init/apply/destroy` programmatically
 3. **Generate modules**: Create link modules from API requests (exposures use xDS, not Terraform)
 4. **Monitor containers**: Subscribe to Docker events for runtime health tracking
@@ -567,15 +567,15 @@ Response: 503 Service Unavailable (Docker unavailable)
 
 ### Apps
 
-#### Install App
+#### Install Module
 
 ```http
-POST /apps/{name}
+POST /modules/{name}
 Content-Type: application/json
 
 {
   "source": "https://github.com/zeropoint-os/ollama.git",
-  "app_id": "ollama",
+  "module_id": "ollama",
   "local_path": "/path/to/module",  // Optional: use local module instead
   "arch": "amd64",                   // Optional: architecture override
   "gpu_vendor": "nvidia"             // Optional: GPU vendor override
@@ -599,7 +599,7 @@ Response: 200 OK
     {
       "id": "ollama",
       "state": "running",
-      "module_path": "apps/ollama",
+      "module_path": "modules/ollama",
       "container_id": "abc123",
       "container_name": "ollama-main",
       "ip_address": "172.20.0.2",
@@ -616,7 +616,7 @@ Response: 200 OK
           },
           "mounts": {
             "models": {
-              "host_path": "/workspaces/zeropoint-agent/data/apps/ollama/.ollama",
+              "host_path": "/workspaces/zeropoint-agent/data/modules/ollama/.ollama",
               "container_path": "/root/.ollama",
               "description": "Model storage",
               "read_only": false
@@ -632,7 +632,7 @@ Response: 200 OK
 #### Uninstall App
 
 ```http
-DELETE /apps/{name}
+DELETE /modules/{name}
 
 Response: 200 OK (streaming JSON progress updates)
 {
@@ -644,7 +644,7 @@ Response: 200 OK (streaming JSON progress updates)
 #### Inspect App
 
 ```http
-GET /apps/{app_id}/inspect
+GET /modules/{module_id}/inspect
 
 Response: 200 OK
 {
@@ -683,7 +683,7 @@ Response: 200 OK
     "zp_app_storage": {
       "type": "string",
       "description": "Host path for persistent storage",
-      "current_value": "/workspaces/zeropoint-agent/data/apps/ollama",
+      "current_value": "/workspaces/zeropoint-agent/data/modules/ollama",
       "required": true,
       "system_managed": true
     }
@@ -709,7 +709,7 @@ Response: 200 OK
 }
 
 # Or inspect from remote source (not yet installed)
-GET /apps/{app_id}/inspect?source_url=https://github.com/zeropoint-os/ollama.git
+GET /modules/{module_id}/inspect?source_url=https://github.com/zeropoint-os/ollama.git
 
 Response: 200 OK
 {
@@ -1086,11 +1086,11 @@ variable "zp_app_storage" {
 
 **Purpose**:
 
-- `zp_app_id`: Unique identifier from API request path (e.g., `POST /apps/production-ollama` → `zp_app_id = "production-ollama"`). Enables multi-instance deployments.
-- `zp_network_name`: zeropoint creates and manages the network lifecycle externally, then injects it into the app module
+- `zp_module_id`: Unique identifier from API request path (e.g., `POST /modules/production-ollama` → `zp_module_id = "production-ollama"`). Enables multi-instance deployments.
+- `zp_network_name`: zeropoint creates and manages the network lifecycle externally, then injects it into the module
 - `zp_arch`: Target CPU architecture, auto-detected by zeropoint from host (user-overridable via API). Module authors can use this for `platform` selection in builds or ignore it for multi-arch images
 - `zp_gpu_vendor`: GPU vendor detected by zeropoint (`nvidia`, `amd`, `intel`, or empty string). Apps can conditionally enable GPU access based on this value
-- `zp_app_storage`: Absolute path to the app's isolated storage directory (e.g., `/workspaces/zeropoint-agent/data/apps/production-ollama`). Apps use this for persistent data like databases, models, configuration, etc.
+- `zp_module_storage`: Absolute path to the module's isolated storage directory (e.g., `/workspaces/zeropoint-agent/data/modules/production-ollama`). Modules use this for persistent data like databases, models, configuration, etc.
 
 **Variable Contract**:
 - All `zp_*` variables are **system-managed** - injected by zeropoint, not user-editable
@@ -1364,7 +1364,7 @@ output "main_ports" {
 5. **Info endpoints**: Agent can expose metadata about available services:
 
    ```bash
-   GET /apps/myapp/services
+   GET /modules/mymodule/services
    # Returns: {"web": {"port": 3000, "protocol": "http", ...}, ...}
    ```
 
@@ -1518,10 +1518,10 @@ resource "docker_container" "main" {
 
 #### Dry-Run Validation
 
-When a user installs an app via `POST /apps/{name}`:
+When a user installs a module via `POST /modules/{name}`:
 
 ```http
-POST /apps/mycustomapp
+POST /modules/mycustomapp
 {
   "source": "https://github.com/user/mycustomapp.git"
 }
@@ -1532,7 +1532,7 @@ POST /apps/mycustomapp
 1. **Terraform Init**
 
    ```bash
-   cd /apps/mycustomapp
+   cd /modules/mycustomapp
    terraform init
    ```
 
@@ -2142,7 +2142,7 @@ App module must not create docker_network resources (network is provided via var
 - [ ] Implement app module contract validation
 - [ ] Implement `hashicorp/terraform-exec` Go SDK integration
 - [ ] Add Terraform binary to deployment image
-- [ ] Implement basic app lifecycle API (`/apps/install`, `/apps/{id}/start`, etc.)
+- [ ] Implement basic module lifecycle API (`/modules/install`, `/modules/{id}/start`, etc.)
 
 ### Phase 2: Links
 
@@ -2166,10 +2166,10 @@ App module must not create docker_network resources (network is provided via var
 ### Phase 4: Developer Experience
 
 - [ ] Document app module contract (required outputs, naming conventions)
-- [ ] Provide example modules (`apps/examples/`)
+- [ ] Provide example modules (`modules/examples/`)
 - [ ] Add module validation (`terraform validate`)
 - [ ] Implement dry-run mode (`terraform plan` without apply)
-- [ ] Add graph visualization endpoint (`GET /apps/{id}/graph`)
+- [ ] Add graph visualization endpoint (`GET /modules/{id}/graph`)
 
 ### Phase 5: Advanced Features
 
@@ -2186,22 +2186,22 @@ App module must not create docker_network resources (network is provided via var
 ### Install Ollama
 
 ```bash
-curl -X POST http://localhost:2370/apps/install \
+curl -X POST http://localhost:2370/modules/install \
   -H "Content-Type: application/json" \
   -d '{
-    "module_path": "/apps/ollama",
-    "app_id": "ollama"
+    "module_path": "/modules/ollama",
+    "module_id": "ollama"
   }'
 ```
 
 ### Install OpenWebUI
 
 ```bash
-curl -X POST http://localhost:2370/apps/install \
+curl -X POST http://localhost:2370/modules/install \
   -H "Content-Type: application/json" \
   -d '{
-    "module_path": "/apps/openwebui",
-    "app_id": "openwebui"
+    "module_path": "/modules/openwebui",
+    "module_id": "openwebui"
   }'
 ```
 
@@ -2248,11 +2248,11 @@ curl -X DELETE http://localhost:2370/exposures/openwebui
 
 **Result:** `openwebui.zeropoint.local` no longer resolves
 
-### Uninstall Apps
+### Uninstall Modules
 
 ```bash
-curl -X DELETE http://localhost:2370/apps/openwebui
-curl -X DELETE http://localhost:2370/apps/ollama
+curl -X DELETE http://localhost:2370/modules/openwebui
+curl -X DELETE http://localhost:2370/modules/ollama
 ```
 
 **Result:** All resources cleaned up (containers, networks, images)

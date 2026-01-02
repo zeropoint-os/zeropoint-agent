@@ -1,8 +1,8 @@
 data/*
 bin/
 envoy/*
-# Terraform state files (in app directories)
-apps/**
+# Terraform state files (in module directories)
+modules/**
 # Ignore debug binaries
 __debug_bin*
 
