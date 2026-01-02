@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/modules"
 )
 
 const bootstrapTemplate = `node:

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strconv"
 
-	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/system"
 	"zeropoint-agent/internal/terraform"

@@ -8,7 +8,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/modules"
 )
 
 const appsBucket = "apps"

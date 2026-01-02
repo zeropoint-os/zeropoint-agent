@@ -1,6 +1,6 @@
 package storage
 
-import "zeropoint-agent/internal/apps"
+import "zeropoint-agent/internal/modules"
 
 // Storage is an abstract persistent store for application metadata.
 // Implementations may be local (BoltDB) or remote (etcd, Postgres, Redis).

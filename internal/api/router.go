@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
 
 	"github.com/gorilla/mux"
@@ -63,11 +63,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	// Health endpoint
 	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
 
-	// Apps endpoints
-	r.HandleFunc("/apps", appHandlers.ListApps).Methods(http.MethodGet)
-	r.HandleFunc("/apps/{name}", appHandlers.InstallApp).Methods(http.MethodPost)
-	r.HandleFunc("/apps/{name}", appHandlers.UninstallApp).Methods(http.MethodDelete)
-	r.HandleFunc("/apps/{app_id}/inspect", inspectHandlers.InspectApp).Methods(http.MethodGet)
+	// Module endpoints
+	r.HandleFunc("/modules", appHandlers.ListApps).Methods(http.MethodGet)
+	r.HandleFunc("/modules/{name}", appHandlers.InstallApp).Methods(http.MethodPost)
+	r.HandleFunc("/modules/{name}", appHandlers.UninstallApp).Methods(http.MethodDelete)
+	r.HandleFunc("/modules/{module_id}/inspect", inspectHandlers.InspectApp).Methods(http.MethodGet)
 
 	// Link endpoints
 	linkHandlers.RegisterRoutes(r)
