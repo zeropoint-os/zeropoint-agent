@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // BuildSnapshot creates a snapshot with listeners, routes, and clusters
@@ -54,6 +55,13 @@ func makeHTTPListener() (*listener.Listener, error) {
 	manager := &hcm.HttpConnectionManager{
 		CodecType:  hcm.HttpConnectionManager_AUTO,
 		StatPrefix: "http",
+		// Configure long timeouts for AI applications
+		RequestTimeout:        durationpb.New(0),                // Disable request timeout (infinite)
+		StreamIdleTimeout:     durationpb.New(600 * 1000000000), // 10 minutes for streaming
+		RequestHeadersTimeout: durationpb.New(300 * 1000000000), // 5 minutes for headers
+		// Enable streaming and disable buffering
+		UseRemoteAddress: &wrapperspb.BoolValue{Value: true}, // Pass through client IP
+		SkipXffAppend:    false,                              // Add X-Forwarded-For
 		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
 			Rds: &hcm.Rds{
 				ConfigSource: &core.ConfigSource{
@@ -304,6 +312,16 @@ func makeRouteConfigFromExposures(exposures []*Exposure) *route.RouteConfigurati
 						Route: &route.RouteAction{
 							ClusterSpecifier: &route.RouteAction_Cluster{
 								Cluster: clusterName,
+							},
+							// Set long timeouts for AI model downloads and streaming
+							Timeout:     durationpb.New(0),                // Disable route timeout (infinite)
+							IdleTimeout: durationpb.New(300 * 1000000000), // 5 minutes idle timeout
+							// Enable WebSocket upgrade support
+							UpgradeConfigs: []*route.RouteAction_UpgradeConfig{
+								{
+									UpgradeType: "websocket",
+									Enabled:     &wrapperspb.BoolValue{Value: true},
+								},
 							},
 						},
 					},
