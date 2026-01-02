@@ -31,20 +31,21 @@ func (g *DependencyGraph) AddNode(app string) {
 	}
 }
 
-// AddDependency adds a dependency edge (from depends on to)
+// AddDependency adds a dependency edge (from depends on to, so to -> from in graph)
 func (g *DependencyGraph) AddDependency(from, to string) {
 	g.AddNode(from)
 	g.AddNode(to)
 
-	// Check if edge already exists
-	for _, dep := range g.edges[from] {
-		if dep == to {
+	// Check if edge already exists (to -> from)
+	for _, dep := range g.edges[to] {
+		if dep == from {
 			return // Edge already exists
 		}
 	}
 
-	g.edges[from] = append(g.edges[from], to)
-	g.incoming[to]++
+	// Add edge: dependency -> dependent (to -> from)
+	g.edges[to] = append(g.edges[to], from)
+	g.incoming[from]++
 }
 
 // TopologicalSort returns apps in dependency order (dependencies first)

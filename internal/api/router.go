@@ -48,9 +48,15 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		return nil, err
 	}
 
+	// Initialize link store
+	linkStore, err := NewLinkStore(dockerClient, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize link store: %w", err)
+	}
+
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(appsDir, logger)
-	linkHandlers := NewLinkHandlers(appsDir, exposureStore, logger)
+	linkHandlers := NewLinkHandlers(appsDir, linkStore, logger)
 
 	env := &apiEnv{
 		docker:      dockerClient,

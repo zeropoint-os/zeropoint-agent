@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 
+	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/system"
 	"zeropoint-agent/internal/terraform"
 
@@ -19,17 +20,19 @@ import (
 
 // LinkHandlers holds HTTP handlers for app linking
 type LinkHandlers struct {
-	appsDir       string
-	exposureStore *ExposureStore
-	logger        *slog.Logger
+	appsDir        string
+	linkStore      *LinkStore
+	networkManager *network.Manager
+	logger         *slog.Logger
 }
 
 // NewLinkHandlers creates a new link handlers instance
-func NewLinkHandlers(appsDir string, exposureStore *ExposureStore, logger *slog.Logger) *LinkHandlers {
+func NewLinkHandlers(appsDir string, linkStore *LinkStore, logger *slog.Logger) *LinkHandlers {
 	return &LinkHandlers{
-		appsDir:       appsDir,
-		exposureStore: exposureStore,
-		logger:        logger,
+		appsDir:        appsDir,
+		linkStore:      linkStore,
+		networkManager: linkStore.GetNetworkManager(),
+		logger:         logger,
 	}
 }
 
@@ -39,9 +42,19 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// LinkRequest represents the request to link multiple apps
+// LinkRequest represents the request to link multiple apps (legacy)
 type LinkRequest struct {
 	Apps map[string]map[string]interface{} `json:"apps"`
+}
+
+// CreateLinkRequest represents the request to create/update a link
+type CreateLinkRequest struct {
+	Apps map[string]map[string]interface{} `json:"apps"`
+}
+
+// LinksResponse represents the response from listing links
+type LinksResponse struct {
+	Links []*Link `json:"links"`
 }
 
 // AppReference represents a reference to another app's output
@@ -60,50 +73,143 @@ type LinkResponse struct {
 
 // RegisterRoutes registers the link-related routes
 func (h *LinkHandlers) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/link", h.LinkApps).Methods("POST")
+	router.HandleFunc("/links", h.ListLinks).Methods("GET")
+	router.HandleFunc("/links/{id}", h.GetLink).Methods("GET")
+	router.HandleFunc("/links/{id}", h.CreateOrUpdateLink).Methods("POST")
+	router.HandleFunc("/links/{id}", h.DeleteLink).Methods("DELETE")
 }
 
-// LinkApps handles POST /link
-// @Summary Link multiple apps with cross-references
-// @Description Apply configuration to multiple apps where inputs can reference other apps' outputs
-// @Tags apps
+// ListLinks handles GET /links
+// @Summary List all links
+// @Description Returns all active app links
+// @Tags links
+// @Produce json
+// @Success 200 {object} LinksResponse
+// @Router /links [get]
+func (h *LinkHandlers) ListLinks(w http.ResponseWriter, r *http.Request) {
+	links := h.linkStore.ListLinks()
+	
+	response := LinksResponse{Links: links}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetLink handles GET /links/{id}
+// @Summary Get link details
+// @Description Returns details for a specific link
+// @Tags links
+// @Param id path string true "Link ID"
+// @Produce json
+// @Success 200 {object} Link
+// @Failure 404 {object} ErrorResponse
+// @Router /links/{id} [get]
+func (h *LinkHandlers) GetLink(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	linkID := vars["id"]
+	
+	link, err := h.linkStore.GetLink(linkID)
+	if err != nil {
+		http.Error(w, "Link not found", http.StatusNotFound)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(link)
+}
+
+// CreateOrUpdateLink handles POST /links/{id}
+// @Summary Create or update a link
+// @Description Create or update a link between multiple apps
+// @Tags links
+// @Param id path string true "Link ID"
 // @Accept json
 // @Produce json
-// @Param request body LinkRequest true "Link configuration"
+// @Param request body CreateLinkRequest true "Link configuration"
 // @Success 200 {object} LinkResponse
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
-// @Router /link [post]
-func (h *LinkHandlers) LinkApps(w http.ResponseWriter, r *http.Request) {
-	var req LinkRequest
+// @Router /links/{id} [post]
+func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	linkID := vars["id"]
+	
+	var req CreateLinkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("Failed to decode link request", "error", err)
 		http.Error(w, "Invalid JSON in request body", http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("Linking apps", "apps", getAppNames(req.Apps))
+	h.logger.Info("Creating/updating link", "link_id", linkID, "apps", getAppNames(req.Apps))
+
+	// Use the existing linking logic
+	response := h.linkApps(linkID, req.Apps)
+	
+	w.Header().Set("Content-Type", "application/json")
+	if response.Success {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// DeleteLink handles DELETE /links/{id}
+// @Summary Delete a link
+// @Description Remove a link and clean up associated resources
+// @Tags links
+// @Param id path string true "Link ID"
+// @Success 204
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /links/{id} [delete]
+func (h *LinkHandlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	linkID := vars["id"]
+	
+	if err := h.linkStore.DeleteLink(r.Context(), linkID); err != nil {
+		if err.Error() == "link not found" {
+			http.Error(w, "Link not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to delete link", "link_id", linkID, "error", err)
+		http.Error(w, "Failed to delete link", http.StatusInternalServerError)
+		return
+	}
+	
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// linkApps contains the core linking logic (refactored from LinkApps)
+func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interface{}) LinkResponse {
 
 	// Step 1: Validate all apps exist
-	if err := h.validateAppsExist(req.Apps); err != nil {
+	if err := h.validateAppsExist(apps); err != nil {
 		h.logger.Error("App validation failed", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return LinkResponse{
+			Success: false,
+			Message: err.Error(),
+		}
 	}
 
 	// Step 2: Analyze dependencies and determine order
-	graph, err := AnalyzeDependencies(req.Apps)
+	graph, err := AnalyzeDependencies(apps)
 	if err != nil {
 		h.logger.Error("Dependency analysis failed", "error", err)
-		http.Error(w, fmt.Sprintf("Dependency analysis failed: %v", err), http.StatusBadRequest)
-		return
+		return LinkResponse{
+			Success: false,
+			Message: fmt.Sprintf("Dependency analysis failed: %v", err),
+		}
 	}
 
 	order, err := graph.TopologicalSort()
 	if err != nil {
 		h.logger.Error("Topological sort failed", "error", err)
-		http.Error(w, fmt.Sprintf("Dependency resolution failed: %v", err), http.StatusBadRequest)
-		return
+		return LinkResponse{
+			Success: false,
+			Message: fmt.Sprintf("Dependency resolution failed: %v", err),
+		}
 	}
 
 	h.logger.Info("Determined app order", "order", order)
@@ -113,8 +219,10 @@ func (h *LinkHandlers) LinkApps(w http.ResponseWriter, r *http.Request) {
 	backup, err := stateManager.BackupStates(order)
 	if err != nil {
 		h.logger.Error("State backup failed", "error", err)
-		http.Error(w, fmt.Sprintf("State backup failed: %v", err), http.StatusInternalServerError)
-		return
+		return LinkResponse{
+			Success: false,
+			Message: fmt.Sprintf("State backup failed: %v", err),
+		}
 	}
 
 	// Step 4: Apply configurations in dependency order
@@ -122,7 +230,7 @@ func (h *LinkHandlers) LinkApps(w http.ResponseWriter, r *http.Request) {
 	appliedApps := []string{}
 
 	for _, appName := range order {
-		config, exists := req.Apps[appName]
+		config, exists := apps[appName]
 		if !exists {
 			continue // App not in this link request
 		}
@@ -140,25 +248,20 @@ func (h *LinkHandlers) LinkApps(w http.ResponseWriter, r *http.Request) {
 				errors["rollback"] = restoreErr.Error()
 			}
 
-			response := LinkResponse{
+			return LinkResponse{
 				Success:      false,
 				Message:      fmt.Sprintf("Configuration failed for app %s", appName),
 				AppliedOrder: appliedApps,
 				Errors:       errors,
 			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(response)
-			return
 		}
 
 		appliedApps = append(appliedApps, appName)
 
-		// Create exposures for any apps this app references
-		if err := h.createExposuresForReferences(appName, config); err != nil {
-			h.logger.Warn("Failed to create automatic exposures", "app", appName, "error", err)
-			// Don't fail the entire operation for exposure creation failures
+		// Create shared networks for any apps this app references
+		if err := h.createSharedNetworksForReferences(appName, config); err != nil {
+			h.logger.Warn("Failed to create shared networks", "app", appName, "error", err)
+			// Don't fail the entire operation for network creation failures
 		}
 	}
 
@@ -167,14 +270,47 @@ func (h *LinkHandlers) LinkApps(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("Failed to cleanup backup files", "error", err)
 	}
 
-	response := LinkResponse{
+	// Step 5: Collect references and networks, then store the successful link
+	references := make(map[string]map[string]string)
+	var sharedNetworks []string
+	
+	// Parse references from app configurations and collect network names
+	networkNames := make(map[string]bool)
+	for appName, config := range apps {
+		appRefs := make(map[string]string)
+		for inputName, value := range config {
+			if ref, isRef := parseAppReference(value); isRef {
+				appRefs[inputName] = fmt.Sprintf("%s.%s", ref.FromApp, ref.Output)
+				
+				// Generate the network name for this reference
+				linkApps := []string{ref.FromApp, appName}
+				if linkApps[0] > linkApps[1] {
+					linkApps[0], linkApps[1] = linkApps[1], linkApps[0]
+				}
+				networkName := fmt.Sprintf("zeropoint-link-%s-%s", linkApps[0], linkApps[1])
+				networkNames[networkName] = true
+			}
+		}
+		if len(appRefs) > 0 {
+			references[appName] = appRefs
+		}
+	}
+	
+	// Convert network names map to slice
+	for networkName := range networkNames {
+		sharedNetworks = append(sharedNetworks, networkName)
+	}
+	
+	if _, err := h.linkStore.CreateOrUpdateLink(context.Background(), linkID, apps, references, sharedNetworks, order); err != nil {
+		h.logger.Warn("Failed to store link", "error", err)
+		// Don't fail the operation for storage failures
+	}
+
+	return LinkResponse{
 		Success:      true,
 		Message:      "All apps linked successfully",
 		AppliedOrder: appliedApps,
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
 
 // Helper function to extract app names from request
@@ -345,16 +481,15 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	return variables, nil
 }
 
-// createExposuresForReferences automatically creates exposures for referenced apps
-func (h *LinkHandlers) createExposuresForReferences(targetApp string, config map[string]interface{}) error {
+// createSharedNetworksForReferences creates shared networks for referenced apps
+func (h *LinkHandlers) createSharedNetworksForReferences(targetApp string, config map[string]interface{}) error {
 	ctx := context.Background()
 
 	for _, value := range config {
 		if ref, isRef := parseAppReference(value); isRef {
-			h.logger.Info("Creating automatic exposure", "from", ref.FromApp, "to", targetApp, "output", ref.Output)
+			h.logger.Info("Creating shared network for app reference", "from", ref.FromApp, "to", targetApp, "output", ref.Output)
 
-			// For linked apps, ensure they're on the same network for direct communication
-			// No need for envoy routing - they can reach each other via container names
+			// Create shared network for direct communication between linked apps
 			if err := h.ensureSharedNetwork(ctx, ref.FromApp, targetApp); err != nil {
 				h.logger.Warn("Failed to create shared network", "from", ref.FromApp, "to", targetApp, "error", err)
 				// Don't return error - network connection failure shouldn't break linking
@@ -365,104 +500,6 @@ func (h *LinkHandlers) createExposuresForReferences(targetApp string, config map
 	return nil
 }
 
-// createHTTPExposureFromPorts creates an HTTP exposure based on an app's port configuration
-func (h *LinkHandlers) createHTTPExposureFromPorts(ctx context.Context, appName string) error {
-	h.logger.Info("Starting exposure creation", "app", appName)
-
-	// Get the app's port configuration
-	outputs, err := h.getAppOutputs(appName)
-	if err != nil {
-		h.logger.Error("Failed to get outputs", "app", appName, "error", err)
-		return fmt.Errorf("failed to get outputs for app %s: %w", appName, err)
-	}
-	h.logger.Info("Retrieved outputs", "app", appName, "output_keys", getKeys(outputs))
-
-	mainPorts, exists := outputs["main_ports"]
-	if !exists {
-		h.logger.Error("main_ports output not found", "app", appName, "available_outputs", getKeys(outputs))
-		return fmt.Errorf("main_ports output not found for app %s", appName)
-	}
-	h.logger.Info("Found main_ports", "app", appName, "main_ports_value", mainPorts, "main_ports_type", fmt.Sprintf("%T", mainPorts))
-
-	// Parse the ports structure to find the default API port
-	var portsMap map[string]interface{}
-
-	// Handle different types for main_ports
-	switch v := mainPorts.(type) {
-	case map[string]interface{}:
-		portsMap = v
-	case json.RawMessage:
-		// Unmarshal JSON raw message into map
-		if err := json.Unmarshal(v, &portsMap); err != nil {
-			h.logger.Error("Failed to unmarshal main_ports JSON", "app", appName, "error", err)
-			return fmt.Errorf("failed to unmarshal main_ports JSON for app %s: %w", appName, err)
-		}
-	default:
-		h.logger.Error("main_ports is not a supported type", "app", appName, "actual_type", fmt.Sprintf("%T", mainPorts))
-		return fmt.Errorf("main_ports is not a supported type for app %s: %T", appName, mainPorts)
-	}
-
-	h.logger.Info("Parsed ports map", "app", appName, "port_names", getKeys(portsMap))
-
-	// Look for the default port (usually "api")
-	for portName, portInfo := range portsMap {
-		h.logger.Info("Examining port", "app", appName, "port_name", portName, "port_info", portInfo, "port_info_type", fmt.Sprintf("%T", portInfo))
-
-		portMap, ok := portInfo.(map[string]interface{})
-		if !ok {
-			h.logger.Warn("Port info is not a map", "app", appName, "port_name", portName, "actual_type", fmt.Sprintf("%T", portInfo))
-			continue
-		}
-
-		// Check if this is the default port
-		if defaultPort, exists := portMap["default"]; exists && defaultPort == true {
-			h.logger.Info("Found default port", "app", appName, "port_name", portName, "port_config", portMap)
-
-			port, exists := portMap["port"]
-			if !exists {
-				h.logger.Warn("No port number in default port config", "app", appName, "port_name", portName)
-				continue
-			}
-
-			var portNum uint32
-			switch v := port.(type) {
-			case float64:
-				portNum = uint32(v)
-			case int:
-				portNum = uint32(v)
-			case string:
-				if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
-					portNum = uint32(parsed)
-				} else {
-					h.logger.Warn("Failed to parse port number", "app", appName, "port_name", portName, "port_value", v, "error", err)
-					continue
-				}
-			default:
-				h.logger.Warn("Unsupported port number type", "app", appName, "port_name", portName, "port_value", v, "type", fmt.Sprintf("%T", v))
-				continue
-			}
-
-			// Create the exposure
-			hostname := fmt.Sprintf("%s-%s", appName, portName)
-			protocol := "http" // Default to http, could be extracted from portMap["protocol"]
-
-			h.logger.Info("Creating exposure", "app", appName, "hostname", hostname, "port", portNum, "protocol", protocol)
-
-			_, _, err := h.exposureStore.CreateExposure(ctx, appName, protocol, hostname, portNum)
-			if err != nil {
-				h.logger.Error("Failed to create exposure", "app", appName, "hostname", hostname, "error", err)
-				return fmt.Errorf("failed to create exposure %s: %w", hostname, err)
-			}
-
-			h.logger.Info("Successfully created exposure", "app", appName, "hostname", hostname, "port", portNum)
-			return nil // Created exposure for the default port
-		}
-	}
-
-	h.logger.Error("No default port found in main_ports", "app", appName, "available_ports", getKeys(portsMap))
-	return fmt.Errorf("no default port found in main_ports for app %s", appName)
-}
-
 // Helper function to get map keys for logging
 func getKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
@@ -470,19 +507,6 @@ func getKeys(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// ensureConsumingAppNetwork connects a consuming app to zeropoint-network
-func (h *LinkHandlers) ensureConsumingAppNetwork(ctx context.Context, appName string) error {
-	h.logger.Info("Connecting consuming app to zeropoint-network", "app", appName)
-
-	// Use the exposureStore's ensureNetwork function to connect the app
-	if err := h.exposureStore.EnsureNetwork(ctx, appName); err != nil {
-		return fmt.Errorf("failed to connect app to zeropoint-network: %w", err)
-	}
-
-	h.logger.Info("Successfully connected consuming app to zeropoint-network", "app", appName)
-	return nil
 }
 
 // ensureSharedNetwork creates a shared network for linked apps and connects both containers
@@ -499,7 +523,7 @@ func (h *LinkHandlers) ensureSharedNetwork(ctx context.Context, sourceApp, targe
 
 	h.logger.Info("Using shared network", "network", networkName, "apps", []string{sourceApp, targetApp})
 
-	// Connect both apps to the shared network using exposureStore's docker client
+	// Connect both apps to the shared network using networkManager
 	if err := h.ensureAppOnSharedNetwork(ctx, sourceApp, networkName); err != nil {
 		return fmt.Errorf("failed to connect source app to shared network: %w", err)
 	}
@@ -514,8 +538,8 @@ func (h *LinkHandlers) ensureSharedNetwork(ctx context.Context, sourceApp, targe
 
 // ensureAppOnSharedNetwork connects an app's container to a shared network
 func (h *LinkHandlers) ensureAppOnSharedNetwork(ctx context.Context, appName, networkName string) error {
-	// We'll need access to docker client - let's use the exposureStore's client
-	return h.exposureStore.EnsureAppOnNetwork(ctx, appName, networkName)
+	containerName := appName + "-main"
+	return h.networkManager.ConnectContainerToNetwork(ctx, containerName, networkName)
 }
 
 // getAppOutputs retrieves all output values from an app's Terraform state
