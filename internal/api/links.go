@@ -74,10 +74,10 @@ func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps 
 	defer s.mutex.Unlock()
 
 	now := time.Now()
-	
+
 	// Check if link exists
 	existingLink, exists := s.links[linkID]
-	
+
 	var link *Link
 	if exists {
 		// Update existing link
