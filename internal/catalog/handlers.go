@@ -1,0 +1,206 @@
+package catalog
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"zeropoint-agent/internal/modules"
+
+	"github.com/gorilla/mux"
+)
+
+type (
+	InstallRequest = modules.InstallRequest
+)
+
+// Handlers provides HTTP handlers for catalog operations
+type Handlers struct {
+	store    *Store
+	resolver *Resolver
+	logger   *slog.Logger
+}
+
+// NewHandlers creates new catalog handlers
+func NewHandlers(store *Store, resolver *Resolver, logger *slog.Logger) *Handlers {
+	return &Handlers{
+		store:    store,
+		resolver: resolver,
+		logger:   logger,
+	}
+}
+
+// HandleUpdateCatalog handles POST /catalogs/update
+func (h *Handlers) HandleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("updating catalog via API")
+
+	if err := h.store.Update(); err != nil {
+		h.logger.Error("failed to update catalog", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to update catalog: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	moduleCount, bundleCount, err := h.store.GetStats()
+	if err != nil {
+		h.logger.Error("failed to get catalog stats", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to get catalog stats: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := UpdateResponse{
+		Status:      "success",
+		Message:     "Catalog updated successfully",
+		ModuleCount: moduleCount,
+		BundleCount: bundleCount,
+		Timestamp:   time.Now(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleListModules handles GET /catalogs/modules
+func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("listing catalog modules")
+
+	// Parse query parameters
+	limit := 50 // default
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	modules, err := h.store.GetModules()
+	if err != nil {
+		h.logger.Error("failed to get modules", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to get modules: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Apply limit
+	if len(modules) > limit {
+		modules = modules[:limit]
+	}
+
+	// Convert to install requests
+	var responses []InstallRequest
+	for _, module := range modules {
+		request, err := h.resolver.ResolveModuleToRequest(module.Name)
+		if err != nil {
+			h.logger.Warn("failed to resolve module", "module", module.Name, "error", err)
+			continue
+		}
+		responses = append(responses, *request)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(responses); err != nil {
+		h.logger.Error("failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleListBundles handles GET /catalogs/bundles
+func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("listing catalog bundles")
+
+	// Parse query parameters
+	limit := 50 // default
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	bundles, err := h.store.GetBundles()
+	if err != nil {
+		h.logger.Error("failed to get bundles", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to get bundles: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Apply limit
+	if len(bundles) > limit {
+		bundles = bundles[:limit]
+	}
+
+	// Convert to install plans
+	var responses []BundleInstallPlan
+	for _, bundle := range bundles {
+		plan, err := h.resolver.ResolveBundleToInstallPlan(bundle.Name)
+		if err != nil {
+			h.logger.Warn("failed to resolve bundle", "bundle", bundle.Name, "error", err)
+			continue
+		}
+		responses = append(responses, *plan)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(responses); err != nil {
+		h.logger.Error("failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleGetModule handles GET /catalogs/modules/{module_name}
+func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	moduleName := vars["module_name"]
+	h.logger.Info("getting catalog module", "module", moduleName)
+
+	_, err := h.store.GetModule(moduleName)
+	if err != nil {
+		h.logger.Error("failed to get module", "module", moduleName, "error", err)
+		http.Error(w, fmt.Sprintf("Module not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Return the install request that can be used directly
+	request, err := h.resolver.ResolveModuleToRequest(moduleName)
+	if err != nil {
+		h.logger.Error("failed to resolve module to request", "module", moduleName, "error", err)
+		http.Error(w, fmt.Sprintf("Failed to resolve module: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(request); err != nil {
+		h.logger.Error("failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleGetBundle handles GET /catalogs/bundles/{bundle_name}
+func (h *Handlers) HandleGetBundle(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bundleName := vars["bundle_name"]
+	h.logger.Info("getting catalog bundle", "bundle", bundleName)
+
+	_, err := h.store.GetBundle(bundleName)
+	if err != nil {
+		h.logger.Error("failed to get bundle", "bundle", bundleName, "error", err)
+		http.Error(w, fmt.Sprintf("Bundle not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Return the install plan that can be used directly
+	plan, err := h.resolver.ResolveBundleToInstallPlan(bundleName)
+	if err != nil {
+		h.logger.Error("failed to resolve bundle to install plan", "bundle", bundleName, "error", err)
+		http.Error(w, fmt.Sprintf("Failed to resolve bundle: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(plan); err != nil {
+		h.logger.Error("failed to encode response", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}

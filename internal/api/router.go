@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
 
@@ -18,6 +19,7 @@ type apiEnv struct {
 	modules   *ModuleHandlers
 	exposures *ExposureHandlers
 	inspect   *InspectHandlers
+	catalog   *catalog.Handlers
 	logger    *slog.Logger
 }
 
@@ -45,6 +47,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		return nil, fmt.Errorf("failed to initialize link store: %w", err)
 	}
 
+	// Initialize catalog
+	catalogStore := catalog.NewStore(logger)
+	catalogResolver := catalog.NewResolver(catalogStore)
+	catalogHandlers := catalog.NewHandlers(catalogStore, catalogResolver, logger)
+
 	moduleHandlers := NewModuleHandlers(installer, uninstaller, dockerClient, logger)
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
@@ -55,6 +62,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		modules:   moduleHandlers,
 		exposures: exposureHandlers,
 		inspect:   inspectHandlers,
+		catalog:   catalogHandlers,
 		logger:    logger,
 	}
 
@@ -77,6 +85,13 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
 	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
 	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+
+	// Catalog endpoints
+	r.HandleFunc("/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
+	r.HandleFunc("/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
+	r.HandleFunc("/catalogs/modules/{module_name}", catalogHandlers.HandleGetModule).Methods(http.MethodGet)
+	r.HandleFunc("/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
+	r.HandleFunc("/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
 
 	return r, nil
 }
