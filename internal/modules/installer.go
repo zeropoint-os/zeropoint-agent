@@ -277,18 +277,28 @@ func parseGitURL(source string) (gitURL, ref string, err error) {
 func (i *Installer) cloneFromGit(gitURL, ref string) (string, error) {
 	tmpDir := filepath.Join(i.workingDir, "zeropoint-clone-"+uuid.New().String())
 
-	args := []string{"clone", "--depth", "1"}
-	if ref != "HEAD" {
-		args = append(args, "--branch", ref)
+	// First, clone the repository (can't use --depth=1 with commit SHAs)
+	cloneArgs := []string{"clone", gitURL, tmpDir}
+	
+	cloneCmd := exec.Command("git", cloneArgs...)
+	cloneCmd.Stdout = os.Stdout
+	cloneCmd.Stderr = os.Stderr
+
+	if err := cloneCmd.Run(); err != nil {
+		return "", fmt.Errorf("git clone failed: %w", err)
 	}
-	args = append(args, gitURL, tmpDir)
 
-	cmd := exec.Command("git", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Then checkout the specific commit SHA
+	checkoutArgs := []string{"checkout", ref}
+	checkoutCmd := exec.Command("git", checkoutArgs...)
+	checkoutCmd.Dir = tmpDir
+	checkoutCmd.Stdout = os.Stdout
+	checkoutCmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
-		return "", err
+	if err := checkoutCmd.Run(); err != nil {
+		// Clean up the directory on checkout failure
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("git checkout %s failed: %w", ref, err)
 	}
 
 	return tmpDir, nil

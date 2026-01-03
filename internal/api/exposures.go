@@ -120,8 +120,8 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID
 		return nil, false, fmt.Errorf("hostname required for http exposures")
 	}
 
-	// Check if exposure already exists
-	if existing := s.findExposure(moduleID, protocol, hostname, containerPort); existing != nil {
+	// Check if exposure already exists by ID
+	if existing, exists := s.exposures[exposureID]; exists {
 		return existing, false, nil
 	}
 
@@ -132,7 +132,7 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID
 
 	// Create new exposure
 	exposure := &Exposure{
-		ID:            generateID(),
+		ID:            exposureID, // Use provided ID instead of generating
 		ModuleID:      moduleID,
 		Protocol:      protocol,
 		Hostname:      hostname,
