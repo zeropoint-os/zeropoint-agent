@@ -279,7 +279,7 @@ func (i *Installer) cloneFromGit(gitURL, ref string) (string, error) {
 
 	// First, clone the repository (can't use --depth=1 with commit SHAs)
 	cloneArgs := []string{"clone", gitURL, tmpDir}
-	
+
 	cloneCmd := exec.Command("git", cloneArgs...)
 	cloneCmd.Stdout = os.Stdout
 	cloneCmd.Stderr = os.Stderr
