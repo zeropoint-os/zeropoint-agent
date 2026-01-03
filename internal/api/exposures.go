@@ -105,8 +105,8 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsSe
 	return store, nil
 }
 
-// CreateExposure creates or returns existing exposure (idempotent)
-func (s *ExposureStore) CreateExposure(ctx context.Context, moduleID, protocol, hostname string, containerPort uint32) (*Exposure, bool, error) {
+// CreateExposure creates or returns existing exposure with user-provided ID (idempotent)
+func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32) (*Exposure, bool, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 

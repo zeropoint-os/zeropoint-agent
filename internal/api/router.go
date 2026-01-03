@@ -74,9 +74,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	// Exposure endpoints
 	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{module_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
-	r.HandleFunc("/exposures/{module_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{module_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
 
 	return r, nil
 }

@@ -833,10 +833,11 @@ Response: 404 Not Found
 #### Create Exposure
 
 ```http
-POST /exposures/{module_id}
+POST /exposures/{exposure_id}
 Content-Type: application/json
 
 {
+  "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
   "container_port": 3000
@@ -844,7 +845,7 @@ Content-Type: application/json
 
 Response: 201 Created
 {
-  "id": "abc123",
+  "id": "openwebui-web",
   "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
@@ -892,11 +893,11 @@ Response: 200 OK
 #### Get Exposure
 
 ```http
-GET /exposures/{module_id}
+GET /exposures/{exposure_id}
 
 Response: 200 OK
 {
-  "id": "abc123",
+  "id": "openwebui-web",
   "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
@@ -913,7 +914,7 @@ Response: 404 Not Found
 #### Delete Exposure
 
 ```http
-DELETE /exposures/{module_id}
+DELETE /exposures/{exposure_id}
 
 Response: 204 No Content
 

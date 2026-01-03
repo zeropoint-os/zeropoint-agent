@@ -69,38 +69,37 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 	}
 }
 
-// CreateExposure handles POST /exposures/{module_id}
+// CreateExposure handles POST /exposures/{exposure_id}
 // @Summary Create an exposure for an application
 // @Description Exposes an application externally via Envoy reverse proxy
 // @Tags exposures
-// @Param module_id path string true "Module ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Param body body CreateExposureRequest true "Exposure configuration"
 // @Success 201 {object} ExposureResponse
 // @Success 200 {object} ExposureResponse "Exposure already exists"
 // @Failure 400 {string} string "Bad request"
-// @Router /exposures/{module_id} [post]
+// @Router /exposures/{exposure_id} [post]
 func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request) {
-	// Get module_id from URL path
+	// Get exposure_id from URL path
 	vars := mux.Vars(r)
-	moduleID := vars["module_id"]
-	if moduleID == "" {
-		http.Error(w, "module_id is required", http.StatusBadRequest)
+	exposureID := vars["exposure_id"]
+	if exposureID == "" {
+		http.Error(w, "exposure_id is required", http.StatusBadRequest)
 		return
 	}
 
-	// Parse optional request body for additional config
+	// Parse request body for configuration
 	var req CreateExposureRequest
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
 	}
 
-	// Use path parameter as module_id
-	req.ModuleID = moduleID
-
 	// Validate required fields
+	if req.ModuleID == "" {
+		http.Error(w, "module_id is required in request body", http.StatusBadRequest)
+		return
+	}
 	if req.Protocol == "" {
 		http.Error(w, "protocol is required in request body", http.StatusBadRequest)
 		return
@@ -110,7 +109,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	exposure, created, err := h.store.CreateExposure(r.Context(), req.ModuleID, req.Protocol, req.Hostname, req.ContainerPort)
+	exposure, created, err := h.store.CreateExposure(r.Context(), exposureID, req.ModuleID, req.Protocol, req.Hostname, req.ContainerPort)
 	if err != nil {
 		h.logger.Error("failed to create exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -149,20 +148,20 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
-// GetExposure handles GET /exposures/{module_id}
+// GetExposure handles GET /exposures/{exposure_id}
 // @Summary Get exposure for an application
-// @Description Returns the exposure details for a specific application
+// @Description Returns the exposure details for a specific exposure
 // @Tags exposures
-// @Param module_id path string true "Module ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Success 200 {object} ExposureResponse
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{module_id} [get]
+// @Router /exposures/{exposure_id} [get]
 func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	moduleID := vars["module_id"]
+	exposureID := vars["exposure_id"]
 
-	exposure := h.store.GetExposureByModuleID(moduleID)
-	if exposure == nil {
+	exposure, err := h.store.GetExposure(exposureID)
+	if err != nil {
 		http.Error(w, "exposure not found", http.StatusNotFound)
 		return
 	}
@@ -173,19 +172,19 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// DeleteExposure handles DELETE /exposures/{module_id}
+// DeleteExposure handles DELETE /exposures/{exposure_id}
 // @Summary Delete an exposure
-// @Description Removes external access for an application
+// @Description Removes external access for an exposure
 // @Tags exposures
-// @Param module_id path string true "Module ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Success 204 "No content"
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{module_id} [delete]
+// @Router /exposures/{exposure_id} [delete]
 func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	moduleID := vars["module_id"]
+	exposureID := vars["exposure_id"]
 
-	if err := h.store.DeleteExposureByModuleID(r.Context(), moduleID); err != nil {
+	if err := h.store.DeleteExposure(r.Context(), exposureID); err != nil {
 		h.logger.Error("failed to delete exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
