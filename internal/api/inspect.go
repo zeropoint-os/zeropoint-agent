@@ -30,11 +30,11 @@ func NewInspectHandlers(appsDir string, logger *slog.Logger) *InspectHandlers {
 	}
 }
 
-// InspectResponse represents the response for app inspection
+// InspectResponse represents the response for module inspection
 type InspectResponse struct {
-	AppID   string                  `json:"app_id"`
-	Inputs  map[string]InputSchema  `json:"inputs"`
-	Outputs map[string]OutputSchema `json:"outputs"`
+	ModuleID string                  `json:"module_id"`
+	Inputs   map[string]InputSchema  `json:"inputs"`
+	Outputs  map[string]OutputSchema `json:"outputs"`
 }
 
 // InputSchema represents metadata about an input variable
@@ -53,19 +53,19 @@ type OutputSchema struct {
 	CurrentValue interface{} `json:"current_value,omitempty"`
 }
 
-// InspectApp handles GET /apps/{app_id}/inspect?source_url=...
-// @Summary Inspect an app's inputs and outputs
+// InspectModule handles GET /modules/{module_id}/inspect?source_url=...
+// @Summary Inspect a module's inputs and outputs
 // @Description Fetch and parse a Terraform module to extract inputs, outputs, and current values
-// @Tags apps
-// @Param app_id path string true "App ID"
+// @Tags modules
+// @Param module_id path string true "Module ID"
 // @Param source_url query string false "Git repository URL (if not installed)"
 // @Success 200 {object} InspectResponse
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal error"
-// @Router /apps/{app_id}/inspect [get]
-func (h *InspectHandlers) InspectApp(w http.ResponseWriter, r *http.Request) {
+// @Router /modules/{module_id}/inspect [get]
+func (h *InspectHandlers) InspectModule(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
+	moduleID := vars["module_id"]
 	sourceURL := r.URL.Query().Get("source_url")
 
 	var modulePath string
@@ -82,10 +82,10 @@ func (h *InspectHandlers) InspectApp(w http.ResponseWriter, r *http.Request) {
 		cleanupFunc = cleanup
 		defer cleanupFunc()
 	} else {
-		// Use installed app
-		modulePath = filepath.Join(h.appsDir, appID)
+		// Use installed module
+		modulePath = filepath.Join(h.appsDir, moduleID)
 		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-			http.Error(w, fmt.Sprintf("app not installed and no source_url provided"), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("module not installed and no source_url provided"), http.StatusNotFound)
 			return
 		}
 	}
@@ -109,16 +109,16 @@ func (h *InspectHandlers) InspectApp(w http.ResponseWriter, r *http.Request) {
 	var currentOutputs map[string]*terraform.OutputMeta
 
 	if sourceURL == "" {
-		// App is installed, try to get current values
-		currentInputs = h.getCurrentInputs(appID)
+		// Module is installed, try to get current values
+		currentInputs = h.getCurrentInputs(moduleID)
 		currentOutputs, _ = h.getCurrentOutputs(modulePath)
 	}
 
 	// Build response
 	response := InspectResponse{
-		AppID:   appID,
-		Inputs:  make(map[string]InputSchema),
-		Outputs: make(map[string]OutputSchema),
+		ModuleID: moduleID,
+		Inputs:   make(map[string]InputSchema),
+		Outputs:  make(map[string]OutputSchema),
 	}
 
 	for name, variable := range inputs {
@@ -177,14 +177,14 @@ func (h *InspectHandlers) cloneModule(sourceURL string) (string, func(), error) 
 	return tmpDir, cleanup, nil
 }
 
-// getCurrentInputs retrieves the current input values for an installed app
-// TODO: Load from persisted app metadata
-func (h *InspectHandlers) getCurrentInputs(appID string) map[string]string {
+// getCurrentInputs retrieves the current input values for an installed module
+// TODO: Load from persisted module metadata
+func (h *InspectHandlers) getCurrentInputs(moduleID string) map[string]string {
 	// For now, return empty - will be populated once we persist installation variables
 	return make(map[string]string)
 }
 
-// getCurrentOutputs retrieves the current output values for an installed app
+// getCurrentOutputs retrieves the current output values for an installed module
 func (h *InspectHandlers) getCurrentOutputs(modulePath string) (map[string]*terraform.OutputMeta, error) {
 	executor, err := terraform.NewExecutor(modulePath)
 	if err != nil {

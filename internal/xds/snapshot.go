@@ -203,7 +203,7 @@ func mustMarshalAny(msg proto.Message) *anypb.Any {
 // Exposure represents a service exposure (minimal interface to avoid import cycle)
 type Exposure struct {
 	ID            string
-	AppName       string
+	ModuleName    string
 	Protocol      string
 	Hostname      string
 	ContainerPort uint32
@@ -243,7 +243,7 @@ func BuildSnapshotFromExposures(version string, exposures []*Exposure) (*cache.S
 		// Build clusters for HTTP exposures
 		for _, exp := range httpExposures {
 			clusterName := fmt.Sprintf("cluster_%s", exp.ID)
-			cluster := makeCluster(clusterName, exp.AppName, exp.ContainerPort)
+			cluster := makeCluster(clusterName, exp.ModuleName, exp.ContainerPort)
 			clusters = append(clusters, cluster)
 		}
 	} else {
@@ -258,14 +258,14 @@ func BuildSnapshotFromExposures(version string, exposures []*Exposure) (*cache.S
 
 	// Build TCP listeners for TCP exposures
 	for _, exp := range tcpExposures {
-		tcpListener, err := makeTCPListener(exp.ID, exp.HostPort, exp.AppName, exp.ContainerPort)
+		tcpListener, err := makeTCPListener(exp.ID, exp.HostPort, exp.ModuleName, exp.ContainerPort)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TCP listener for %s: %w", exp.ID, err)
 		}
 		listeners = append(listeners, tcpListener)
 
 		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
-		cluster := makeCluster(clusterName, exp.AppName, exp.ContainerPort)
+		cluster := makeCluster(clusterName, exp.ModuleName, exp.ContainerPort)
 		clusters = append(clusters, cluster)
 	}
 

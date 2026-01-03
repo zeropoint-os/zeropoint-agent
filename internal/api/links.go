@@ -41,7 +41,7 @@ type LinkStore struct {
 
 // NewLinkStore creates a new link store
 func NewLinkStore(dockerClient *client.Client, logger *slog.Logger) (*LinkStore, error) {
-	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
 	}

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strconv"
 
-	"zeropoint-agent/internal/apps"
+	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/system"
 	"zeropoint-agent/internal/terraform"
@@ -20,9 +20,19 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// Type aliases for cleaner code
+type (
+	Module           = modules.Module
+	Installer        = modules.Installer
+	Uninstaller      = modules.Uninstaller
+	InstallRequest   = modules.InstallRequest
+	UninstallRequest = modules.UninstallRequest
+	ProgressUpdate   = modules.ProgressUpdate
+)
+
 // CreateExposureRequest represents the request body for creating an exposure
 type CreateExposureRequest struct {
-	AppID         string `json:"app_id"`
+	ModuleID      string `json:"module_id"`
 	Protocol      string `json:"protocol"`
 	Hostname      string `json:"hostname,omitempty"`
 	ContainerPort uint32 `json:"container_port"`
@@ -31,7 +41,7 @@ type CreateExposureRequest struct {
 // ExposureResponse represents the response for an exposure
 type ExposureResponse struct {
 	ID            string `json:"id"`
-	AppID         string `json:"app_id"`
+	ModuleID      string `json:"module_id"`
 	Protocol      string `json:"protocol"`
 	Hostname      string `json:"hostname,omitempty"`
 	ContainerPort uint32 `json:"container_port"`
@@ -59,38 +69,37 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 	}
 }
 
-// CreateExposure handles POST /exposures/{app_id}
+// CreateExposure handles POST /exposures/{exposure_id}
 // @Summary Create an exposure for an application
 // @Description Exposes an application externally via Envoy reverse proxy
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Param body body CreateExposureRequest true "Exposure configuration"
 // @Success 201 {object} ExposureResponse
 // @Success 200 {object} ExposureResponse "Exposure already exists"
 // @Failure 400 {string} string "Bad request"
-// @Router /exposures/{app_id} [post]
+// @Router /exposures/{exposure_id} [post]
 func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request) {
-	// Get app_id from URL path
+	// Get exposure_id from URL path
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
-	if appID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
+	exposureID := vars["exposure_id"]
+	if exposureID == "" {
+		http.Error(w, "exposure_id is required", http.StatusBadRequest)
 		return
 	}
 
-	// Parse optional request body for additional config
+	// Parse request body for configuration
 	var req CreateExposureRequest
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
 	}
 
-	// Use path parameter as app_id
-	req.AppID = appID
-
 	// Validate required fields
+	if req.ModuleID == "" {
+		http.Error(w, "module_id is required in request body", http.StatusBadRequest)
+		return
+	}
 	if req.Protocol == "" {
 		http.Error(w, "protocol is required in request body", http.StatusBadRequest)
 		return
@@ -100,7 +109,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	exposure, created, err := h.store.CreateExposure(r.Context(), req.AppID, req.Protocol, req.Hostname, req.ContainerPort)
+	exposure, created, err := h.store.CreateExposure(r.Context(), exposureID, req.ModuleID, req.Protocol, req.Hostname, req.ContainerPort)
 	if err != nil {
 		h.logger.Error("failed to create exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -139,20 +148,20 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
-// GetExposure handles GET /exposures/{app_id}
+// GetExposure handles GET /exposures/{exposure_id}
 // @Summary Get exposure for an application
-// @Description Returns the exposure details for a specific application
+// @Description Returns the exposure details for a specific exposure
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Success 200 {object} ExposureResponse
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{app_id} [get]
+// @Router /exposures/{exposure_id} [get]
 func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
+	exposureID := vars["exposure_id"]
 
-	exposure := h.store.GetExposureByAppID(appID)
-	if exposure == nil {
+	exposure, err := h.store.GetExposure(exposureID)
+	if err != nil {
 		http.Error(w, "exposure not found", http.StatusNotFound)
 		return
 	}
@@ -163,19 +172,19 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// DeleteExposure handles DELETE /exposures/{app_id}
+// DeleteExposure handles DELETE /exposures/{exposure_id}
 // @Summary Delete an exposure
-// @Description Removes external access for an application
+// @Description Removes external access for an exposure
 // @Tags exposures
-// @Param app_id path string true "App ID"
+// @Param exposure_id path string true "Exposure ID"
 // @Success 204 "No content"
 // @Failure 404 {string} string "Exposure not found"
-// @Router /exposures/{app_id} [delete]
+// @Router /exposures/{exposure_id} [delete]
 func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	appID := vars["app_id"]
+	exposureID := vars["exposure_id"]
 
-	if err := h.store.DeleteExposureByAppID(r.Context(), appID); err != nil {
+	if err := h.store.DeleteExposure(r.Context(), exposureID); err != nil {
 		h.logger.Error("failed to delete exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -188,10 +197,10 @@ func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request
 func toExposureResponse(exp *Exposure, store *ExposureStore) ExposureResponse {
 	resp := ExposureResponse{
 		ID:            exp.ID,
-		AppID:         exp.AppID,
+		ModuleID:      exp.ModuleID,
 		Protocol:      exp.Protocol,
 		ContainerPort: exp.ContainerPort,
-		Status:        store.getContainerStatus(exp.AppID),
+		Status:        store.getContainerStatus(exp.ModuleID),
 		CreatedAt:     exp.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 
@@ -259,9 +268,9 @@ type LinkResponse struct {
 	Errors       map[string]string `json:"errors,omitempty"`
 }
 
-// AppsResponse encapsulates a list of apps
-type AppsResponse struct {
-	Apps []apps.App `json:"apps"`
+// ModulesResponse encapsulates a list of modules
+type ModulesResponse struct {
+	Modules []Module `json:"modules"`
 }
 
 // RegisterRoutes registers the link-related routes
@@ -420,19 +429,19 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 	// Step 4: Apply configurations in dependency order
 	errors := make(map[string]string)
-	appliedApps := []string{}
+	appliedModules := []string{}
 
-	for _, appName := range order {
-		config, exists := apps[appName]
+	for _, moduleName := range order {
+		config, exists := apps[moduleName]
 		if !exists {
-			continue // App not in this link request
+			continue // Module not in this link request
 		}
 
-		h.logger.Info("Applying configuration", "app", appName, "config", config)
+		h.logger.Info("Applying configuration", "module", moduleName, "config", config)
 
-		if err := h.applyAppConfiguration(appName, config); err != nil {
-			errors[appName] = err.Error()
-			h.logger.Error("Failed to apply configuration", "app", appName, "error", err)
+		if err := h.applyModuleConfiguration(moduleName, config); err != nil {
+			errors[moduleName] = err.Error()
+			h.logger.Error("Failed to apply configuration", "module", moduleName, "error", err)
 
 			// Rollback on first failure
 			h.logger.Info("Rolling back states due to failure")
@@ -443,17 +452,17 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 			return LinkResponse{
 				Success:      false,
-				Message:      fmt.Sprintf("Configuration failed for app %s", appName),
-				AppliedOrder: appliedApps,
+				Message:      fmt.Sprintf("Configuration failed for module %s", moduleName),
+				AppliedOrder: appliedModules,
 				Errors:       errors,
 			}
 		}
 
-		appliedApps = append(appliedApps, appName)
+		appliedModules = append(appliedModules, moduleName)
 
 		// Create shared networks for any apps this app references
-		if err := h.createSharedNetworksForReferences(appName, config); err != nil {
-			h.logger.Warn("Failed to create shared networks", "app", appName, "error", err)
+		if err := h.createSharedNetworksForReferences(moduleName, config); err != nil {
+			h.logger.Warn("Failed to create shared networks", "module", moduleName, "error", err)
 			// Don't fail the entire operation for network creation failures
 		}
 	}
@@ -501,8 +510,8 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 	return LinkResponse{
 		Success:      true,
-		Message:      "All apps linked successfully",
-		AppliedOrder: appliedApps,
+		Message:      "All modules linked successfully",
+		AppliedOrder: appliedModules,
 	}
 }
 
@@ -539,9 +548,9 @@ func (h *LinkHandlers) validateAppsExist(apps map[string]map[string]interface{})
 	return nil
 }
 
-// applyAppConfiguration applies configuration to a single app
-func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]interface{}) error {
-	h.logger.Info("Applying configuration to app", "app", appName)
+// applyModuleConfiguration applies configuration to a single module
+func (h *LinkHandlers) applyModuleConfiguration(moduleName string, config map[string]interface{}) error {
+	h.logger.Info("Applying configuration to module", "module", moduleName)
 
 	// Resolve app references to actual values
 	resolvedConfig, err := h.resolveAppReferences(config)
@@ -550,7 +559,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 	}
 
 	// Inject system variables (same as installer does)
-	variables, err := h.prepareSystemVariables(appName)
+	variables, err := h.prepareSystemVariables(moduleName)
 	if err != nil {
 		return fmt.Errorf("failed to prepare system variables: %w", err)
 	}
@@ -581,7 +590,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 	}
 
 	// Apply configuration using Terraform
-	appDir := filepath.Join(h.appsDir, appName)
+	appDir := filepath.Join(h.appsDir, moduleName)
 	executor, err := terraform.NewExecutor(appDir)
 	if err != nil {
 		return fmt.Errorf("failed to create terraform executor: %w", err)
@@ -591,7 +600,7 @@ func (h *LinkHandlers) applyAppConfiguration(appName string, config map[string]i
 		return fmt.Errorf("terraform apply failed: %w", err)
 	}
 
-	h.logger.Info("Configuration applied successfully", "app", appName)
+	h.logger.Info("Configuration applied successfully", "module", moduleName)
 	return nil
 }
 
@@ -638,10 +647,10 @@ func (h *LinkHandlers) getAppOutput(appName, outputName string) (interface{}, er
 	return output.Value, nil
 }
 
-// prepareSystemVariables creates the standard zp_ variables that all apps need
-func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string, error) {
+// prepareSystemVariables creates the standard zp_ variables that all modules need
+func (h *LinkHandlers) prepareSystemVariables(moduleName string) (map[string]string, error) {
 	// Create network name using the same convention as installer
-	networkName := fmt.Sprintf("zeropoint-app-%s", appName)
+	networkName := fmt.Sprintf("zeropoint-module-%s", moduleName)
 
 	// Get system info
 	arch := runtime.GOARCH
@@ -649,18 +658,18 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 
 	// Prepare base variables (all zp_ prefixed)
 	variables := map[string]string{
-		"zp_app_id":       appName,
+		"zp_module_id":    moduleName,
 		"zp_network_name": networkName,
 		"zp_arch":         arch,
 		"zp_gpu_vendor":   gpuVendor,
 	}
 
 	// Create app storage directory if needed
-	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = "./data" // default fallback
 	}
-	appStoragePath := filepath.Join(storageRoot, "apps", appName)
+	appStoragePath := filepath.Join(storageRoot, "modules", moduleName)
 	if err := os.MkdirAll(appStoragePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create app storage directory: %w", err)
 	}
@@ -672,9 +681,9 @@ func (h *LinkHandlers) prepareSystemVariables(appName string) (map[string]string
 	}
 
 	// Pass app storage root to terraform (must be absolute for Docker)
-	variables["zp_app_storage"] = absAppStoragePath
+	variables["zp_module_storage"] = absAppStoragePath
 
-	h.logger.Info("Prepared system variables", "app", appName, "variables", variables)
+	h.logger.Info("Prepared system variables", "module", moduleName, "variables", variables)
 	return variables, nil
 }
 
@@ -761,17 +770,17 @@ func (h *LinkHandlers) getAppOutputs(appName string) (map[string]interface{}, er
 	return result, nil
 }
 
-// AppHandlers holds HTTP handlers for app management
-type AppHandlers struct {
-	installer   *apps.Installer
-	uninstaller *apps.Uninstaller
+// ModuleHandlers holds HTTP handlers for module management
+type ModuleHandlers struct {
+	installer   *Installer
+	uninstaller *Uninstaller
 	docker      *client.Client
 	logger      *slog.Logger
 }
 
-// NewAppHandlers creates a new app handlers instance
-func NewAppHandlers(installer *apps.Installer, uninstaller *apps.Uninstaller, docker *client.Client, logger *slog.Logger) *AppHandlers {
-	return &AppHandlers{
+// NewModuleHandlers creates a new module handlers instance
+func NewModuleHandlers(installer *Installer, uninstaller *Uninstaller, docker *client.Client, logger *slog.Logger) *ModuleHandlers {
+	return &ModuleHandlers{
 		installer:   installer,
 		uninstaller: uninstaller,
 		docker:      docker,
@@ -779,32 +788,32 @@ func NewAppHandlers(installer *apps.Installer, uninstaller *apps.Uninstaller, do
 	}
 }
 
-// InstallApp handles POST /apps/{name} with streaming progress updates
-// @Summary Install an application
-// @Description Installs an application by name with optional configuration
-// @Tags apps
-// @Param name path string true "App name"
-// @Param body body apps.InstallRequest false "Installation configuration"
-// @Success 200 {object} apps.ProgressUpdate
+// InstallModule handles POST /modules/{name} with streaming progress updates
+// @Summary Install a module
+// @Description Installs a module by name with optional configuration
+// @Tags modules
+// @Param name path string true "Module name"
+// @Param body body modules.InstallRequest false "Installation configuration"
+// @Success 200 {object} modules.ProgressUpdate
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
-// @Router /apps/{name} [post]
-func (h *AppHandlers) InstallApp(w http.ResponseWriter, r *http.Request) {
+// @Router /modules/{name} [post]
+func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get app name from URL path
+	// Get module name from URL path
 	vars := mux.Vars(r)
-	appName := vars["name"]
-	if appName == "" {
-		http.Error(w, "app name is required", http.StatusBadRequest)
+	moduleName := vars["name"]
+	if moduleName == "" {
+		http.Error(w, "module name is required", http.StatusBadRequest)
 		return
 	}
 
 	// Parse optional request body
-	var req apps.InstallRequest
+	var req InstallRequest
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -812,14 +821,14 @@ func (h *AppHandlers) InstallApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use path parameter as app_id
-	req.AppID = appName
+	// Use path parameter as module_id
+	req.ModuleID = moduleName
 
-	// Check if app already exists
-	appsDir := apps.GetAppsDir()
-	appPath := filepath.Join(appsDir, appName)
-	if _, err := os.Stat(appPath); err == nil {
-		http.Error(w, fmt.Sprintf("app '%s' already exists", appName), http.StatusConflict)
+	// Check if module already exists
+	modulesDir := modules.GetModulesDir()
+	modulePath := filepath.Join(modulesDir, moduleName)
+	if _, err := os.Stat(modulePath); err == nil {
+		http.Error(w, fmt.Sprintf("module '%s' already exists", moduleName), http.StatusConflict)
 		return
 	}
 
@@ -841,15 +850,15 @@ func (h *AppHandlers) InstallApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stream progress updates
-	progressCallback := func(update apps.ProgressUpdate) {
+	progressCallback := func(update ProgressUpdate) {
 		json.NewEncoder(w).Encode(update)
 		flusher.Flush()
 	}
 
 	// Run installation with progress streaming
 	if err := h.installer.Install(req, progressCallback); err != nil {
-		h.logger.Error("installation failed", "app_id", req.AppID, "error", err)
-		json.NewEncoder(w).Encode(apps.ProgressUpdate{
+		h.logger.Error("installation failed", "module_id", req.ModuleID, "error", err)
+		json.NewEncoder(w).Encode(ProgressUpdate{
 			Status:  "failed",
 			Message: "Installation failed",
 			Error:   err.Error(),
@@ -859,31 +868,31 @@ func (h *AppHandlers) InstallApp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// UninstallApp handles DELETE /apps/{name} with streaming progress updates
-// @Summary Uninstall an application
-// @Description Uninstalls an application by name with streaming progress updates
-// @Tags apps
-// @Param name path string true "App name"
-// @Success 200 {object} apps.ProgressUpdate
+// UninstallModule handles DELETE /modules/{name} with streaming progress updates
+// @Summary Uninstall a module
+// @Description Uninstalls a module by name with streaming progress updates
+// @Tags modules
+// @Param name path string true "Module name"
+// @Success 200 {object} modules.ProgressUpdate
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
-// @Router /apps/{name} [delete]
-func (h *AppHandlers) UninstallApp(w http.ResponseWriter, r *http.Request) {
+// @Router /modules/{name} [delete]
+func (h *ModuleHandlers) UninstallModule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get app name from URL path
+	// Get module name from URL path
 	vars := mux.Vars(r)
-	appName := vars["name"]
-	if appName == "" {
-		http.Error(w, "app name is required", http.StatusBadRequest)
+	moduleName := vars["name"]
+	if moduleName == "" {
+		http.Error(w, "module name is required", http.StatusBadRequest)
 		return
 	}
 
-	req := apps.UninstallRequest{
-		AppID: appName,
+	req := UninstallRequest{
+		ModuleID: moduleName,
 	}
 
 	// Setup streaming response
@@ -898,15 +907,15 @@ func (h *AppHandlers) UninstallApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stream progress updates
-	progressCallback := func(update apps.ProgressUpdate) {
+	progressCallback := func(update ProgressUpdate) {
 		json.NewEncoder(w).Encode(update)
 		flusher.Flush()
 	}
 
 	// Run uninstallation with progress streaming
 	if err := h.uninstaller.Uninstall(req, progressCallback); err != nil {
-		h.logger.Error("uninstallation failed", "app_id", req.AppID, "error", err)
-		json.NewEncoder(w).Encode(apps.ProgressUpdate{
+		h.logger.Error("uninstallation failed", "module_id", req.ModuleID, "error", err)
+		json.NewEncoder(w).Encode(ProgressUpdate{
 			Status:  "failed",
 			Message: "Uninstallation failed",
 			Error:   err.Error(),
@@ -916,34 +925,34 @@ func (h *AppHandlers) UninstallApp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ListApps handles GET /apps
-// @Summary List installed apps
-// @Description Returns installed apps metadata
-// @Tags apps
+// ListModules handles GET /modules
+// @Summary List installed modules
+// @Description Returns installed modules metadata
+// @Tags modules
 // @Produce json
-// @Success 200 {object} AppsResponse
-// @Router /apps [get]
-func (h *AppHandlers) ListApps(w http.ResponseWriter, r *http.Request) {
-	// Discover apps from filesystem
-	list, err := h.discoverApps(r.Context())
+// @Success 200 {object} ModulesResponse
+// @Router /modules [get]
+func (h *ModuleHandlers) ListModules(w http.ResponseWriter, r *http.Request) {
+	// Discover modules from filesystem
+	list, err := h.discoverModules(r.Context())
 	if err != nil {
-		http.Error(w, "failed to discover apps", http.StatusInternalServerError)
+		http.Error(w, "failed to discover modules", http.StatusInternalServerError)
 		return
 	}
-	resp := AppsResponse{Apps: list}
+	resp := ModulesResponse{Modules: list}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
-// discoverApps scans the apps/ directory for installed app modules
-func (h *AppHandlers) discoverApps(ctx context.Context) ([]apps.App, error) {
-	appsDir := apps.GetAppsDir()
-	var result []apps.App
+// discoverModules scans the modules/ directory for installed modules
+func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]Module, error) {
+	modulesDir := modules.GetModulesDir()
+	var result []Module
 
-	entries, err := os.ReadDir(appsDir)
+	entries, err := os.ReadDir(modulesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return result, nil // No apps directory yet
+			return result, nil // No modules directory yet
 		}
 		return nil, err
 	}
@@ -953,34 +962,34 @@ func (h *AppHandlers) discoverApps(ctx context.Context) ([]apps.App, error) {
 			continue
 		}
 
-		appID := entry.Name()
-		modulePath := filepath.Join(appsDir, appID)
+		moduleID := entry.Name()
+		modulePath := filepath.Join(modulesDir, moduleID)
 
 		// Check if main.tf exists
 		mainTfPath := filepath.Join(modulePath, "main.tf")
 		if _, err := os.Stat(mainTfPath); err != nil {
-			continue // Not a valid app module
+			continue // Not a valid module
 		}
 
-		app := apps.App{
-			ID:         appID,
+		module := Module{
+			ID:         moduleID,
 			ModulePath: modulePath,
-			State:      apps.StateUnknown,
+			State:      modules.StateUnknown,
 		}
 
 		// Query Docker for runtime status
-		if err := app.GetContainerStatus(ctx, h.docker); err != nil {
-			h.logger.Warn("failed to get container status", "app_id", appID, "error", err)
+		if err := module.GetContainerStatus(ctx, h.docker); err != nil {
+			h.logger.Warn("failed to get container status", "module_id", moduleID, "error", err)
 		}
 
 		// Load containers with ports and mounts from Terraform outputs
-		if containers, err := apps.LoadContainers(modulePath, appID); err != nil {
-			h.logger.Warn("failed to load containers", "app_id", appID, "error", err)
+		if containers, err := modules.LoadContainers(modulePath, moduleID); err != nil {
+			h.logger.Warn("failed to load containers", "module_id", moduleID, "error", err)
 		} else {
-			app.Containers = containers
+			module.Containers = containers
 		}
 
-		result = append(result, app)
+		result = append(result, module)
 	}
 
 	return result, nil

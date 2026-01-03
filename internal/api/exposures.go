@@ -28,7 +28,7 @@ const (
 // Exposure represents a service exposure
 type Exposure struct {
 	ID            string    `json:"id"`
-	AppID         string    `json:"app_id"`         // References App.ID
+	ModuleID      string    `json:"module_id"`      // References Module.ID
 	Protocol      string    `json:"protocol"`       // "http" or "tcp"
 	Hostname      string    `json:"hostname"`       // required for http, optional for tcp
 	ContainerPort uint32    `json:"container_port"` // port inside container
@@ -57,7 +57,7 @@ type ExposureStore struct {
 
 // NewExposureStore creates a new exposure store
 func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (*ExposureStore, error) {
-	storageRoot := os.Getenv("APP_STORAGE_ROOT")
+	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
 	if storageRoot == "" {
 		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
 	}
@@ -105,8 +105,8 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsSe
 	return store, nil
 }
 
-// CreateExposure creates or returns existing exposure (idempotent)
-func (s *ExposureStore) CreateExposure(ctx context.Context, appID, protocol, hostname string, containerPort uint32) (*Exposure, bool, error) {
+// CreateExposure creates or returns existing exposure with user-provided ID (idempotent)
+func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32) (*Exposure, bool, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -120,20 +120,20 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, appID, protocol, hos
 		return nil, false, fmt.Errorf("hostname required for http exposures")
 	}
 
-	// Check if exposure already exists
-	if existing := s.findExposure(appID, protocol, hostname, containerPort); existing != nil {
+	// Check if exposure already exists by ID
+	if existing, exists := s.exposures[exposureID]; exists {
 		return existing, false, nil
 	}
 
 	// Verify container exists
-	if err := s.verifyContainer(ctx, appID); err != nil {
+	if err := s.verifyContainer(ctx, moduleID); err != nil {
 		return nil, false, err
 	}
 
 	// Create new exposure
 	exposure := &Exposure{
-		ID:            generateID(),
-		AppID:         appID,
+		ID:            exposureID, // Use provided ID instead of generating
+		ModuleID:      moduleID,
 		Protocol:      protocol,
 		Hostname:      hostname,
 		ContainerPort: containerPort,
@@ -150,7 +150,7 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, appID, protocol, hos
 	}
 
 	// Ensure container is on zeropoint-network
-	if err := s.ensureNetwork(ctx, appID); err != nil {
+	if err := s.ensureNetwork(ctx, moduleID); err != nil {
 		return nil, false, err
 	}
 
@@ -242,29 +242,29 @@ func (s *ExposureStore) DeleteExposure(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetExposureByAppID returns an exposure by app ID
-func (s *ExposureStore) GetExposureByAppID(appID string) *Exposure {
+// GetExposureByModuleID returns an exposure by module ID
+func (s *ExposureStore) GetExposureByModuleID(moduleID string) *Exposure {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	for _, exp := range s.exposures {
-		if exp.AppID == appID {
+		if exp.ModuleID == moduleID {
 			return exp
 		}
 	}
 	return nil
 }
 
-// DeleteExposureByAppID removes an exposure by app ID
-func (s *ExposureStore) DeleteExposureByAppID(ctx context.Context, appID string) error {
+// DeleteExposureByModuleID removes an exposure by module ID
+func (s *ExposureStore) DeleteExposureByModuleID(ctx context.Context, moduleID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	// Find exposure with matching app_id
+	// Find exposure with matching module_id
 	var exposureID string
 	var exposure *Exposure
 	for id, exp := range s.exposures {
-		if exp.AppID == appID {
+		if exp.ModuleID == moduleID {
 			exposureID = id
 			exposure = exp
 			break
@@ -272,7 +272,7 @@ func (s *ExposureStore) DeleteExposureByAppID(ctx context.Context, appID string)
 	}
 
 	if exposureID == "" {
-		return fmt.Errorf("exposure not found for app_id: %s", appID)
+		return fmt.Errorf("exposure not found for module_id: %s", moduleID)
 	}
 
 	// Unregister mDNS if it's an HTTP exposure with hostname
@@ -298,9 +298,9 @@ func (s *ExposureStore) DeleteExposureByAppID(ctx context.Context, appID string)
 }
 
 // findExposure checks if an exposure already exists
-func (s *ExposureStore) findExposure(appID, protocol, hostname string, containerPort uint32) *Exposure {
+func (s *ExposureStore) findExposure(moduleID, protocol, hostname string, containerPort uint32) *Exposure {
 	for _, exp := range s.exposures {
-		if exp.AppID == appID &&
+		if exp.ModuleID == moduleID &&
 			exp.Protocol == protocol &&
 			exp.Hostname == hostname &&
 			exp.ContainerPort == containerPort {
@@ -340,8 +340,8 @@ func (s *ExposureStore) verifyContainer(ctx context.Context, appID string) error
 }
 
 // getContainerStatus checks if a container exists and is running
-func (s *ExposureStore) getContainerStatus(appID string) string {
-	containerName := appID + "-main"
+func (s *ExposureStore) getContainerStatus(moduleID string) string {
+	containerName := moduleID + "-main"
 	info, err := s.dockerClient.ContainerInspect(context.Background(), containerName, client.ContainerInspectOptions{})
 	if err != nil {
 		return "unavailable"
@@ -397,13 +397,13 @@ func (s *ExposureStore) ensureNetwork(ctx context.Context, appID string) error {
 }
 
 // EnsureNetwork connects a container to zeropoint-network (public wrapper)
-func (s *ExposureStore) EnsureNetwork(ctx context.Context, appID string) error {
-	return s.ensureNetwork(ctx, appID)
+func (s *ExposureStore) EnsureNetwork(ctx context.Context, moduleID string) error {
+	return s.ensureNetwork(ctx, moduleID)
 }
 
 // EnsureAppOnNetwork connects a container to a specified network (for shared networks)
-func (s *ExposureStore) EnsureAppOnNetwork(ctx context.Context, appID, networkName string) error {
-	containerName := appID + "-main"
+func (s *ExposureStore) EnsureModuleOnNetwork(ctx context.Context, moduleID, networkName string) error {
+	containerName := moduleID + "-main"
 
 	// Create network if it doesn't exist
 	networkList, err := s.dockerClient.NetworkList(ctx, client.NetworkListOptions{})
@@ -447,8 +447,8 @@ func (s *ExposureStore) EnsureAppOnNetwork(ctx context.Context, appID, networkNa
 // reconcileNetworks ensures all containers are connected to zeropoint-network
 func (s *ExposureStore) reconcileNetworks(ctx context.Context) error {
 	for _, exp := range s.exposures {
-		if err := s.ensureNetwork(ctx, exp.AppID); err != nil {
-			s.logger.Warn("failed to reconnect container to network", "app_id", exp.AppID, "error", err)
+		if err := s.ensureNetwork(ctx, exp.ModuleID); err != nil {
+			s.logger.Warn("failed to reconnect container to network", "module_id", exp.ModuleID, "error", err)
 		}
 	}
 	return nil
@@ -458,10 +458,10 @@ func (s *ExposureStore) reconcileNetworks(ctx context.Context) error {
 func (s *ExposureStore) updateSnapshot(ctx context.Context) error {
 	exposures := make([]*xds.Exposure, 0, len(s.exposures))
 	for _, exp := range s.exposures {
-		// xDS needs container name, which is appID + "-main"
+		// xDS needs container name, which is moduleID + "-main"
 		xdsExp := &xds.Exposure{
 			ID:            exp.ID,
-			AppName:       exp.AppID + "-main", // Convert app ID to container name
+			ModuleName:    exp.ModuleID + "-main", // Convert module ID to container name
 			Protocol:      exp.Protocol,
 			Hostname:      exp.Hostname,
 			ContainerPort: exp.ContainerPort,
