@@ -17,9 +17,9 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/swaggo/swag v1.16.6
 	github.com/zclconf/go-cty v1.17.0
-	go.etcd.io/bbolt v1.4.3
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
