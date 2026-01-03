@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -72,7 +73,11 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 
 	if req.Source != "" {
 		// Install from git
-		gitURL, ref := parseGitURL(req.Source)
+		gitURL, ref, err := parseGitURL(req.Source)
+		if err != nil {
+			logger.Error("invalid git URL", "error", err)
+			return fmt.Errorf("invalid git URL: %w", err)
+		}
 		logger.Info("cloning from git", "url", gitURL, "ref", ref)
 		progress(ProgressUpdate{Status: "cloning", Message: "Cloning repository"})
 
@@ -247,18 +252,25 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	return nil
 }
 
-// parseGitURL splits a git URL like "https://github.com/org/repo.git@v1.0" into URL and ref
-func parseGitURL(source string) (gitURL, ref string) {
+// parseGitURL splits a git URL like "https://github.com/org/repo.git@e155f1b8f60354dcfde90693336865247558242b" into URL and ref
+// Returns error if ref is not a full 40-character commit SHA (no symbolic refs allowed)
+func parseGitURL(source string) (gitURL, ref string, err error) {
 	parts := strings.Split(source, "@")
 	gitURL = parts[0]
 
-	if len(parts) > 1 {
-		ref = parts[1]
-	} else {
-		ref = "HEAD"
+	if len(parts) <= 1 {
+		return "", "", fmt.Errorf("git URL must include commit SHA after '@' (got %s) - symbolic refs like HEAD, branches, and tags are not allowed for security and reproducibility", source)
 	}
 
-	return gitURL, ref
+	ref = parts[1]
+
+	// Validate that ref is a full 40-character commit SHA
+	commitSHAPattern := regexp.MustCompile("^[a-fA-F0-9]{40}$")
+	if !commitSHAPattern.MatchString(ref) {
+		return "", "", fmt.Errorf("ref must be a full 40-character commit SHA (got %s) - symbolic refs like branches, tags, and HEAD are not allowed for security and reproducibility", ref)
+	}
+
+	return gitURL, ref, nil
 }
 
 // cloneFromGit clones a git repository to a temporary directory
