@@ -730,7 +730,7 @@ POST /links/{id}
 Content-Type: application/json
 
 {
-  "apps": {
+  "modules": {
     "openwebui": {
       "ollama_host": "ollama-main",
       "ollama_port": 11434
