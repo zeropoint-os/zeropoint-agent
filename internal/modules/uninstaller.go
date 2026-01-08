@@ -1,24 +1,29 @@
 package modules
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 
 	"zeropoint-agent/internal/terraform"
+
+	"github.com/moby/moby/client"
 )
 
 // Uninstaller handles app uninstallation
 type Uninstaller struct {
 	appsDir string
+	docker  *client.Client
 	logger  *slog.Logger
 }
 
 // NewUninstaller creates a new app uninstaller
-func NewUninstaller(appsDir string, logger *slog.Logger) *Uninstaller {
+func NewUninstaller(docker *client.Client, appsDir string, logger *slog.Logger) *Uninstaller {
 	return &Uninstaller{
 		appsDir: appsDir,
+		docker:  docker,
 		logger:  logger,
 	}
 }
@@ -81,6 +86,15 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 		return fmt.Errorf("terraform destroy failed: %w", err)
 	}
 
+	// Clean up the Docker network created by installer
+	networkName := fmt.Sprintf("zeropoint-module-%s", req.ModuleID)
+	logger.Info("removing docker network", "network", networkName)
+	progress(ProgressUpdate{Status: "network", Message: "Cleaning up Docker network"})
+	if err := u.removeNetwork(networkName); err != nil {
+		// Don't fail uninstall if network cleanup fails, just log warning
+		logger.Warn("failed to remove docker network", "network", networkName, "error", err)
+	}
+
 	// Remove app directory
 	logger.Info("removing app directory")
 	progress(ProgressUpdate{Status: "cleaning", Message: "Removing app directory"})
@@ -93,5 +107,38 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	logger.Info("uninstallation complete")
 	progress(ProgressUpdate{Status: "complete", Message: "Uninstallation complete"})
 
+	return nil
+}
+
+// removeNetwork removes a Docker network by name
+func (u *Uninstaller) removeNetwork(networkName string) error {
+	ctx := context.Background()
+
+	// Check if network exists
+	networks, err := u.docker.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	var networkID string
+	for _, net := range networks.Items {
+		if net.Name == networkName {
+			networkID = net.ID
+			break
+		}
+	}
+
+	if networkID == "" {
+		// Network doesn't exist, nothing to clean up
+		return nil
+	}
+
+	// Remove the network
+	_, err = u.docker.NetworkRemove(ctx, networkID, client.NetworkRemoveOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to remove network %s: %w", networkName, err)
+	}
+
+	u.logger.Info("docker network removed", "network", networkName)
 	return nil
 }
