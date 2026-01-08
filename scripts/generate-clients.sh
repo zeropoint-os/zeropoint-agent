@@ -29,6 +29,7 @@ fi
 mkdir -p "$CLIENTS_DIR/go"
 mkdir -p "$CLIENTS_DIR/typescript"
 mkdir -p "$CLIENTS_DIR/python"
+mkdir -p "$CLIENTS_DIR/csharp"
 
 echo "Generating Go client..."
 # Generate Go client from OpenAPI 3.0 spec
@@ -54,6 +55,17 @@ npx @openapitools/openapi-generator-cli generate \
     -o "$CLIENTS_DIR/python" \
     --additional-properties=packageName=zeropoint_client,projectName=zeropoint-client,packageVersion=1.0.0
 
+echo "Generating C# client..."
+# Generate C# client from OpenAPI 3.0 spec
+npx @openapitools/openapi-generator-cli generate \
+    -i "$ARTIFACTS_DIR/openapi.yaml" \
+    -g csharp \
+    -o "$CLIENTS_DIR/csharp" \
+    --additional-properties=packageName=ZeropointClient,packageVersion=1.0.0,packageCompany=Zeropoint,packageTitle=ZeropointAPIClient,packageDescription=CSharpClientLibraryForZeropointAgentAPI,targetFramework=net7.0,supportsAsync=true,generatePropertyChanged=false \
+    --type-mappings=File=Stream \
+    --import-mappings=Stream=System.IO.Stream
+
 echo "✅ Go client: $CLIENTS_DIR/go"
 echo "✅ TypeScript client: $CLIENTS_DIR/typescript"
 echo "✅ Python client: $CLIENTS_DIR/python"
+echo "✅ C# client: $CLIENTS_DIR/csharp"

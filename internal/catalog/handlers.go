@@ -34,6 +34,13 @@ func NewHandlers(store *Store, resolver *Resolver, logger *slog.Logger) *Handler
 }
 
 // HandleUpdateCatalog handles POST /catalogs/update
+// @Summary Update catalog
+// @Description Updates the local catalog by cloning/pulling from the remote repository
+// @Tags catalog
+// @Produce json
+// @Success 200 {object} UpdateResponse "Catalog updated successfully"
+// @Failure 500 {string} string "Internal server error"
+// @Router /catalogs/update [post]
 func (h *Handlers) HandleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("updating catalog via API")
 
@@ -66,6 +73,14 @@ func (h *Handlers) HandleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleListModules handles GET /catalogs/modules
+// @Summary List catalog modules
+// @Description Returns all available modules from the catalog as install requests
+// @Tags catalog
+// @Produce json
+// @Param limit query int false "Maximum number of modules to return" default(50)
+// @Success 200 {array} InstallRequest "List of modules as install requests"
+// @Failure 500 {string} string "Internal server error"
+// @Router /catalogs/modules [get]
 func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("listing catalog modules")
 
@@ -108,6 +123,14 @@ func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleListBundles handles GET /catalogs/bundles
+// @Summary List catalog bundles
+// @Description Returns all available bundles from the catalog as install plans
+// @Tags catalog
+// @Produce json
+// @Param limit query int false "Maximum number of bundles to return" default(50)
+// @Success 200 {array} BundleInstallPlan "List of bundles as install plans"
+// @Failure 500 {string} string "Internal server error"
+// @Router /catalogs/bundles [get]
 func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("listing catalog bundles")
 
@@ -150,6 +173,15 @@ func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetModule handles GET /catalogs/modules/{module_name}
+// @Summary Get specific catalog module
+// @Description Returns a specific module from the catalog as an install request
+// @Tags catalog
+// @Produce json
+// @Param module_name path string true "Module name"
+// @Success 200 {object} InstallRequest "Module as install request"
+// @Failure 404 {string} string "Module not found"
+// @Failure 500 {string} string "Internal server error"
+// @Router /catalogs/modules/{module_name} [get]
 func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	moduleName := vars["module_name"]
@@ -178,6 +210,15 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetBundle handles GET /catalogs/bundles/{bundle_name}
+// @Summary Get specific catalog bundle
+// @Description Returns a specific bundle from the catalog as an install plan
+// @Tags catalog
+// @Produce json
+// @Param bundle_name path string true "Bundle name"
+// @Success 200 {object} BundleInstallPlan "Bundle as install plan"
+// @Failure 404 {string} string "Bundle not found"
+// @Failure 500 {string} string "Internal server error"
+// @Router /catalogs/bundles/{bundle_name} [get]
 func (h *Handlers) HandleGetBundle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bundleName := vars["bundle_name"]

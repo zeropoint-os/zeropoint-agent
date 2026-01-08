@@ -792,9 +792,11 @@ func NewModuleHandlers(installer *Installer, uninstaller *Uninstaller, docker *c
 // @Summary Install a module
 // @Description Installs a module by name with optional configuration
 // @Tags modules
+// @Accept json
+// @Produce application/x-ndjson,text/event-stream
 // @Param name path string true "Module name"
 // @Param body body modules.InstallRequest false "Installation configuration"
-// @Success 200 {object} modules.ProgressUpdate
+// @Success 200 {string} string "Installation progress stream"
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
 // @Router /modules/{name} [post]
@@ -872,8 +874,9 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 // @Summary Uninstall a module
 // @Description Uninstalls a module by name with streaming progress updates
 // @Tags modules
+// @Produce application/x-ndjson,text/event-stream
 // @Param name path string true "Module name"
-// @Success 200 {object} modules.ProgressUpdate
+// @Success 200 {string} string "Uninstallation progress stream"
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
 // @Router /modules/{name} [delete]
