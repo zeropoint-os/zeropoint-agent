@@ -33,7 +33,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	modulesDir := modules.GetModulesDir()
 
 	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
-	uninstaller := modules.NewUninstaller(modulesDir, logger)
+	uninstaller := modules.NewUninstaller(dockerClient, modulesDir, logger)
 
 	// Initialize exposure store
 	exposureStore, err := NewExposureStore(dockerClient, xdsServer, mdnsService, logger)
