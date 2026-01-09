@@ -45,16 +45,19 @@ type BundleInstallPlan struct {
 
 // ModuleResponse represents the response for getting a specific module
 type ModuleResponse struct {
-	Module         CatalogModule           `json:"module"`
-	InstallRequest *modules.InstallRequest `json:"install_request,omitempty"`
-	InstallPath    string                  `json:"install_path"`
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // BundleResponse represents the response for getting a specific bundle
 type BundleResponse struct {
-	Bundle      CatalogBundle      `json:"bundle"`
-	InstallPlan *BundleInstallPlan `json:"install_plan,omitempty"`
-	InstallPath string             `json:"install_path"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description,omitempty"`
+	Modules     []string                  `json:"modules"`
+	Links       map[string][]BundleLink   `json:"links,omitempty"`
+	Exposures   map[string]BundleExposure `json:"exposures,omitempty"`
 }
 
 // UpdateResponse represents the response for catalog update

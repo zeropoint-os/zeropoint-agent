@@ -107,15 +107,11 @@ func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 	// Convert to module responses
 	var responses []ModuleResponse
 	for _, module := range modules {
-		request, err := h.resolver.ResolveModuleToRequest(module.Name)
-		if err != nil {
-			h.logger.Warn("failed to resolve module", "module", module.Name, "error", err)
-			continue
-		}
 		responses = append(responses, ModuleResponse{
-			Module:         module,
-			InstallRequest: request,
-			InstallPath:    fmt.Sprintf("/modules/%s", module.Name),
+			Name:        module.Name,
+			Source:      module.Source,
+			Type:        module.Type,
+			Description: module.Description,
 		})
 	}
 
@@ -161,15 +157,12 @@ func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 	// Convert to bundle responses
 	var responses []BundleResponse
 	for _, bundle := range bundles {
-		plan, err := h.resolver.ResolveBundleToInstallPlan(bundle.Name)
-		if err != nil {
-			h.logger.Warn("failed to resolve bundle", "bundle", bundle.Name, "error", err)
-			continue
-		}
 		responses = append(responses, BundleResponse{
-			Bundle:      bundle,
-			InstallPlan: plan,
-			InstallPath: fmt.Sprintf("/bundles/%s", bundle.Name),
+			Name:        bundle.Name,
+			Description: bundle.Description,
+			Modules:     bundle.Modules,
+			Links:       bundle.Links,
+			Exposures:   bundle.Exposures,
 		})
 	}
 
@@ -202,18 +195,13 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the install request
-	request, err := h.resolver.ResolveModuleToRequest(moduleName)
-	if err != nil {
-		h.logger.Error("failed to resolve module to request", "module", moduleName, "error", err)
-		http.Error(w, fmt.Sprintf("Failed to resolve module: %v", err), http.StatusInternalServerError)
-		return
-	}
+	// No need to get install request for flattened response
 
 	response := ModuleResponse{
-		Module:         *module,
-		InstallRequest: request,
-		InstallPath:    fmt.Sprintf("/modules/%s", moduleName),
+		Name:        module.Name,
+		Source:      module.Source,
+		Type:        module.Type,
+		Description: module.Description,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -246,17 +234,14 @@ func (h *Handlers) HandleGetBundle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the install plan
-	plan, err := h.resolver.ResolveBundleToInstallPlan(bundleName)
-	if err != nil {
-		h.logger.Error("failed to resolve bundle to install plan", "bundle", bundleName, "error", err)
-		http.Error(w, fmt.Sprintf("Failed to resolve bundle: %v", err), http.StatusInternalServerError)
-		return
-	}
+	// No need to resolve install plan for flattened response
 
 	response := BundleResponse{
-		Bundle:      *bundle,
-		InstallPlan: plan,
-		InstallPath: fmt.Sprintf("/bundles/%s", bundleName),
+		Name:        bundle.Name,
+		Description: bundle.Description,
+		Modules:     bundle.Modules,
+		Links:       bundle.Links,
+		Exposures:   bundle.Exposures,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
