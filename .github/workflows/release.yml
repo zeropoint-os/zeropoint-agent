@@ -92,8 +92,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/swagger.yaml
-            artifacts/swagger.json
+            artifacts/openapi.yaml
+            artifacts/openapi.json
             zeropoint-agent-go-client.tar.gz
             zeropoint-agent-typescript-client.tar.gz
             zeropoint-agent-python-client.tar.gz
