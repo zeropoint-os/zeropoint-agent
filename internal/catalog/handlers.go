@@ -74,11 +74,11 @@ func (h *Handlers) HandleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 
 // HandleListModules handles GET /catalogs/modules
 // @Summary List catalog modules
-// @Description Returns all available modules from the catalog as install requests
+// @Description Returns all available modules from the catalog with their metadata
 // @Tags catalog
 // @Produce json
 // @Param limit query int false "Maximum number of modules to return" default(50)
-// @Success 200 {array} InstallRequest "List of modules as install requests"
+// @Success 200 {array} ModuleResponse "List of modules with metadata and install requests"
 // @Failure 500 {string} string "Internal server error"
 // @Router /catalogs/modules [get]
 func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
@@ -104,15 +104,19 @@ func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 		modules = modules[:limit]
 	}
 
-	// Convert to install requests
-	var responses []InstallRequest
+	// Convert to module responses
+	var responses []ModuleResponse
 	for _, module := range modules {
 		request, err := h.resolver.ResolveModuleToRequest(module.Name)
 		if err != nil {
 			h.logger.Warn("failed to resolve module", "module", module.Name, "error", err)
 			continue
 		}
-		responses = append(responses, *request)
+		responses = append(responses, ModuleResponse{
+			Module:         module,
+			InstallRequest: request,
+			InstallPath:    fmt.Sprintf("/modules/%s", module.Name),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -124,11 +128,11 @@ func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 
 // HandleListBundles handles GET /catalogs/bundles
 // @Summary List catalog bundles
-// @Description Returns all available bundles from the catalog as install plans
+// @Description Returns all available bundles from the catalog with their metadata
 // @Tags catalog
 // @Produce json
 // @Param limit query int false "Maximum number of bundles to return" default(50)
-// @Success 200 {array} BundleInstallPlan "List of bundles as install plans"
+// @Success 200 {array} BundleResponse "List of bundles with metadata and install plans"
 // @Failure 500 {string} string "Internal server error"
 // @Router /catalogs/bundles [get]
 func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
@@ -154,15 +158,19 @@ func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 		bundles = bundles[:limit]
 	}
 
-	// Convert to install plans
-	var responses []BundleInstallPlan
+	// Convert to bundle responses
+	var responses []BundleResponse
 	for _, bundle := range bundles {
 		plan, err := h.resolver.ResolveBundleToInstallPlan(bundle.Name)
 		if err != nil {
 			h.logger.Warn("failed to resolve bundle", "bundle", bundle.Name, "error", err)
 			continue
 		}
-		responses = append(responses, *plan)
+		responses = append(responses, BundleResponse{
+			Bundle:      bundle,
+			InstallPlan: plan,
+			InstallPath: fmt.Sprintf("/bundles/%s", bundle.Name),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -174,11 +182,11 @@ func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetModule handles GET /catalogs/modules/{module_name}
 // @Summary Get specific catalog module
-// @Description Returns a specific module from the catalog as an install request
+// @Description Returns a specific module from the catalog with its metadata
 // @Tags catalog
 // @Produce json
 // @Param module_name path string true "Module name"
-// @Success 200 {object} InstallRequest "Module as install request"
+// @Success 200 {object} ModuleResponse "Module with metadata and install request"
 // @Failure 404 {string} string "Module not found"
 // @Failure 500 {string} string "Internal server error"
 // @Router /catalogs/modules/{module_name} [get]
@@ -187,14 +195,14 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 	moduleName := vars["module_name"]
 	h.logger.Info("getting catalog module", "module", moduleName)
 
-	_, err := h.store.GetModule(moduleName)
+	module, err := h.store.GetModule(moduleName)
 	if err != nil {
 		h.logger.Error("failed to get module", "module", moduleName, "error", err)
 		http.Error(w, fmt.Sprintf("Module not found: %v", err), http.StatusNotFound)
 		return
 	}
 
-	// Return the install request that can be used directly
+	// Get the install request
 	request, err := h.resolver.ResolveModuleToRequest(moduleName)
 	if err != nil {
 		h.logger.Error("failed to resolve module to request", "module", moduleName, "error", err)
@@ -202,8 +210,14 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	response := ModuleResponse{
+		Module:         *module,
+		InstallRequest: request,
+		InstallPath:    fmt.Sprintf("/modules/%s", moduleName),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(request); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Error("failed to encode response", "error", err)
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
@@ -211,11 +225,11 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetBundle handles GET /catalogs/bundles/{bundle_name}
 // @Summary Get specific catalog bundle
-// @Description Returns a specific bundle from the catalog as an install plan
+// @Description Returns a specific bundle from the catalog with its metadata
 // @Tags catalog
 // @Produce json
 // @Param bundle_name path string true "Bundle name"
-// @Success 200 {object} BundleInstallPlan "Bundle as install plan"
+// @Success 200 {object} BundleResponse "Bundle with metadata and install plan"
 // @Failure 404 {string} string "Bundle not found"
 // @Failure 500 {string} string "Internal server error"
 // @Router /catalogs/bundles/{bundle_name} [get]
@@ -224,14 +238,14 @@ func (h *Handlers) HandleGetBundle(w http.ResponseWriter, r *http.Request) {
 	bundleName := vars["bundle_name"]
 	h.logger.Info("getting catalog bundle", "bundle", bundleName)
 
-	_, err := h.store.GetBundle(bundleName)
+	bundle, err := h.store.GetBundle(bundleName)
 	if err != nil {
 		h.logger.Error("failed to get bundle", "bundle", bundleName, "error", err)
 		http.Error(w, fmt.Sprintf("Bundle not found: %v", err), http.StatusNotFound)
 		return
 	}
 
-	// Return the install plan that can be used directly
+	// Get the install plan
 	plan, err := h.resolver.ResolveBundleToInstallPlan(bundleName)
 	if err != nil {
 		h.logger.Error("failed to resolve bundle to install plan", "bundle", bundleName, "error", err)
@@ -239,8 +253,14 @@ func (h *Handlers) HandleGetBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	response := BundleResponse{
+		Bundle:      *bundle,
+		InstallPlan: plan,
+		InstallPath: fmt.Sprintf("/bundles/%s", bundleName),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(plan); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Error("failed to encode response", "error", err)
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}

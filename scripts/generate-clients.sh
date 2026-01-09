@@ -37,7 +37,9 @@ npx @openapitools/openapi-generator-cli generate \
     -i "$ARTIFACTS_DIR/openapi.yaml" \
     -g go \
     -o "$CLIENTS_DIR/go" \
-    --additional-properties=packageName=zeropoint,packageVersion=1.0.0,isGoSubmodule=true
+    --additional-properties=packageName=zeropoint,packageVersion=1.0.0,isGoSubmodule=true \
+    --git-user-id=zeropoint-os \
+    --git-repo-id=zeropoint-agent
 
 echo "Generating TypeScript client..."
 # Generate TypeScript client from OpenAPI 3.0 spec
@@ -45,7 +47,9 @@ npx @openapitools/openapi-generator-cli generate \
     -i "$ARTIFACTS_DIR/openapi.yaml" \
     -g typescript-fetch \
     -o "$CLIENTS_DIR/typescript" \
-    --additional-properties=npmName=zeropoint-client,supportsES6=true,npmVersion=1.0.0
+    --additional-properties=npmName=zeropoint-client,supportsES6=true,npmVersion=1.0.0 \
+    --git-user-id=zeropoint-os \
+    --git-repo-id=zeropoint-agent
 
 echo "Generating Python client..."
 # Generate Python client from OpenAPI 3.0 spec
@@ -53,7 +57,9 @@ npx @openapitools/openapi-generator-cli generate \
     -i "$ARTIFACTS_DIR/openapi.yaml" \
     -g python \
     -o "$CLIENTS_DIR/python" \
-    --additional-properties=packageName=zeropoint_client,projectName=zeropoint-client,packageVersion=1.0.0
+    --additional-properties=packageName=zeropoint_client,projectName=zeropoint-client,packageVersion=1.0.0 \
+    --git-user-id=zeropoint-os \
+    --git-repo-id=zeropoint-agent
 
 echo "Generating C# client..."
 # Generate C# client from OpenAPI 3.0 spec
@@ -63,7 +69,9 @@ npx @openapitools/openapi-generator-cli generate \
     -o "$CLIENTS_DIR/csharp" \
     --additional-properties=packageName=ZeropointClient,packageVersion=1.0.0,packageCompany=Zeropoint,packageTitle=ZeropointAPIClient,packageDescription=CSharpClientLibraryForZeropointAgentAPI,targetFramework=net7.0,supportsAsync=true,generatePropertyChanged=false \
     --type-mappings=File=Stream \
-    --import-mappings=Stream=System.IO.Stream
+    --import-mappings=Stream=System.IO.Stream \
+    --git-user-id=zeropoint-os \
+    --git-repo-id=zeropoint-agent
 
 echo "✅ Go client: $CLIENTS_DIR/go"
 echo "✅ TypeScript client: $CLIENTS_DIR/typescript"
