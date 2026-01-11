@@ -26,7 +26,7 @@ type Link struct {
 	References      map[string]map[string]string      `json:"references"`      // Resolved references for each app
 	SharedNetworks  []string                          `json:"shared_networks"` // Networks created for this link
 	DependencyOrder []string                          `json:"dependency_order"`
-	Tags            []string                          `json:"tags,omitempty"`  // optional tags for categorization
+	Tags            []string                          `json:"tags,omitempty"` // optional tags for categorization
 	CreatedAt       time.Time                         `json:"created_at"`
 	UpdatedAt       time.Time                         `json:"updated_at"`
 }

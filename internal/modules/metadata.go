@@ -9,10 +9,10 @@ import (
 
 // Metadata represents the source information for an installed module
 type Metadata struct {
-	Source   string    `json:"source"`        // Git URL or local path
-	Ref      string    `json:"ref,omitempty"` // Git branch/tag if cloned from git
-	ClonedAt time.Time `json:"cloned_at"`     // When the module was installed
-	ModuleID string    `json:"module_id"`     // Unique module identifier
+	Source   string    `json:"source"`         // Git URL or local path
+	Ref      string    `json:"ref,omitempty"`  // Git branch/tag if cloned from git
+	ClonedAt time.Time `json:"cloned_at"`      // When the module was installed
+	ModuleID string    `json:"module_id"`      // Unique module identifier
 	Tags     []string  `json:"tags,omitempty"` // Optional tags for categorization
 }
 
