@@ -13,6 +13,7 @@ type Metadata struct {
 	Ref      string    `json:"ref,omitempty"` // Git branch/tag if cloned from git
 	ClonedAt time.Time `json:"cloned_at"`     // When the module was installed
 	ModuleID string    `json:"module_id"`     // Unique module identifier
+	Tags     []string  `json:"tags,omitempty"` // Optional tags for categorization
 }
 
 const metadataFileName = ".zeropoint.json"

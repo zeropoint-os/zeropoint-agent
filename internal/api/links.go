@@ -26,6 +26,7 @@ type Link struct {
 	References      map[string]map[string]string      `json:"references"`      // Resolved references for each app
 	SharedNetworks  []string                          `json:"shared_networks"` // Networks created for this link
 	DependencyOrder []string                          `json:"dependency_order"`
+	Tags            []string                          `json:"tags,omitempty"`  // optional tags for categorization
 	CreatedAt       time.Time                         `json:"created_at"`
 	UpdatedAt       time.Time                         `json:"updated_at"`
 }
@@ -69,7 +70,7 @@ func NewLinkStore(dockerClient *client.Client, logger *slog.Logger) (*LinkStore,
 }
 
 // CreateOrUpdateLink creates or updates a link
-func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps map[string]map[string]interface{}, references map[string]map[string]string, sharedNetworks []string, dependencyOrder []string) (*Link, error) {
+func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps map[string]map[string]interface{}, references map[string]map[string]string, sharedNetworks []string, dependencyOrder []string, tags []string) (*Link, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -86,6 +87,7 @@ func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps 
 		link.References = references
 		link.SharedNetworks = sharedNetworks
 		link.DependencyOrder = dependencyOrder
+		link.Tags = tags
 		link.UpdatedAt = now
 	} else {
 		// Create new link
@@ -95,6 +97,7 @@ func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps 
 			References:      references,
 			SharedNetworks:  sharedNetworks,
 			DependencyOrder: dependencyOrder,
+			Tags:            tags,
 			CreatedAt:       now,
 			UpdatedAt:       now,
 		}

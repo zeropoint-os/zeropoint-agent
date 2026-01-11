@@ -34,6 +34,7 @@ type Exposure struct {
 	ContainerPort uint32    `json:"container_port"` // port inside container
 	HostPort      uint32    `json:"host_port"`      // auto-allocated for tcp, 0 for http
 	CreatedAt     time.Time `json:"created_at"`
+	Tags          []string  `json:"tags,omitempty"` // optional tags for categorization
 }
 
 // MDNSService interface for mDNS operations
@@ -106,7 +107,7 @@ func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsSe
 }
 
 // CreateExposure creates or returns existing exposure with user-provided ID (idempotent)
-func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32) (*Exposure, bool, error) {
+func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32, tags []string) (*Exposure, bool, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -137,6 +138,7 @@ func (s *ExposureStore) CreateExposure(ctx context.Context, exposureID, moduleID
 		Protocol:      protocol,
 		Hostname:      hostname,
 		ContainerPort: containerPort,
+		Tags:          tags,
 		CreatedAt:     time.Now(),
 	}
 

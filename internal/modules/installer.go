@@ -52,11 +52,12 @@ func NewInstaller(docker *client.Client, appsDir string, logger *slog.Logger) *I
 
 // InstallRequest represents a module installation request
 type InstallRequest struct {
-	Source    string `json:"source,omitempty"`     // Git URL (e.g., https://user:pat@github.com/org/repo.git@v1.0)
-	LocalPath string `json:"local_path,omitempty"` // Local module path (alternative to Source)
-	ModuleID  string `json:"module_id"`            // Unique module identifier
-	Arch      string `json:"arch,omitempty"`       // Optional architecture override
-	GPUVendor string `json:"gpu_vendor,omitempty"` // Optional GPU vendor override
+	Source    string   `json:"source,omitempty"`     // Git URL (e.g., https://user:pat@github.com/org/repo.git@v1.0)
+	LocalPath string   `json:"local_path,omitempty"` // Local module path (alternative to Source)
+	ModuleID  string   `json:"module_id"`            // Unique module identifier
+	Arch      string   `json:"arch,omitempty"`       // Optional architecture override
+	GPUVendor string   `json:"gpu_vendor,omitempty"` // Optional GPU vendor override
+	Tags      []string `json:"tags,omitempty"`       // Optional tags for categorization
 }
 
 // Install installs a module from git or local source
@@ -103,6 +104,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 			Ref:      ref,
 			ClonedAt: time.Now(),
 			ModuleID: req.ModuleID,
+			Tags:     req.Tags,
 		}
 		if err := SaveMetadata(targetPath, metadata); err != nil {
 			logger.Error("failed to save metadata", "error", err)
