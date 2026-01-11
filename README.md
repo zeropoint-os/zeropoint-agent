@@ -13,6 +13,7 @@ zeropoint-agent is a REST API server that manages Docker-based modules (ZPMs) us
 - **Install, start, stop, and uninstall** modules (containerized services)
 - **Link modules** for inter-module communication with variable-linking
 - **Expose modules** to the network via Envoy reverse proxy with xDS control plane
+- **Tag resources** for categorization and bundle-based lifecycle management
 - **Zero host port conflicts** - modules use port declarations and service discovery instead of port bindings
 - **Terraform-native** - modules are standard Terraform modules using the Docker provider
 - **Automatic service discovery** - ports and protocols extracted from module contracts
@@ -578,7 +579,8 @@ Content-Type: application/json
   "module_id": "ollama",
   "local_path": "/path/to/module",  // Optional: use local module instead
   "arch": "amd64",                   // Optional: architecture override
-  "gpu_vendor": "nvidia"             // Optional: GPU vendor override
+  "gpu_vendor": "nvidia",            // Optional: GPU vendor override
+  "tags": ["ai-inference", "llm"]   // Optional: tags for categorization
 }
 
 Response: 200 OK (streaming JSON progress updates)
@@ -603,6 +605,7 @@ Response: 200 OK
       "container_id": "abc123",
       "container_name": "ollama-main",
       "ip_address": "172.20.0.2",
+      "tags": ["ai-inference", "llm"],
       "containers": {
         "main": {
           "ports": {
@@ -736,7 +739,8 @@ Content-Type: application/json
       "ollama_port": 11434
     },
     "ollama": {}
-  }
+  },
+  "tags": ["ai-stack", "integration"]  // Optional: tags for categorization
 }
 
 Response: 200 OK
@@ -771,6 +775,7 @@ Response: 200 OK
           "ollama_port": "11434"
         }
       },
+      "tags": ["ai-stack", "integration"],
       "shared_networks": ["zeropoint-link-openwebui-to-ollama"],
       "dependency_order": ["ollama", "openwebui"],
       "created_at": "2025-01-02T10:00:00Z",
@@ -840,7 +845,8 @@ Content-Type: application/json
   "module_id": "openwebui",
   "hostname": "openwebui.zeropoint.local",
   "protocol": "http",
-  "container_port": 3000
+  "container_port": 3000,
+  "tags": ["web-interface", "public-access"]  // Optional: tags for categorization
 }
 
 Response: 201 Created
@@ -852,6 +858,7 @@ Response: 201 Created
   "container_port": 3000,
   "host_port": 80,
   "status": "available",
+  "tags": ["web-interface", "public-access"],
   "created_at": "2025-01-02T10:00:00Z"
 }
 
@@ -864,6 +871,7 @@ Response: 200 OK (exposure already exists)
   "container_port": 3000,
   "host_port": 80,
   "status": "available",
+  "tags": ["web-interface", "public-access"],
   "created_at": "2025-01-02T10:00:00Z"
 }
 ```
@@ -884,6 +892,7 @@ Response: 200 OK
       "container_port": 3000,
       "host_port": 80,
       "status": "available",
+      "tags": ["web-interface", "public-access"],
       "created_at": "2025-01-02T10:00:00Z"
     }
   ]
@@ -904,6 +913,7 @@ Response: 200 OK
   "container_port": 3000,
   "host_port": 80,
   "status": "available",
+  "tags": ["web-interface", "public-access"],
   "created_at": "2025-01-02T10:00:00Z"
 }
 
