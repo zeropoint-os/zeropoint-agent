@@ -32,22 +32,24 @@ type (
 
 // CreateExposureRequest represents the request body for creating an exposure
 type CreateExposureRequest struct {
-	ModuleID      string `json:"module_id"`
-	Protocol      string `json:"protocol"`
-	Hostname      string `json:"hostname,omitempty"`
-	ContainerPort uint32 `json:"container_port"`
+	ModuleID      string   `json:"module_id"`
+	Protocol      string   `json:"protocol"`
+	Hostname      string   `json:"hostname,omitempty"`
+	ContainerPort uint32   `json:"container_port"`
+	Tags          []string `json:"tags,omitempty"`
 }
 
 // ExposureResponse represents the response for an exposure
 type ExposureResponse struct {
-	ID            string `json:"id"`
-	ModuleID      string `json:"module_id"`
-	Protocol      string `json:"protocol"`
-	Hostname      string `json:"hostname,omitempty"`
-	ContainerPort uint32 `json:"container_port"`
-	HostPort      uint32 `json:"host_port,omitempty"`
-	Status        string `json:"status"` // "available" or "unavailable"
-	CreatedAt     string `json:"created_at"`
+	ID            string   `json:"id"`
+	ModuleID      string   `json:"module_id"`
+	Protocol      string   `json:"protocol"`
+	Hostname      string   `json:"hostname,omitempty"`
+	ContainerPort uint32   `json:"container_port"`
+	HostPort      uint32   `json:"host_port,omitempty"`
+	Status        string   `json:"status"` // "available" or "unavailable"
+	CreatedAt     string   `json:"created_at"`
+	Tags          []string `json:"tags,omitempty"`
 }
 
 // ListExposuresResponse represents the response for listing exposures
@@ -109,7 +111,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	exposure, created, err := h.store.CreateExposure(r.Context(), exposureID, req.ModuleID, req.Protocol, req.Hostname, req.ContainerPort)
+	exposure, created, err := h.store.CreateExposure(r.Context(), exposureID, req.ModuleID, req.Protocol, req.Hostname, req.ContainerPort, req.Tags)
 	if err != nil {
 		h.logger.Error("failed to create exposure", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -202,6 +204,7 @@ func toExposureResponse(exp *Exposure, store *ExposureStore) ExposureResponse {
 		ContainerPort: exp.ContainerPort,
 		Status:        store.getContainerStatus(exp.ModuleID),
 		CreatedAt:     exp.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Tags:          exp.Tags,
 	}
 
 	if exp.Hostname != "" {
@@ -247,6 +250,7 @@ type LinkRequest struct {
 // CreateLinkRequest represents the request to create/update a link
 type CreateLinkRequest struct {
 	Apps map[string]map[string]interface{} `json:"apps"`
+	Tags []string                          `json:"tags,omitempty"`
 }
 
 // LinksResponse represents the response from listing links
@@ -346,7 +350,7 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 	h.logger.Info("Creating/updating link", "link_id", linkID, "apps", getAppNames(req.Apps))
 
 	// Use the existing linking logic
-	response := h.linkApps(linkID, req.Apps)
+	response := h.linkApps(linkID, req.Apps, req.Tags)
 
 	w.Header().Set("Content-Type", "application/json")
 	if response.Success {
@@ -384,7 +388,7 @@ func (h *LinkHandlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // linkApps contains the core linking logic (refactored from LinkApps)
-func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interface{}) LinkResponse {
+func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interface{}, tags []string) LinkResponse {
 
 	// Step 1: Validate all apps exist
 	if err := h.validateAppsExist(apps); err != nil {
@@ -503,7 +507,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 		sharedNetworks = append(sharedNetworks, networkName)
 	}
 
-	if _, err := h.linkStore.CreateOrUpdateLink(context.Background(), linkID, apps, references, sharedNetworks, order); err != nil {
+	if _, err := h.linkStore.CreateOrUpdateLink(context.Background(), linkID, apps, references, sharedNetworks, order, tags); err != nil {
 		h.logger.Warn("Failed to store link", "error", err)
 		// Don't fail the operation for storage failures
 	}
@@ -978,6 +982,13 @@ func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]Module, error) 
 			ID:         moduleID,
 			ModulePath: modulePath,
 			State:      modules.StateUnknown,
+		}
+
+		// Load metadata (including tags) from .zeropoint.json
+		if metadata, err := modules.LoadMetadata(modulePath); err != nil {
+			h.logger.Warn("failed to load metadata", "module_id", moduleID, "error", err)
+		} else if metadata != nil {
+			module.Tags = metadata.Tags
 		}
 
 		// Query Docker for runtime status

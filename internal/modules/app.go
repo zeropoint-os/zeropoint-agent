@@ -42,6 +42,7 @@ type Module struct {
 	ContainerName string               `json:"container_name,omitempty"` // Docker container name (for main container)
 	IPAddress     string               `json:"ip_address,omitempty"`     // Container IP address (for main container)
 	Containers    map[string]Container `json:"containers,omitempty"`     // Module containers with their ports (from {container}_ports outputs)
+	Tags          []string             `json:"tags,omitempty"`           // optional tags for categorization
 }
 
 // Module states
