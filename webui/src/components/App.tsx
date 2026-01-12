@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import '../styles/theme.css';
 import '../styles/layout.css';
 import Header from './Header';
@@ -12,7 +13,8 @@ import BundlesView from '../views/BundlesView';
 type ViewType = 'modules' | 'links' | 'exposures' | 'catalog' | 'bundles';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ViewType>('modules');
+  const navigate = useNavigate();
+  const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     // Check localStorage or system preference
@@ -20,6 +22,17 @@ export default function App() {
     if (saved) return saved === 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
+
+  // Get current view from URL path
+  const getCurrentView = (): ViewType => {
+    const path = location.pathname;
+    if (path === '/') return 'modules';
+    const view = path.substring(1) as ViewType;
+    const validViews: ViewType[] = ['modules', 'links', 'exposures', 'catalog', 'bundles'];
+    return validViews.includes(view) ? view : 'modules';
+  };
+
+  const currentView = getCurrentView();
 
   // Update theme
   useEffect(() => {
@@ -33,29 +46,12 @@ export default function App() {
 
   // Close nav when view changes on mobile
   const handleViewChange = (view: ViewType) => {
-    setCurrentView(view);
+    navigate(`/${view === 'modules' ? '' : view}`);
     setNavOpen(false);
   };
 
   const toggleTheme = () => {
     setIsDark(!isDark);
-  };
-
-  const renderView = () => {
-    switch (currentView) {
-      case 'modules':
-        return <ModulesView />;
-      case 'links':
-        return <LinksView />;
-      case 'exposures':
-        return <ExposuresView />;
-      case 'catalog':
-        return <CatalogView />;
-      case 'bundles':
-        return <BundlesView />;
-      default:
-        return <ModulesView />;
-    }
   };
 
   return (
@@ -72,7 +68,14 @@ export default function App() {
         onViewChange={handleViewChange}
       />
       <main className="main-content">
-        {renderView()}
+        <Routes>
+          <Route path="/" element={<ModulesView />} />
+          <Route path="/modules" element={<ModulesView />} />
+          <Route path="/links" element={<LinksView />} />
+          <Route path="/exposures" element={<ExposuresView />} />
+          <Route path="/catalog" element={<CatalogView />} />
+          <Route path="/bundles" element={<BundlesView />} />
+        </Routes>
       </main>
     </div>
   );

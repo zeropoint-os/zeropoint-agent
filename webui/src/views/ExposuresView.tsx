@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import CreateExposureDialog from '../components/CreateExposureDialog';
 import './Views.css';
+
+interface Module {
+  id?: string;
+  module_path?: string;
+  state?: string;
+  container_id?: string;
+  container_name?: string;
+  ip_address?: string;
+  containers?: any;
+  tags?: string[];
+  [key: string]: any;
+}
 
 interface Exposure {
   id?: string;
@@ -15,38 +28,82 @@ interface Exposure {
 
 export default function ExposuresView() {
   const [exposures, setExposures] = useState<Exposure[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [deletingExposure, setDeletingExposure] = useState<string | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   useEffect(() => {
-    fetchExposures();
+    fetchExposuresAndModules();
   }, []);
 
-  const fetchExposures = async () => {
+  const fetchExposuresAndModules = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/exposures');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch exposures: ${response.statusText}`);
+      
+      // Fetch exposures
+      const exposuresResponse = await fetch('/api/exposures');
+      if (!exposuresResponse.ok) {
+        throw new Error(`Failed to fetch exposures: ${exposuresResponse.statusText}`);
       }
-      const data = await response.json();
-      const exposureList = Array.isArray(data) ? data : (data.exposures || data.data || []);
+      const exposuresData = await exposuresResponse.json();
+      const exposureList = Array.isArray(exposuresData) ? exposuresData : (exposuresData.exposures || exposuresData.data || []);
       setExposures(exposureList);
+
+      // Fetch modules
+      const modulesResponse = await fetch('/api/modules');
+      if (!modulesResponse.ok) {
+        throw new Error(`Failed to fetch modules: ${modulesResponse.statusText}`);
+      }
+      const modulesData = await modulesResponse.json();
+      const modulesList = Array.isArray(modulesData) ? modulesData : (modulesData.modules || modulesData.data || []);
+      setModules(modulesList);
+
       setError(null);
     } catch (err) {
-      console.error('Error loading exposures:', err);
+      console.error('Error loading data:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
       setExposures([]);
+      setModules([]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCreateExposure = () => {
-    // TODO: Show create exposure modal
-    console.log('Create exposure');
+    setShowCreateDialog(true);
+  };
+
+  const handleCreateExposureSubmit = async (data: {
+    module_id: string;
+    hostname: string;
+    protocol: string;
+    container_port: number;
+  }) => {
+    try {
+      const response = await fetch(`/api/exposures/${data.module_id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to create exposure: ${response.statusText}`);
+      }
+
+      setSuccessMessage(`Exposure for "${data.module_id}" created successfully`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+
+      // Refresh exposures list
+      await fetchExposuresAndModules();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create exposure');
+      throw err; // Re-throw to let dialog handle it
+    }
   };
 
   const handleDeleteExposure = async (exposureId: string) => {
@@ -70,7 +127,7 @@ export default function ExposuresView() {
       setTimeout(() => setSuccessMessage(null), 4000);
       
       // Refresh exposures list
-      await fetchExposures();
+      await fetchExposuresAndModules();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete exposure');
     } finally {
@@ -80,12 +137,26 @@ export default function ExposuresView() {
 
   return (
     <div className="view-container">
-      <div className="view-header">
-        <h1 className="section-title">Exposures</h1>
-        <button className="button button-primary" onClick={handleCreateExposure}>
-          <span>+</span> Create Exposure
-        </button>
-      </div>
+      <CreateExposureDialog
+        isOpen={showCreateDialog}
+        modules={modules}
+        onClose={() => setShowCreateDialog(false)}
+        onCreate={handleCreateExposureSubmit}
+      />
+
+      {!loading && exposures.length > 0 && (
+        <div className="view-header">
+          <h1 className="section-title">Exposures</h1>
+          <button className="button button-primary" onClick={handleCreateExposure}>
+            <span>+</span> Create Exposure
+          </button>
+        </div>
+      )}
+      {(loading || exposures.length === 0) && (
+        <div className="view-header">
+          <h1 className="section-title">Exposures</h1>
+        </div>
+      )}
 
       {error && (
         <div className="error-state">
