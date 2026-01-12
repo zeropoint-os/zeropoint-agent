@@ -26,9 +26,16 @@ interface Exposure {
   [key: string]: any;
 }
 
+interface Link {
+  id?: string;
+  modules?: { [key: string]: any };
+  [key: string]: any;
+}
+
 export default function ModulesView() {
   const [modules, setModules] = useState<Module[]>([]);
   const [exposures, setExposures] = useState<Exposure[]>([]);
+  const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uninstallingModule, setUninstallingModule] = useState<string | null>(null);
@@ -60,12 +67,21 @@ export default function ModulesView() {
         const exposuresList = Array.isArray(exposuresData.exposures) ? exposuresData.exposures : [];
         setExposures(exposuresList);
       }
+
+      // Fetch links
+      const linksResponse = await fetch('/api/links');
+      if (linksResponse.ok) {
+        const linksData = await linksResponse.json();
+        const linksList = Array.isArray(linksData.links) ? linksData.links : [];
+        setLinks(linksList);
+      }
       
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       setModules([]);
       setExposures([]);
+      setLinks([]);
     } finally {
       setLoading(false);
     }
@@ -74,6 +90,26 @@ export default function ModulesView() {
   const getModuleExposure = (moduleId: string | undefined): Exposure | undefined => {
     if (!moduleId) return undefined;
     return exposures.find(exp => exp.module_id === moduleId);
+  };
+
+  const getLinkedModules = (moduleId: string | undefined): string[] => {
+    if (!moduleId) return [];
+    const linkedModules: string[] = [];
+    
+    links.forEach(link => {
+      if (link.modules && typeof link.modules === 'object') {
+        if (moduleId in link.modules) {
+          // This module is part of this link, find other modules in it
+          Object.keys(link.modules).forEach(modId => {
+            if (modId !== moduleId && !linkedModules.includes(modId)) {
+              linkedModules.push(modId);
+            }
+          });
+        }
+      }
+    });
+    
+    return linkedModules; // Already deduplicated
   };
 
   const getExposureUrl = (exposure: Exposure): string => {
@@ -337,12 +373,16 @@ export default function ModulesView() {
             const ports = getModulePorts(module);
             const exposure = getModuleExposure(module.id);
             const isExposed = exposure ? 'Yes' : 'No';
+            const linkedModules = getLinkedModules(module.id);
             return (
               <div key={key} className="card">
                 <div className="module-header">
                   <div>
                     <h3 className="module-name">{module.id || 'Unnamed Module'}</h3>
                     <p className="module-version">Exposed: {isExposed}</p>
+                    {linkedModules.length > 0 && (
+                      <p className="module-links">Linked to: {linkedModules.join(', ')}</p>
+                    )}
                   </div>
                   <div className={`status-badge status-${state.toLowerCase()}`}>
                     {state}

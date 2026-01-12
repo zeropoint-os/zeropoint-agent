@@ -136,6 +136,13 @@
   color: var(--color-text-secondary);
 }
 
+.module-links {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin-top: var(--spacing-xs);
+  margin-bottom: 0;
+}
+
 .module-description {
   font-size: 0.9rem;
   color: var(--color-text-secondary);
