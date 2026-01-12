@@ -16,36 +16,91 @@ interface Module {
   [key: string]: any;
 }
 
+interface Exposure {
+  id?: string;
+  module_id?: string;
+  protocol?: string;
+  hostname?: string;
+  container_port?: number;
+  status?: string;
+  [key: string]: any;
+}
+
 export default function ModulesView() {
   const [modules, setModules] = useState<Module[]>([]);
+  const [exposures, setExposures] = useState<Exposure[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uninstallingModule, setUninstallingModule] = useState<string | null>(null);
   const [installingModule, setInstallingModule] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showInstallDialog, setShowInstallDialog] = useState(false);
-  const [progressMessages, setProgressMessages] = useState<string[]>([]);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   // Initialize API clients
   const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
-    fetchModules();
+    fetchModulesAndExposures();
   }, []);
 
-  const fetchModules = async () => {
+  const fetchModulesAndExposures = async () => {
     try {
       setLoading(true);
-      const response = await modulesApi.modulesGet();
-      const modulesList = Array.isArray(response.modules) ? response.modules : [];
+      
+      // Fetch modules
+      const modulesResponse = await modulesApi.modulesGet();
+      const modulesList = Array.isArray(modulesResponse.modules) ? modulesResponse.modules : [];
       setModules(modulesList);
+      
+      // Fetch exposures
+      const exposuresResponse = await fetch('/api/exposures');
+      if (exposuresResponse.ok) {
+        const exposuresData = await exposuresResponse.json();
+        const exposuresList = Array.isArray(exposuresData.exposures) ? exposuresData.exposures : [];
+        setExposures(exposuresList);
+      }
+      
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       setModules([]);
+      setExposures([]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const getModuleExposure = (moduleId: string | undefined): Exposure | undefined => {
+    if (!moduleId) return undefined;
+    return exposures.find(exp => exp.module_id === moduleId);
+  };
+
+  const getExposureUrl = (exposure: Exposure): string => {
+    if (!exposure.protocol || !exposure.hostname || !exposure.container_port) {
+      return 'N/A';
+    }
+    return `${exposure.protocol}://${exposure.hostname}:${exposure.container_port}`;
+  };
+
+  const getModulePorts = (module: Module): Array<{name: string; port: number; protocol: string}> => {
+    const ports: Array<{name: string; port: number; protocol: string}> = [];
+    if (module.containers && typeof module.containers === 'object') {
+      Object.values(module.containers).forEach((container: any) => {
+        if (container.ports && typeof container.ports === 'object') {
+          Object.entries(container.ports).forEach(([portName, portInfo]: [string, any]) => {
+            if (portInfo.port && portInfo.protocol) {
+              ports.push({
+                name: portName,
+                port: portInfo.port,
+                protocol: portInfo.protocol
+              });
+            }
+          });
+        }
+      });
+    }
+    return ports;
   };
 
   const handleInstall = () => {
@@ -65,7 +120,7 @@ export default function ModulesView() {
       setInstallingModule(moduleName);
       setShowInstallDialog(false);
       setError(null);
-      setProgressMessages([]);
+      setProgressMessage(null);
 
       // Make raw fetch call to handle streaming response
       const response = await fetch(`/api/modules/${moduleName}`, {
@@ -103,10 +158,10 @@ export default function ModulesView() {
               try {
                 const data = JSON.parse(line);
                 const message = data.message || data.status || line;
-                setProgressMessages(prev => [...prev, message]);
+                setProgressMessage(message);
               } catch {
                 if (line.trim()) {
-                  setProgressMessages(prev => [...prev, line]);
+                  setProgressMessage(line);
                 }
               }
             }
@@ -114,8 +169,8 @@ export default function ModulesView() {
         }
       }
 
-      // Refresh modules list
-      await fetchModules();
+      // Refresh modules and exposures list
+      await fetchModulesAndExposures();
       
       setSuccessMessage(`${moduleName} installed successfully`);
       setTimeout(() => setSuccessMessage(null), 4000);
@@ -123,10 +178,10 @@ export default function ModulesView() {
     } catch (err) {
       console.error('Install error:', err);
       setError(err instanceof Error ? err.message : 'Failed to install module');
-      await fetchModules();
+      await fetchModulesAndExposures();
     } finally {
       setInstallingModule(null);
-      setTimeout(() => setProgressMessages([]), 2000);
+      setTimeout(() => setProgressMessage(null), 2000);
     }
   };
 
@@ -143,7 +198,7 @@ export default function ModulesView() {
     try {
       setUninstallingModule(moduleName);
       setError(null);
-      setProgressMessages([]);
+      setProgressMessage(null);
 
       // Make raw fetch call to handle streaming response
       const response = await fetch(`/api/modules/${moduleName}`, {
@@ -173,10 +228,10 @@ export default function ModulesView() {
               try {
                 const data = JSON.parse(line);
                 const message = data.message || data.status || line;
-                setProgressMessages(prev => [...prev, message]);
+                setProgressMessage(message);
               } catch {
                 if (line.trim()) {
-                  setProgressMessages(prev => [...prev, line]);
+                  setProgressMessage(line);
                 }
               }
             }
@@ -193,10 +248,10 @@ export default function ModulesView() {
     } catch (err) {
       console.error('Uninstall error:', err);
       setError(err instanceof Error ? err.message : 'Failed to uninstall module');
-      await fetchModules();
+      await fetchModulesAndExposures();
     } finally {
       setUninstallingModule(null);
-      setTimeout(() => setProgressMessages([]), 2000);
+      setTimeout(() => setProgressMessage(null), 2000);
     }
   };
 
@@ -221,7 +276,7 @@ export default function ModulesView() {
       {error && (
         <div className="error-state">
           <p className="error-message">{error}</p>
-          <button className="button button-secondary" onClick={fetchModules}>
+          <button className="button button-secondary" onClick={fetchModulesAndExposures}>
             Retry
           </button>
         </div>
@@ -249,11 +304,9 @@ export default function ModulesView() {
               <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
               <span style={{ fontSize: '0.95rem', fontWeight: '500' }}>Installing {installingModule}...</span>
             </div>
-            {progressMessages.length > 0 && (
-              <div style={{ fontSize: '0.85rem', opacity: 0.9, maxHeight: '200px', overflowY: 'auto', borderTop: '1px solid rgba(255,255,255,0.2)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                {progressMessages.map((msg, idx) => (
-                  <div key={idx} style={{ margin: '0.25rem 0' }}>{msg}</div>
-                ))}
+            {progressMessage && (
+              <div style={{ fontSize: '0.85rem', opacity: 0.9, marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                {progressMessage}
               </div>
             )}
           </div>
@@ -281,20 +334,47 @@ export default function ModulesView() {
           {modules.map((module, idx) => {
             const key = module.id || `module-${idx}`;
             const state = module.state || 'unknown';
+            const ports = getModulePorts(module);
+            const exposure = getModuleExposure(module.id);
+            const isExposed = exposure ? 'Yes' : 'No';
             return (
               <div key={key} className="card">
                 <div className="module-header">
                   <div>
                     <h3 className="module-name">{module.id || 'Unnamed Module'}</h3>
-                    <p className="module-version">{module.module_path || 'N/A'}</p>
+                    <p className="module-version">Exposed: {isExposed}</p>
                   </div>
                   <div className={`status-badge status-${state.toLowerCase()}`}>
                     {state}
                   </div>
                 </div>
 
-              {module.description && (
-                <p className="module-description">{module.description}</p>
+              {module.container_name && (
+                <div className="module-detail">
+                  <span className="detail-label">Container:</span>
+                  <span className="detail-value">{module.container_name}</span>
+                </div>
+              )}
+
+              {module.ip_address && (
+                <div className="module-detail">
+                  <span className="detail-label">IP Address:</span>
+                  <span className="detail-value">{module.ip_address}</span>
+                </div>
+              )}
+
+              {ports.length > 0 && (
+                <div className="module-ports">
+                  <span className="detail-label">Ports:</span>
+                  <div className="ports-list">
+                    {ports.map((p, idx) => (
+                      <div key={idx} className="port-item">
+                        <span className="port-name">{p.name}</span>
+                        <span className="port-value">{p.port}/{p.protocol}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {module.tags && module.tags.length > 0 && (
@@ -308,7 +388,6 @@ export default function ModulesView() {
               )}
 
                 <div className="module-actions">
-                  <button className="button button-secondary">View Details</button>
                   <button
                     className="button button-danger"
                     onClick={() => handleUninstall(module.id || '')}

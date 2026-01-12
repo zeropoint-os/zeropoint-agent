@@ -142,6 +142,56 @@
   margin-bottom: var(--spacing-md);
 }
 
+.module-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+  font-size: 0.9rem;
+}
+
+.detail-label {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  min-width: 80px;
+}
+
+.detail-value {
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.module-ports {
+  margin-bottom: var(--spacing-md);
+}
+
+.ports-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.port-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.85rem;
+}
+
+.port-name {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.port-value {
+  color: var(--color-text-primary);
+  font-family: monospace;
+}
+
 .status-badge {
   padding: 0.25rem 0.75rem;
   border-radius: var(--border-radius-full);
