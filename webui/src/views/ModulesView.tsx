@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { ModulesApi, CatalogApi, Configuration } from 'artifacts/clients/typescript';
+import type { CatalogModuleResponse } from 'artifacts/clients/typescript';
+import CatalogBrowser from '../components/CatalogBrowser';
 import './Views.css';
 
 interface Module {
@@ -18,7 +21,13 @@ export default function ModulesView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uninstallingModule, setUninstallingModule] = useState<string | null>(null);
+  const [installingModule, setInstallingModule] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showInstallDialog, setShowInstallDialog] = useState(false);
+  const [progressMessages, setProgressMessages] = useState<string[]>([]);
+
+  // Initialize API clients
+  const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
     fetchModules();
@@ -27,13 +36,8 @@ export default function ModulesView() {
   const fetchModules = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/modules');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch modules: ${response.statusText}`);
-      }
-      const data = await response.json();
-      // Handle the response structure - could be array or object with modules property
-      const modulesList = Array.isArray(data) ? data : (data.modules || data.data || []);
+      const response = await modulesApi.modulesGet();
+      const modulesList = Array.isArray(response.modules) ? response.modules : [];
       setModules(modulesList);
       setError(null);
     } catch (err) {
@@ -45,8 +49,85 @@ export default function ModulesView() {
   };
 
   const handleInstall = () => {
-    // TODO: Show install modal
-    console.log('Install module');
+    setShowInstallDialog(true);
+  };
+
+  const handleSelectCatalogItem = async (item: CatalogModuleResponse) => {
+    const moduleName = item.name || '';
+    
+    if (!moduleName) {
+      setError('Invalid module: name is missing');
+      setShowInstallDialog(true);
+      return;
+    }
+
+    try {
+      setInstallingModule(moduleName);
+      setShowInstallDialog(false);
+      setError(null);
+      setProgressMessages([]);
+
+      // Make raw fetch call to handle streaming response
+      const response = await fetch(`/api/modules/${moduleName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          source: item.source,
+          module_id: moduleName,
+          tags: undefined
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to install module: ${response.statusText}`);
+      }
+
+      // Process the streaming response
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const data = JSON.parse(line);
+                const message = data.message || data.status || line;
+                setProgressMessages(prev => [...prev, message]);
+              } catch {
+                if (line.trim()) {
+                  setProgressMessages(prev => [...prev, line]);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Refresh modules list
+      await fetchModules();
+      
+      setSuccessMessage(`${moduleName} installed successfully`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+      
+    } catch (err) {
+      console.error('Install error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to install module');
+      await fetchModules();
+    } finally {
+      setInstallingModule(null);
+      setTimeout(() => setProgressMessages([]), 2000);
+    }
   };
 
   const handleUninstall = async (moduleName: string) => {
@@ -61,6 +142,10 @@ export default function ModulesView() {
 
     try {
       setUninstallingModule(moduleName);
+      setError(null);
+      setProgressMessages([]);
+
+      // Make raw fetch call to handle streaming response
       const response = await fetch(`/api/modules/${moduleName}`, {
         method: 'DELETE',
       });
@@ -69,24 +154,49 @@ export default function ModulesView() {
         throw new Error(`Failed to uninstall module: ${response.statusText}`);
       }
 
-      // Wait for the entire response stream to complete
-      const body = await response.text();
-      console.log('Uninstall response:', body);
+      // Process the streaming response
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const data = JSON.parse(line);
+                const message = data.message || data.status || line;
+                setProgressMessages(prev => [...prev, message]);
+              } catch {
+                if (line.trim()) {
+                  setProgressMessages(prev => [...prev, line]);
+                }
+              }
+            }
+          }
+        }
+      }
 
       // Remove from state after stream completes
       setModules(modules.filter(m => m.id !== moduleName));
       
       setSuccessMessage(`${moduleName} uninstalled successfully`);
-      setTimeout(() => setSuccessMessage(null), 3000);
+      setTimeout(() => setSuccessMessage(null), 4000);
       
-      setError(null);
     } catch (err) {
       console.error('Uninstall error:', err);
       setError(err instanceof Error ? err.message : 'Failed to uninstall module');
-      // Refresh on error to sync state
       await fetchModules();
     } finally {
       setUninstallingModule(null);
+      setTimeout(() => setProgressMessages([]), 2000);
     }
   };
 
@@ -94,9 +204,11 @@ export default function ModulesView() {
     <div className="view-container">
       <div className="view-header">
         <h1 className="section-title">Modules</h1>
-        <button className="button button-primary" onClick={handleInstall}>
-          <span>+</span> Install Module
-        </button>
+        {modules.length > 0 && (
+          <button className="button button-primary" onClick={handleInstall}>
+            <span>+</span> Install Module
+          </button>
+        )}
       </div>
 
       {loading && (
@@ -127,6 +239,24 @@ export default function ModulesView() {
       {successMessage && (
         <div className="success-state">
           <p className="success-message">✓ {successMessage}</p>
+        </div>
+      )}
+
+      {installingModule && (
+        <div className="progress-state" style={{ position: 'fixed', top: '80px', left: '50%', transform: 'translateX(-50%)', zIndex: 100, minWidth: '300px', maxWidth: '600px' }}>
+          <div style={{ padding: '1rem', backgroundColor: 'var(--color-primary)', color: 'white', borderRadius: 'var(--border-radius-md)', boxShadow: 'var(--shadow-lg)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
+              <span style={{ fontSize: '0.95rem', fontWeight: '500' }}>Installing {installingModule}...</span>
+            </div>
+            {progressMessages.length > 0 && (
+              <div style={{ fontSize: '0.85rem', opacity: 0.9, maxHeight: '200px', overflowY: 'auto', borderTop: '1px solid rgba(255,255,255,0.2)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
+                {progressMessages.map((msg, idx) => (
+                  <div key={idx} style={{ margin: '0.25rem 0' }}>{msg}</div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -191,6 +321,14 @@ export default function ModulesView() {
             );
           })}
         </div>
+      )}
+
+      {showInstallDialog && (
+        <CatalogBrowser 
+          filterType="modules"
+          onSelect={handleSelectCatalogItem}
+          onClose={() => setShowInstallDialog(false)}
+        />
       )}
     </div>
   );

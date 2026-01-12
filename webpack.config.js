@@ -34,6 +34,9 @@ module.exports = {
   target: 'web',
   resolve: {
     extensions: ['.tsx', '.ts', '.js'],
+    alias: {
+      'artifacts/clients/typescript': path.resolve(__dirname, 'artifacts/clients/typescript/src'),
+    },
   },
   output: {
     filename: '[name].js',
