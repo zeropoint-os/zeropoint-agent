@@ -1,0 +1,333 @@
+.view-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+/* Loading State */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.loading-state .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-state p {
+  font-size: 1rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.empty-state svg {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+.empty-state h2 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.empty-state p {
+  font-size: 0.95rem;
+}
+
+/* Error State */
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background-color: var(--color-danger);
+  color: white;
+  border-radius: var(--border-radius-md);
+}
+
+.error-state .error-message {
+  font-size: 0.95rem;
+}
+
+/* Module Card */
+.module-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-md);
+  gap: var(--spacing-md);
+}
+
+.module-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: var(--spacing-xs);
+}
+
+.module-version {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.module-description {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-md);
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--border-radius-full);
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status-badge.status-running {
+  background-color: var(--color-success);
+  color: white;
+}
+
+.status-badge.status-stopped {
+  background-color: var(--color-danger);
+  color: white;
+}
+
+.status-badge.status-pending {
+  background-color: var(--color-warning);
+  color: white;
+}
+
+.module-tags,
+.catalog-item-tags,
+.exposure-tags,
+.bundle-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: var(--spacing-md);
+}
+
+.module-tags .tag,
+.catalog-item-tags .tag,
+.exposure-tags .tag,
+.bundle-tags .tag {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background-color: var(--color-hover);
+  color: var(--color-primary);
+  border-radius: var(--border-radius-full);
+  font-size: 0.85rem;
+}
+
+.module-actions,
+.exposure-actions,
+.bundle-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+/* Exposure Card */
+.exposure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  gap: var(--spacing-md);
+}
+
+.exposure-module {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.exposure-port {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-md);
+}
+
+/* Catalog Item */
+.catalog-item-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+.catalog-item-version {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.catalog-item-description {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-md);
+  line-height: 1.5;
+}
+
+/* Bundle Card */
+.bundle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-md);
+  gap: var(--spacing-md);
+}
+
+.bundle-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.bundle-version {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-md);
+}
+
+.bundle-modules {
+  margin-bottom: var(--spacing-md);
+}
+
+.bundle-modules h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+.bundle-modules ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bundle-modules li {
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  padding-left: 1rem;
+  position: relative;
+}
+
+.bundle-modules li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+}
+
+/* Table */
+.table-container {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.table thead {
+  background-color: var(--color-hover);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.table th {
+  padding: var(--spacing-md);
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.table td {
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.table tbody tr {
+  transition: background-color var(--transition-normal);
+}
+
+.table tbody tr:hover {
+  background-color: var(--color-hover);
+}
+
+/* Button Variants */
+.button-small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--border-radius-full);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.badge.badge-info {
+  background-color: var(--color-info);
+  color: white;
+}
+
+.badge.badge-primary {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.badge.badge-success {
+  background-color: var(--color-success);
+  color: white;
+}
+
+/* Tag */
+.tag {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background-color: var(--color-hover);
+  color: var(--color-primary);
+  border-radius: var(--border-radius-full);
+  font-size: 0.85rem;
+}
