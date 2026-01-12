@@ -17,6 +17,8 @@ export default function ModulesView() {
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uninstallingModule, setUninstallingModule] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetchModules();
@@ -47,9 +49,45 @@ export default function ModulesView() {
     console.log('Install module');
   };
 
-  const handleUninstall = (moduleName: string) => {
-    // TODO: Show uninstall confirmation
-    console.log('Uninstall module:', moduleName);
+  const handleUninstall = async (moduleName: string) => {
+    if (!moduleName) {
+      setError('Cannot uninstall: module name is missing');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to uninstall ${moduleName}?`)) {
+      return;
+    }
+
+    try {
+      setUninstallingModule(moduleName);
+      const response = await fetch(`/api/modules/${moduleName}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to uninstall module: ${response.statusText}`);
+      }
+
+      // Wait for the entire response stream to complete
+      const body = await response.text();
+      console.log('Uninstall response:', body);
+
+      // Remove from state after stream completes
+      setModules(modules.filter(m => m.id !== moduleName));
+      
+      setSuccessMessage(`${moduleName} uninstalled successfully`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+      
+      setError(null);
+    } catch (err) {
+      console.error('Uninstall error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to uninstall module');
+      // Refresh on error to sync state
+      await fetchModules();
+    } finally {
+      setUninstallingModule(null);
+    }
   };
 
   return (
@@ -74,6 +112,21 @@ export default function ModulesView() {
           <button className="button button-secondary" onClick={fetchModules}>
             Retry
           </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="error-state">
+          <p className="error-message">{error}</p>
+          <button className="button button-secondary" onClick={() => setError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="success-state">
+          <p className="success-message">✓ {successMessage}</p>
         </div>
       )}
 
@@ -129,8 +182,9 @@ export default function ModulesView() {
                   <button
                     className="button button-danger"
                     onClick={() => handleUninstall(module.id || '')}
+                    disabled={uninstallingModule === module.id}
                   >
-                    Uninstall
+                    {uninstallingModule === module.id ? 'Uninstalling...' : 'Uninstall'}
                   </button>
                 </div>
               </div>

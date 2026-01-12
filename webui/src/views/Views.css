@@ -80,10 +80,40 @@
   background-color: var(--color-danger);
   color: white;
   border-radius: var(--border-radius-md);
+  margin-bottom: var(--spacing-lg);
 }
 
 .error-state .error-message {
   font-size: 0.95rem;
+}
+
+/* Success State */
+.success-state {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  background-color: var(--color-success);
+  color: white;
+  border-radius: var(--border-radius-md);
+  margin-bottom: var(--spacing-lg);
+  animation: slideIn 0.3s ease-in-out;
+}
+
+.success-state .success-message {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 /* Module Card */
