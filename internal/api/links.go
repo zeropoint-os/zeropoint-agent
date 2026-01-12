@@ -19,11 +19,11 @@ const (
 	linksFileName = "links.json"
 )
 
-// Link represents a group of linked apps with their references
+// Link represents a group of linked modules with their references
 type Link struct {
 	ID              string                            `json:"id"`
-	Apps            map[string]map[string]interface{} `json:"apps"`            // App configurations with references
-	References      map[string]map[string]string      `json:"references"`      // Resolved references for each app
+	Modules         map[string]map[string]interface{} `json:"modules"`         // Module configurations with references
+	References      map[string]map[string]string      `json:"references"`      // Resolved references for each module
 	SharedNetworks  []string                          `json:"shared_networks"` // Networks created for this link
 	DependencyOrder []string                          `json:"dependency_order"`
 	Tags            []string                          `json:"tags,omitempty"` // optional tags for categorization
@@ -70,7 +70,7 @@ func NewLinkStore(dockerClient *client.Client, logger *slog.Logger) (*LinkStore,
 }
 
 // CreateOrUpdateLink creates or updates a link
-func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps map[string]map[string]interface{}, references map[string]map[string]string, sharedNetworks []string, dependencyOrder []string, tags []string) (*Link, error) {
+func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, modules map[string]map[string]interface{}, references map[string]map[string]string, sharedNetworks []string, dependencyOrder []string, tags []string) (*Link, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -83,7 +83,7 @@ func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps 
 	if exists {
 		// Update existing link
 		link = existingLink
-		link.Apps = apps
+		link.Modules = modules
 		link.References = references
 		link.SharedNetworks = sharedNetworks
 		link.DependencyOrder = dependencyOrder
@@ -93,7 +93,7 @@ func (s *LinkStore) CreateOrUpdateLink(ctx context.Context, linkID string, apps 
 		// Create new link
 		link = &Link{
 			ID:              linkID,
-			Apps:            apps,
+			Modules:         modules,
 			References:      references,
 			SharedNetworks:  sharedNetworks,
 			DependencyOrder: dependencyOrder,

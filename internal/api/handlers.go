@@ -242,15 +242,15 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// LinkRequest represents the request to link multiple apps (legacy)
+// LinkRequest represents the request to link multiple modules (legacy)
 type LinkRequest struct {
-	Apps map[string]map[string]interface{} `json:"apps"`
+	Modules map[string]map[string]interface{} `json:"modules"`
 }
 
 // CreateLinkRequest represents the request to create/update a link
 type CreateLinkRequest struct {
-	Apps map[string]map[string]interface{} `json:"apps"`
-	Tags []string                          `json:"tags,omitempty"`
+	Modules map[string]map[string]interface{} `json:"modules"`
+	Tags    []string                          `json:"tags,omitempty"`
 }
 
 // LinksResponse represents the response from listing links
@@ -258,13 +258,13 @@ type LinksResponse struct {
 	Links []*Link `json:"links"`
 }
 
-// AppReference represents a reference to another app's output
+// AppReference represents a reference to another module's output
 type AppReference struct {
-	FromApp string `json:"from_app"`
-	Output  string `json:"output"`
+	FromModule string `json:"from_module"`
+	Output     string `json:"output"`
 }
 
-// LinkResponse represents the response from linking apps
+// LinkResponse represents the response from linking modules
 type LinkResponse struct {
 	Success      bool              `json:"success"`
 	Message      string            `json:"message,omitempty"`
@@ -326,7 +326,7 @@ func (h *LinkHandlers) GetLink(w http.ResponseWriter, r *http.Request) {
 
 // CreateOrUpdateLink handles POST /links/{id}
 // @Summary Create or update a link
-// @Description Create or update a link between multiple apps
+// @Description Create or update a link between multiple modules
 // @Tags links
 // @Param id path string true "Link ID"
 // @Accept json
@@ -347,10 +347,10 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.logger.Info("Creating/updating link", "link_id", linkID, "apps", getAppNames(req.Apps))
+	h.logger.Info("Creating/updating link", "link_id", linkID, "modules", getAppNames(req.Modules))
 
 	// Use the existing linking logic
-	response := h.linkApps(linkID, req.Apps, req.Tags)
+	response := h.linkApps(linkID, req.Modules, req.Tags)
 
 	w.Header().Set("Content-Type", "application/json")
 	if response.Success {
@@ -388,11 +388,11 @@ func (h *LinkHandlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // linkApps contains the core linking logic (refactored from LinkApps)
-func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interface{}, tags []string) LinkResponse {
+func (h *LinkHandlers) linkApps(linkID string, modules map[string]map[string]interface{}, tags []string) LinkResponse {
 
-	// Step 1: Validate all apps exist
-	if err := h.validateAppsExist(apps); err != nil {
-		h.logger.Error("App validation failed", "error", err)
+	// Step 1: Validate all modules exist
+	if err := h.validateAppsExist(modules); err != nil {
+		h.logger.Error("Module validation failed", "error", err)
 		return LinkResponse{
 			Success: false,
 			Message: err.Error(),
@@ -400,7 +400,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 	}
 
 	// Step 2: Analyze dependencies and determine order
-	graph, err := AnalyzeDependencies(apps)
+	graph, err := AnalyzeDependencies(modules)
 	if err != nil {
 		h.logger.Error("Dependency analysis failed", "error", err)
 		return LinkResponse{
@@ -418,7 +418,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 		}
 	}
 
-	h.logger.Info("Determined app order", "order", order)
+	h.logger.Info("Determined module order", "order", order)
 
 	// Step 3: Backup states
 	stateManager := NewStateManager(h.appsDir)
@@ -436,7 +436,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 	appliedModules := []string{}
 
 	for _, moduleName := range order {
-		config, exists := apps[moduleName]
+		config, exists := modules[moduleName]
 		if !exists {
 			continue // Module not in this link request
 		}
@@ -464,7 +464,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 
 		appliedModules = append(appliedModules, moduleName)
 
-		// Create shared networks for any apps this app references
+		// Create shared networks for any modules this module references
 		if err := h.createSharedNetworksForReferences(moduleName, config); err != nil {
 			h.logger.Warn("Failed to create shared networks", "module", moduleName, "error", err)
 			// Don't fail the entire operation for network creation failures
@@ -480,25 +480,25 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 	references := make(map[string]map[string]string)
 	var sharedNetworks []string
 
-	// Parse references from app configurations and collect network names
+	// Parse references from module configurations and collect network names
 	networkNames := make(map[string]bool)
-	for appName, config := range apps {
+	for moduleName, config := range modules {
 		appRefs := make(map[string]string)
 		for inputName, value := range config {
 			if ref, isRef := parseAppReference(value); isRef {
-				appRefs[inputName] = fmt.Sprintf("%s.%s", ref.FromApp, ref.Output)
+				appRefs[inputName] = fmt.Sprintf("%s.%s", ref.FromModule, ref.Output)
 
 				// Generate the network name for this reference
-				linkApps := []string{ref.FromApp, appName}
-				if linkApps[0] > linkApps[1] {
-					linkApps[0], linkApps[1] = linkApps[1], linkApps[0]
+				linkModules := []string{ref.FromModule, moduleName}
+				if linkModules[0] > linkModules[1] {
+					linkModules[0], linkModules[1] = linkModules[1], linkModules[0]
 				}
-				networkName := fmt.Sprintf("zeropoint-link-%s-%s", linkApps[0], linkApps[1])
+				networkName := fmt.Sprintf("zeropoint-link-%s-%s", linkModules[0], linkModules[1])
 				networkNames[networkName] = true
 			}
 		}
 		if len(appRefs) > 0 {
-			references[appName] = appRefs
+			references[moduleName] = appRefs
 		}
 	}
 
@@ -507,7 +507,7 @@ func (h *LinkHandlers) linkApps(linkID string, apps map[string]map[string]interf
 		sharedNetworks = append(sharedNetworks, networkName)
 	}
 
-	if _, err := h.linkStore.CreateOrUpdateLink(context.Background(), linkID, apps, references, sharedNetworks, order, tags); err != nil {
+	if _, err := h.linkStore.CreateOrUpdateLink(context.Background(), linkID, modules, references, sharedNetworks, order, tags); err != nil {
 		h.logger.Warn("Failed to store link", "error", err)
 		// Don't fail the operation for storage failures
 	}
@@ -537,13 +537,13 @@ func (h *LinkHandlers) validateAppsExist(apps map[string]map[string]interface{})
 		}
 	}
 
-	// Also validate referenced apps in app references
-	for appName, config := range apps {
+	// Also validate referenced modules in module references
+	for moduleName, config := range apps {
 		for inputName, value := range config {
 			if ref, isRef := parseAppReference(value); isRef {
-				refAppDir := filepath.Join(h.appsDir, ref.FromApp)
-				if _, err := os.Stat(refAppDir); os.IsNotExist(err) {
-					return fmt.Errorf("app %s references non-existent app %s in input %s", appName, ref.FromApp, inputName)
+				refModuleDir := filepath.Join(h.appsDir, ref.FromModule)
+				if _, err := os.Stat(refModuleDir); os.IsNotExist(err) {
+					return fmt.Errorf("module %s references non-existent module %s in input %s", moduleName, ref.FromModule, inputName)
 				}
 			}
 		}
@@ -608,18 +608,18 @@ func (h *LinkHandlers) applyModuleConfiguration(moduleName string, config map[st
 	return nil
 }
 
-// resolveAppReferences resolves app references to actual output values
+// resolveAppReferences resolves module references to actual output values
 func (h *LinkHandlers) resolveAppReferences(config map[string]interface{}) (map[string]interface{}, error) {
 	resolved := make(map[string]interface{})
 
 	for key, value := range config {
 		if ref, isRef := parseAppReference(value); isRef {
-			// Get the actual output value from the referenced app
-			resolvedValue, err := h.getAppOutput(ref.FromApp, ref.Output)
+			// Get the actual output value from the referenced module
+			resolvedValue, err := h.getAppOutput(ref.FromModule, ref.Output)
 			if err != nil {
-				return nil, fmt.Errorf("failed to resolve reference %s.%s: %w", ref.FromApp, ref.Output, err)
+				return nil, fmt.Errorf("failed to resolve reference %s.%s: %w", ref.FromModule, ref.Output, err)
 			}
-			h.logger.Info("Resolved app reference", "key", key, "reference", value, "resolved_value", resolvedValue, "type", fmt.Sprintf("%T", resolvedValue))
+			h.logger.Info("Resolved module reference", "key", key, "reference", value, "resolved_value", resolvedValue, "type", fmt.Sprintf("%T", resolvedValue))
 			resolved[key] = resolvedValue
 		} else {
 			resolved[key] = value
@@ -691,17 +691,17 @@ func (h *LinkHandlers) prepareSystemVariables(moduleName string) (map[string]str
 	return variables, nil
 }
 
-// createSharedNetworksForReferences creates shared networks for referenced apps
-func (h *LinkHandlers) createSharedNetworksForReferences(targetApp string, config map[string]interface{}) error {
+// createSharedNetworksForReferences creates shared networks for referenced modules
+func (h *LinkHandlers) createSharedNetworksForReferences(targetModule string, config map[string]interface{}) error {
 	ctx := context.Background()
 
 	for _, value := range config {
 		if ref, isRef := parseAppReference(value); isRef {
-			h.logger.Info("Creating shared network for app reference", "from", ref.FromApp, "to", targetApp, "output", ref.Output)
+			h.logger.Info("Creating shared network for module reference", "from", ref.FromModule, "to", targetModule, "output", ref.Output)
 
-			// Create shared network for direct communication between linked apps
-			if err := h.ensureSharedNetwork(ctx, ref.FromApp, targetApp); err != nil {
-				h.logger.Warn("Failed to create shared network", "from", ref.FromApp, "to", targetApp, "error", err)
+			// Create shared network for direct communication between linked modules
+			if err := h.ensureSharedNetwork(ctx, ref.FromModule, targetModule); err != nil {
+				h.logger.Warn("Failed to create shared network", "from", ref.FromModule, "to", targetModule, "error", err)
 				// Don't return error - network connection failure shouldn't break linking
 			}
 		}

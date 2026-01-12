@@ -104,12 +104,12 @@ func AnalyzeDependencies(apps map[string]map[string]interface{}) (*DependencyGra
 	}
 
 	// Analyze dependencies
-	for appName, config := range apps {
+	for moduleName, config := range apps {
 		for _, value := range config {
-			// Check if value is an app reference
+			// Check if value is a module reference
 			if ref, isRef := parseAppReference(value); isRef {
-				// This app depends on the referenced app
-				graph.AddDependency(appName, ref.FromApp)
+				// This module depends on the referenced module
+				graph.AddDependency(moduleName, ref.FromModule)
 			}
 		}
 	}
@@ -117,39 +117,39 @@ func AnalyzeDependencies(apps map[string]map[string]interface{}) (*DependencyGra
 	return graph, nil
 }
 
-// parseAppReference checks if a value is an app reference and parses it
+// parseAppReference checks if a value is a module reference and parses it
 func parseAppReference(value interface{}) (AppReference, bool) {
 	// Try to parse as map[string]interface{} first (explicit reference format)
 	if valueMap, ok := value.(map[string]interface{}); ok {
-		fromApp, hasFromApp := valueMap["from_app"]
+		fromModule, hasFromModule := valueMap["from_module"]
 		output, hasOutput := valueMap["output"]
 
-		if hasFromApp && hasOutput {
-			fromAppStr, fromAppOk := fromApp.(string)
+		if hasFromModule && hasOutput {
+			fromModuleStr, fromModuleOk := fromModule.(string)
 			outputStr, outputOk := output.(string)
 
-			if fromAppOk && outputOk {
+			if fromModuleOk && outputOk {
 				return AppReference{
-					FromApp: fromAppStr,
-					Output:  outputStr,
+					FromModule: fromModuleStr,
+					Output:     outputStr,
 				}, true
 			}
 		}
 	}
 
-	// Try to parse as string interpolation format: ${app.output}
+	// Try to parse as string interpolation format: ${module.output}
 	if str, ok := value.(string); ok {
-		// Match pattern like ${app_name.output_name}
+		// Match pattern like ${module_name.output_name}
 		if len(str) > 3 && str[0:2] == "${" && str[len(str)-1] == '}' {
 			// Extract the content between ${ and }
 			content := str[2 : len(str)-1]
 
-			// Split on first dot to get app and output
+			// Split on first dot to get module and output
 			parts := strings.SplitN(content, ".", 2)
 			if len(parts) == 2 {
 				return AppReference{
-					FromApp: parts[0],
-					Output:  parts[1],
+					FromModule: parts[0],
+					Output:     parts[1],
 				}, true
 			}
 		}
