@@ -10,7 +10,33 @@
             "cwd": "${workspaceFolder}",
             "env": {},
             "buildFlags": "",
-            "preLaunchTask": "build"
+            "preLaunchTask": "go: build"
+        },
+        {           
+            "name": "webui: debug",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:2370",
+            "webRoot": "${workspaceFolder}",
+            "preLaunchTask": "waitForServer",
+            "browserLaunchLocation": "ui",
+            "runtimeExecutable": "stable",
+            "userDataDir": "${workspaceFolder}/.vscode/cache",
+            "sourceMaps": true,
+            "outFiles": [
+                "${workspaceFolder}/web/**/*.js"
+            ],
+            "presentation": {
+                "hidden": true
+            }
+        }        
+    ],
+    "compounds": 
+    [
+        {
+            "name": "zeropoint-agent/webui",
+            "configurations": ["zeropoint-agent", "webui: debug"],
+            "stopAll": true
         }
     ]
 }

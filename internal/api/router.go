@@ -70,37 +70,40 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	r := mux.NewRouter()
 
-	// Web UI
-	webDir := getWebDir()
-	if webDir != "" {
-		// Serve static files
-		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
-	}
-
+	// API routes MUST be registered before the static file server
 	// Health endpoint
-	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
+	r.HandleFunc("/api/health", env.healthHandler).Methods(http.MethodGet)
 
 	// Module endpoints
-	r.HandleFunc("/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
-	r.HandleFunc("/modules/{name}", moduleHandlers.InstallModule).Methods(http.MethodPost)
-	r.HandleFunc("/modules/{name}", moduleHandlers.UninstallModule).Methods(http.MethodDelete)
-	r.HandleFunc("/modules/{module_id}/inspect", inspectHandlers.InspectModule).Methods(http.MethodGet)
+	r.HandleFunc("/api/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
+	r.HandleFunc("/api/modules/{name}", moduleHandlers.InstallModule).Methods(http.MethodPost)
+	r.HandleFunc("/api/modules/{name}", moduleHandlers.UninstallModule).Methods(http.MethodDelete)
+	r.HandleFunc("/api/modules/{module_id}/inspect", inspectHandlers.InspectModule).Methods(http.MethodGet)
 
 	// Link endpoints
-	linkHandlers.RegisterRoutes(r)
+	r.HandleFunc("/api/links", linkHandlers.ListLinks).Methods(http.MethodGet)
+	r.HandleFunc("/api/links/{id}", linkHandlers.GetLink).Methods(http.MethodGet)
+	r.HandleFunc("/api/links/{id}", linkHandlers.CreateOrUpdateLink).Methods(http.MethodPost)
+	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLink).Methods(http.MethodDelete)
 
 	// Exposure endpoints
-	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/api/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
 
 	// Catalog endpoints
-	r.HandleFunc("/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
-	r.HandleFunc("/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/modules/{module_name}", catalogHandlers.HandleGetModule).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
+	r.HandleFunc("/api/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/modules/{module_name}", catalogHandlers.HandleGetModule).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
+
+	// Web UI - serve static files as fallback after API routes
+	webDir := getWebDir()
+	if webDir != "" {
+		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
+	}
 
 	return r, nil
 }
