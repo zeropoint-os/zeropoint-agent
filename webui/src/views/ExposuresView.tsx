@@ -16,6 +16,9 @@ interface Exposure {
 export default function ExposuresView() {
   const [exposures, setExposures] = useState<Exposure[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [deletingExposure, setDeletingExposure] = useState<string | null>(null);
 
   useEffect(() => {
     fetchExposures();
@@ -31,8 +34,10 @@ export default function ExposuresView() {
       const data = await response.json();
       const exposureList = Array.isArray(data) ? data : (data.exposures || data.data || []);
       setExposures(exposureList);
+      setError(null);
     } catch (err) {
       console.error('Error loading exposures:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setExposures([]);
     } finally {
       setLoading(false);
@@ -44,9 +49,33 @@ export default function ExposuresView() {
     console.log('Create exposure');
   };
 
-  const handleDeleteExposure = (exposureId: string) => {
-    // TODO: Show delete confirmation
-    console.log('Delete exposure:', exposureId);
+  const handleDeleteExposure = async (exposureId: string) => {
+    if (!window.confirm(`Are you sure you want to delete exposure "${exposureId}"?`)) {
+      return;
+    }
+
+    try {
+      setDeletingExposure(exposureId);
+      setError(null);
+
+      const response = await fetch(`/api/exposures/${exposureId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete exposure: ${response.statusText}`);
+      }
+
+      setSuccessMessage(`Exposure "${exposureId}" deleted successfully`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+      
+      // Refresh exposures list
+      await fetchExposures();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete exposure');
+    } finally {
+      setDeletingExposure(null);
+    }
   };
 
   return (
@@ -57,6 +86,21 @@ export default function ExposuresView() {
           <span>+</span> Create Exposure
         </button>
       </div>
+
+      {error && (
+        <div className="error-state">
+          <p className="error-message">{error}</p>
+          <button className="button button-secondary" onClick={() => setError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="success-state">
+          <p className="success-message">✓ {successMessage}</p>
+        </div>
+      )}
 
       {loading ? (
         <div className="loading-state">
@@ -137,8 +181,9 @@ export default function ExposuresView() {
                   <button
                     className="button button-danger"
                     onClick={() => handleDeleteExposure(exposureId)}
+                    disabled={deletingExposure === exposureId}
                   >
-                    Delete
+                    {deletingExposure === exposureId ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
               </div>
