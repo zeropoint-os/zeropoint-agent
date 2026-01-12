@@ -203,6 +203,14 @@ export default function LinksView() {
                   </div>
                 )}
 
+                {link.tags && link.tags.length > 0 && (
+                  <div className="link-tags">
+                    {link.tags.map((tag) => (
+                      <span key={tag} className="tag">{tag}</span>
+                    ))}
+                  </div>
+                )}
+
                 <div className="link-actions">
                   <button
                     className="button button-danger"
