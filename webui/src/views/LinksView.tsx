@@ -1,10 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import './Views.css';
 
+interface LinkReference {
+  [key: string]: string;
+}
+
+interface LinkModule {
+  [key: string]: any;
+}
+
 interface Link {
   id?: string;
-  source?: string;
-  target?: string;
+  modules?: { [key: string]: LinkModule };
+  references?: { [key: string]: LinkReference };
+  shared_networks?: string[];
+  dependency_order?: string[];
+  created_at?: string;
+  updated_at?: string;
   tags?: string[];
   [key: string]: any;
 }
@@ -12,6 +24,8 @@ interface Link {
 export default function LinksView() {
   const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deletingLink, setDeletingLink] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLinks();
@@ -27,8 +41,10 @@ export default function LinksView() {
       const data = await response.json();
       const linkList = Array.isArray(data) ? data : (data.links || data.data || []);
       setLinks(linkList);
+      setError(null);
     } catch (err) {
       console.error('Error loading links:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setLinks([]);
     } finally {
       setLoading(false);
@@ -40,9 +56,30 @@ export default function LinksView() {
     console.log('Create link');
   };
 
-  const handleDeleteLink = (linkId: string) => {
-    // TODO: Show delete confirmation
-    console.log('Delete link:', linkId);
+  const handleDeleteLink = async (linkId: string) => {
+    if (!window.confirm(`Are you sure you want to delete link "${linkId}"?`)) {
+      return;
+    }
+
+    try {
+      setDeletingLink(linkId);
+      setError(null);
+
+      const response = await fetch(`/api/links/${linkId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete link: ${response.statusText}`);
+      }
+
+      // Refresh links list
+      await fetchLinks();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete link');
+    } finally {
+      setDeletingLink(null);
+    }
   };
 
   return (
@@ -53,6 +90,15 @@ export default function LinksView() {
           <span>+</span> Create Link
         </button>
       </div>
+
+      {error && (
+        <div className="error-state">
+          <p className="error-message">{error}</p>
+          <button className="button button-secondary" onClick={() => setError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="loading-state">
@@ -72,43 +118,83 @@ export default function LinksView() {
           </button>
         </div>
       ) : (
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Target</th>
-                <th>Tags</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {links.map((link, idx) => {
-                const linkId = link.id || `link-${idx}`;
-                return (
-                  <tr key={linkId}>
-                    <td>{link.source || 'N/A'}</td>
-                    <td>{link.target || 'N/A'}</td>
-                    <td>
-                      {link.tags?.map((tag) => (
-                        <span key={tag} className="tag">
-                          {tag}
-                        </span>
+        <div className="grid grid-1">
+          {links.map((link) => {
+            const linkId = link.id || 'unknown';
+            const moduleIds = Object.keys(link.modules || {});
+            const createdDate = link.created_at 
+              ? new Date(link.created_at).toLocaleDateString()
+              : 'N/A';
+
+            return (
+              <div key={linkId} className="card">
+                <div className="link-header">
+                  <div>
+                    <h3 className="link-title">{linkId}</h3>
+                    <p className="link-created">Created: {createdDate}</p>
+                  </div>
+                </div>
+
+                <div className="link-modules-section">
+                  <h4 className="section-label">Modules</h4>
+                  <div className="modules-list">
+                    {moduleIds.map((moduleId, idx) => (
+                      <div key={moduleId} className="module-item">
+                        <span className="module-name">{moduleId}</span>
+                        {link.references?.[moduleId] && (
+                          <div className="module-references">
+                            {Object.entries(link.references[moduleId]).map(([refKey, refValue]) => (
+                              <div key={refKey} className="reference-item">
+                                <span className="ref-label">{refKey}:</span>
+                                <code className="ref-value">{refValue as string}</code>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {link.dependency_order && link.dependency_order.length > 0 && (
+                  <div className="link-dependencies-section">
+                    <h4 className="section-label">Dependency Order</h4>
+                    <div className="dependency-flow">
+                      {link.dependency_order.map((dep, idx) => (
+                        <React.Fragment key={dep}>
+                          <span className="dependency-item">{dep}</span>
+                          {idx < link.dependency_order!.length - 1 && (
+                            <span className="dependency-arrow">→</span>
+                          )}
+                        </React.Fragment>
                       ))}
-                    </td>
-                    <td>
-                      <button
-                        className="button button-small button-danger"
-                        onClick={() => handleDeleteLink(linkId)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                )}
+
+                {link.shared_networks && link.shared_networks.length > 0 && (
+                  <div className="link-networks-section">
+                    <h4 className="section-label">Networks</h4>
+                    <div className="networks-list">
+                      {link.shared_networks.map((network) => (
+                        <span key={network} className="tag">{network}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="link-actions">
+                  <button
+                    className="button button-danger"
+                    onClick={() => handleDeleteLink(linkId)}
+                    disabled={deletingLink === linkId}
+                  >
+                    {deletingLink === linkId ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

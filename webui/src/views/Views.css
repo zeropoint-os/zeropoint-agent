@@ -437,3 +437,132 @@
   border-radius: var(--border-radius-full);
   font-size: 0.85rem;
 }
+/* Link Card Styles */
+.link-header {
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.link-title {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.link-created {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.link-modules-section,
+.link-dependencies-section,
+.link-networks-section {
+  margin-bottom: var(--spacing-md);
+}
+
+.section-label {
+  margin: 0 0 var(--spacing-sm) 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.modules-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.module-item {
+  padding: var(--spacing-sm);
+  background-color: var(--color-background);
+  border-radius: var(--border-radius);
+  border-left: 3px solid var(--color-primary);
+}
+
+.module-name {
+  display: block;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.module-references {
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.reference-item {
+  font-size: 0.9rem;
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+}
+
+.ref-label {
+  font-weight: 500;
+  color: var(--color-text);
+  min-width: 120px;
+}
+
+.ref-value {
+  flex: 1;
+  background-color: var(--color-surface);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--border-radius-sm);
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: var(--color-primary);
+  word-break: break-all;
+}
+
+.dependency-flow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  padding: var(--spacing-sm);
+  background-color: var(--color-background);
+  border-radius: var(--border-radius);
+}
+
+.dependency-item {
+  padding: 0.5rem 0.75rem;
+  background-color: var(--color-surface);
+  border-radius: var(--border-radius-sm);
+  font-weight: 500;
+  color: var(--color-primary);
+}
+
+.dependency-arrow {
+  color: var(--color-text-secondary);
+  font-weight: bold;
+}
+
+.networks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.link-actions {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.link-actions .button {
+  flex: 1;
+  max-width: 150px;
+}
