@@ -3,9 +3,12 @@ import './Views.css';
 
 interface Exposure {
   id?: string;
-  module?: string;
-  port?: number;
+  module_id?: string;
   protocol?: string;
+  hostname?: string;
+  container_port?: number;
+  status?: string;
+  created_at?: string;
   tags?: string[];
   [key: string]: any;
 }
@@ -76,13 +79,50 @@ export default function ExposuresView() {
         <div className="grid grid-2">
           {exposures.map((exposure, idx) => {
             const exposureId = exposure.id || `exposure-${idx}`;
+            const url = exposure.hostname && exposure.container_port 
+              ? `${exposure.protocol || 'http'}://${exposure.hostname}.local:${exposure.container_port}`
+              : 'N/A';
+            const createdDate = exposure.created_at 
+              ? new Date(exposure.created_at).toLocaleDateString()
+              : 'N/A';
             return (
               <div key={exposureId} className="card">
                 <div className="exposure-header">
-                  <h3 className="exposure-module">{exposure.module || 'Unknown'}</h3>
-                  <span className="badge badge-info">{exposure.protocol || 'N/A'}</span>
+                  <div>
+                    <h3 className="exposure-module">{exposure.module_id || 'Unknown'}</h3>
+                    <p className="exposure-id">{exposure.id}</p>
+                  </div>
+                  <span className={`status-badge status-${(exposure.status || 'unknown').toLowerCase()}`}>
+                    {exposure.status || 'unknown'}
+                  </span>
                 </div>
-                <p className="exposure-port">Port: {exposure.port || 'N/A'}</p>
+                
+                <div className="exposure-detail">
+                  <span className="detail-label">URL:</span>
+                  {url !== 'N/A' ? (
+                    <a href={url} target="_blank" rel="noopener noreferrer" className="detail-link">
+                      {url}
+                    </a>
+                  ) : (
+                    <span className="detail-value">{url}</span>
+                  )}
+                </div>
+
+                <div className="exposure-detail">
+                  <span className="detail-label">Protocol:</span>
+                  <span className="detail-value">{exposure.protocol || 'N/A'}</span>
+                </div>
+
+                <div className="exposure-detail">
+                  <span className="detail-label">Port:</span>
+                  <span className="detail-value">{exposure.container_port || 'N/A'}</span>
+                </div>
+
+                <div className="exposure-detail">
+                  <span className="detail-label">Created:</span>
+                  <span className="detail-value">{createdDate}</span>
+                </div>
+
                 {exposure.tags && exposure.tags.length > 0 && (
                   <div className="exposure-tags">
                     {exposure.tags.map((tag) => (
@@ -92,8 +132,8 @@ export default function ExposuresView() {
                     ))}
                   </div>
                 )}
+                
                 <div className="exposure-actions">
-                  <button className="button button-secondary">View</button>
                   <button
                     className="button button-danger"
                     onClick={() => handleDeleteExposure(exposureId)}

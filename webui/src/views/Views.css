@@ -249,7 +249,7 @@
 .exposure-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: var(--spacing-md);
   gap: var(--spacing-md);
 }
@@ -257,12 +257,38 @@
 .exposure-module {
   font-size: 1.1rem;
   font-weight: 600;
+  margin-bottom: var(--spacing-xs);
+}
+
+.exposure-id {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
 }
 
 .exposure-port {
   font-size: 0.9rem;
   color: var(--color-text-secondary);
   margin-bottom: var(--spacing-md);
+}
+
+.exposure-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+  font-size: 0.9rem;
+}
+
+.detail-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  word-break: break-all;
+  transition: color 0.2s ease;
+}
+
+.detail-link:hover {
+  color: var(--color-primary-light);
+  text-decoration: underline;
 }
 
 /* Catalog Item */
