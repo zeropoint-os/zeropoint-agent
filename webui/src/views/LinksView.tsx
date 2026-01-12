@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import CreateLinkDialog from '../components/CreateLinkDialog';
 import './Views.css';
 
 interface LinkReference {
@@ -26,6 +27,7 @@ export default function LinksView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingLink, setDeletingLink] = useState<string | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   useEffect(() => {
     fetchLinks();
@@ -52,8 +54,20 @@ export default function LinksView() {
   };
 
   const handleCreateLink = () => {
-    // TODO: Show create link modal
-    console.log('Create link');
+    setShowCreateDialog(true);
+  };
+
+  const handleCreateLinkSubmit = async (data: {
+    id: string;
+    modules: { [moduleId: string]: { [key: string]: string } };
+  }) => {
+    try {
+      // Refresh links list after successful creation
+      await fetchLinks();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh links');
+      throw err;
+    }
   };
 
   const handleDeleteLink = async (linkId: string) => {
@@ -84,6 +98,12 @@ export default function LinksView() {
 
   return (
     <div className="view-container">
+      <CreateLinkDialog
+        isOpen={showCreateDialog}
+        onClose={() => setShowCreateDialog(false)}
+        onCreate={handleCreateLinkSubmit}
+      />
+
       <div className="view-header">
         <h1 className="section-title">Links</h1>
         <button className="button button-primary" onClick={handleCreateLink}>
