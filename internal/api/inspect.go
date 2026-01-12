@@ -85,7 +85,7 @@ func (h *InspectHandlers) InspectModule(w http.ResponseWriter, r *http.Request) 
 		// Use installed module
 		modulePath = filepath.Join(h.appsDir, moduleID)
 		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-			http.Error(w, fmt.Sprintf("module not installed and no source_url provided"), http.StatusNotFound)
+			http.Error(w, "module not installed and no source_url provided", http.StatusNotFound)
 			return
 		}
 	}
