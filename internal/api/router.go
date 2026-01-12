@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
@@ -68,6 +70,13 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	r := mux.NewRouter()
 
+	// Web UI
+	webDir := getWebDir()
+	if webDir != "" {
+		// Serve static files
+		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
+	}
+
 	// Health endpoint
 	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
 
@@ -119,4 +128,30 @@ func (e *apiEnv) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// getWebDir finds the web UI directory
+func getWebDir() string {
+	// Try relative to executable
+	if webDir := "web"; fileExists(webDir) {
+		return webDir
+	}
+
+	// Try relative to working directory
+	if webDir := filepath.Join(".", "web"); fileExists(webDir) {
+		return webDir
+	}
+
+	// Try standard installation location
+	if webDir := filepath.Join("/app", "web"); fileExists(webDir) {
+		return webDir
+	}
+
+	return ""
+}
+
+// fileExists checks if a directory exists
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
