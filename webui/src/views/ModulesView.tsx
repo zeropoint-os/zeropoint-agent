@@ -112,6 +112,13 @@ export default function ModulesView() {
     return linkedModules; // Already deduplicated
   };
 
+  const hasModuleDependencies = (moduleId: string | undefined): boolean => {
+    if (!moduleId) return false;
+    const hasExposures = exposures.some(e => e.module_id === moduleId);
+    const hasLinks = links.some(link => link.modules && moduleId in link.modules);
+    return hasExposures || hasLinks;
+  };
+
   const getExposureUrl = (exposure: Exposure): string => {
     if (!exposure.protocol || !exposure.hostname || !exposure.container_port) {
       return 'N/A';
@@ -224,6 +231,22 @@ export default function ModulesView() {
   const handleUninstall = async (moduleName: string) => {
     if (!moduleName) {
       setError('Cannot uninstall: module name is missing');
+      return;
+    }
+
+    // Check for exposures and links
+    const moduleExposures = exposures.filter(e => e.module_id === moduleName);
+    const moduleLinks = links.filter(link => link.modules && moduleName in link.modules);
+
+    if (moduleExposures.length > 0 || moduleLinks.length > 0) {
+      const reasons: string[] = [];
+      if (moduleExposures.length > 0) {
+        reasons.push(`${moduleExposures.length} exposure${moduleExposures.length > 1 ? 's' : ''}`);
+      }
+      if (moduleLinks.length > 0) {
+        reasons.push(`${moduleLinks.length} link${moduleLinks.length > 1 ? 's' : ''}`);
+      }
+      setError(`Cannot uninstall ${moduleName}: it has ${reasons.join(' and ')}. Please remove them first.`);
       return;
     }
 
@@ -431,7 +454,8 @@ export default function ModulesView() {
                   <button
                     className="button button-danger"
                     onClick={() => handleUninstall(module.id || '')}
-                    disabled={uninstallingModule === module.id}
+                    disabled={uninstallingModule === module.id || hasModuleDependencies(module.id)}
+                    title={hasModuleDependencies(module.id) ? 'Module has exposures or links - remove them first' : ''}
                   >
                     {uninstallingModule === module.id ? 'Uninstalling...' : 'Uninstall'}
                   </button>
