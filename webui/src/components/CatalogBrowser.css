@@ -64,10 +64,14 @@
 .catalog-browser-search {
   padding: var(--spacing-md) var(--spacing-lg);
   border-bottom: 1px solid var(--color-border);
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
 }
 
 .catalog-search-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--spacing-sm) var(--spacing-md);
   border-radius: var(--border-radius-sm);
   border: 1px solid var(--color-border);

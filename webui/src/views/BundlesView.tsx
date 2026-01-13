@@ -33,7 +33,7 @@ export default function BundlesView() {
       const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-      
+
       // Fetch all exposures, links, and modules to find installed bundles
       const [exposuresData, linksData, modulesData] = await Promise.all([
         exposuresApi.exposuresGet(),
@@ -47,7 +47,7 @@ export default function BundlesView() {
 
       // Collect all unique bundle names from tags
       const bundleNames = new Set<string>();
-      
+
       exposures.forEach((exp: Exposure) => {
         if (exp.tags) {
           exp.tags.forEach(tag => bundleNames.add(tag));
@@ -65,14 +65,14 @@ export default function BundlesView() {
         const bundleExposures = exposures.filter(exp => exp.tags?.includes(name));
         const bundleLinks = links.filter(link => link.tags?.includes(name));
         const bundleModules = new Set<string>();
-        
+
         // Get module IDs from exposures
         bundleExposures.forEach(exp => {
           if (exp.moduleId) {
             bundleModules.add(exp.moduleId);
           }
         });
-        
+
         // Get module IDs from links
         bundleLinks.forEach(link => {
           if (link.modules) {
@@ -128,11 +128,11 @@ export default function BundlesView() {
       if (bundle.modules && bundle.modules.length > 0) {
         for (const moduleName of bundle.modules) {
           setProgressMessage(`Installing module: ${moduleName}...`);
-          
+
           // Fetch module details from catalog to get source
           const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
           const moduleInfo = await catalogApi.catalogsModulesModuleNameGet({ moduleName });
-          
+
           // Use raw fetch to handle streaming response
           const response = await fetch(`/api/modules/${moduleName}`, {
             method: 'POST',
@@ -153,17 +153,17 @@ export default function BundlesView() {
           // Process the streaming response
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
-          
+
           if (reader) {
             let buffer = '';
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              
+
               buffer += decoder.decode(value, { stream: true });
               const lines = buffer.split('\n');
               buffer = lines.pop() || '';
-              
+
               for (const line of lines) {
                 if (line.trim()) {
                   try {
@@ -187,7 +187,7 @@ export default function BundlesView() {
         for (const [linkName, linkDef] of Object.entries(bundle.links)) {
           setProgressMessage(`Creating link: ${linkName}...`);
           const modules: { [key: string]: { [key: string]: string } } = {};
-          
+
           // linkDef is an array of module bindings
           const linkArray = Array.isArray(linkDef) ? linkDef : [linkDef];
           for (const binding of linkArray) {
@@ -216,7 +216,7 @@ export default function BundlesView() {
         for (const [exposureName, exposureDef] of Object.entries(bundle.exposures)) {
           setProgressMessage(`Creating exposure: ${exposureName}...`);
           const exposure = exposureDef as any;
-          
+
           // Find the installed module to get port information
           const module = installedModules.find(m => m.id === exposure.module);
           if (!module) {
@@ -269,7 +269,7 @@ export default function BundlesView() {
 
       setProgressMessage(`${bundleName} installed successfully!`);
       setInstallingBundle(null);
-      
+
       // Refresh installed bundles list
       await fetchInstalledBundles();
       setTimeout(() => setProgressMessage(null), 2000);
@@ -316,7 +316,7 @@ export default function BundlesView() {
       const modules = modulesData.modules ?? [];
 
       // Delete exposures tagged with this bundle
-      const bundleExposures = exposures.filter((exp: any) => 
+      const bundleExposures = exposures.filter((exp: any) =>
         exp.tags && exp.tags.includes(bundleName)
       );
       for (const exposure of bundleExposures) {
@@ -325,7 +325,7 @@ export default function BundlesView() {
       }
 
       // Delete links tagged with this bundle
-      const bundleLinks = links.filter((link: any) => 
+      const bundleLinks = links.filter((link: any) =>
         link.tags && link.tags.includes(bundleName)
       );
       for (const link of bundleLinks) {
@@ -334,7 +334,7 @@ export default function BundlesView() {
       }
 
       // Delete modules tagged with this bundle
-      const bundleModules = modules.filter((mod: any) => 
+      const bundleModules = modules.filter((mod: any) =>
         mod.tags && mod.tags.includes(bundleName)
       );
       for (const module of bundleModules) {
@@ -353,17 +353,17 @@ export default function BundlesView() {
         // Process the streaming response
         const reader = uninstallResponse.body?.getReader();
         const decoder = new TextDecoder();
-        
+
         if (reader) {
           let buffer = '';
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
-            
+
             for (const line of lines) {
               if (line.trim()) {
                 try {
@@ -382,7 +382,7 @@ export default function BundlesView() {
       }
 
       setProgressMessage(`${bundleName} uninstalled successfully!`);
-      
+
       // Refresh installed bundles list
       await fetchInstalledBundles();
       setTimeout(() => setProgressMessage(null), 2000);
@@ -404,8 +404,8 @@ export default function BundlesView() {
       <div className="view-header">
         <h1 className="section-title">Bundles</h1>
         {installedBundles.length > 0 && (
-          <button 
-            className="button button-primary" 
+          <button
+            className="button button-primary"
             onClick={() => setShowBundleBrowser(true)}
           >
             <span>+</span> Add Bundle
@@ -441,8 +441,8 @@ export default function BundlesView() {
           </svg>
           <h2>No bundles installed</h2>
           <p>Install bundles to set up complete application stacks.</p>
-          <button 
-            className="button button-primary" 
+          <button
+            className="button button-primary"
             onClick={() => setShowBundleBrowser(true)}
           >
             Browse Bundles
@@ -457,7 +457,7 @@ export default function BundlesView() {
                 <div className="bundle-header">
                   <h3 className="bundle-name">{bundle.name || 'Unnamed Bundle'}</h3>
                 </div>
-                
+
                 <div className="bundle-details">
                   {bundle.modules.length > 0 && (
                     <div className="bundle-section">
@@ -469,7 +469,7 @@ export default function BundlesView() {
                       </ul>
                     </div>
                   )}
-                  
+
                   {bundle.exposures.length > 0 && (
                     <div className="bundle-section">
                       <p className="section-label">Exposures ({bundle.exposures.length})</p>
@@ -480,7 +480,7 @@ export default function BundlesView() {
                       </ul>
                     </div>
                   )}
-                  
+
                   {bundle.links.length > 0 && (
                     <div className="bundle-section">
                       <p className="section-label">Links ({bundle.links.length})</p>
@@ -492,7 +492,7 @@ export default function BundlesView() {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="bundle-actions">
                   <button
                     className="button button-danger"

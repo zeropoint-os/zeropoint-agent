@@ -14,6 +14,7 @@ interface CatalogBrowserProps {
 export default function CatalogBrowser({ filterType, onSelect, onClose }: CatalogBrowserProps) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -21,8 +22,25 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
   const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
-    fetchCatalog();
+    updateAndFetchCatalog();
   }, [filterType]);
+
+  const updateCatalog = async () => {
+    try {
+      setUpdating(true);
+      await catalogApi.catalogsUpdatePost();
+    } catch (err) {
+      console.error('Error updating catalog:', err);
+      // Don't fail - continue with fetch anyway
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const updateAndFetchCatalog = async () => {
+    await updateCatalog();
+    await fetchCatalog();
+  };
 
   const fetchCatalog = async () => {
     try {
@@ -31,11 +49,11 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
 
       if (filterType === 'bundles') {
         const bundles = await catalogApi.catalogsBundlesGet({});
-        catalogItems = bundles;
+        catalogItems = bundles || [];
       } else {
         // Default to modules
         const modules = await catalogApi.catalogsModulesGet({});
-        catalogItems = modules;
+        catalogItems = modules || [];
       }
 
       setItems(catalogItems);
@@ -73,26 +91,34 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="catalog-search-input"
+            disabled={loading || updating}
           />
+          <button
+            className="button button-secondary"
+            onClick={fetchCatalog}
+            disabled={loading || updating}
+          >
+            {updating ? 'Updating...' : 'Refresh'}
+          </button>
         </div>
 
-        {loading && (
+        {(loading || updating) && (
           <div className="catalog-browser-loading">
             <div className="spinner"></div>
-            <p>Loading catalog...</p>
+            <p>{updating ? 'Updating catalog...' : 'Loading catalog...'}</p>
           </div>
         )}
 
         {error && (
           <div className="catalog-browser-error">
             <p className="error-message">{error}</p>
-            <button className="button button-secondary" onClick={fetchCatalog}>
+            <button className="button button-secondary" onClick={updateAndFetchCatalog}>
               Retry
             </button>
           </div>
         )}
 
-        {!loading && !error && filteredItems.length === 0 && (
+        {!loading && !updating && !error && filteredItems.length === 0 && (
           <div className="catalog-browser-empty">
             <p>
               {searchTerm
@@ -102,7 +128,7 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
           </div>
         )}
 
-        {!loading && !error && filteredItems.length > 0 && (
+        {!loading && !updating && !error && filteredItems.length > 0 && (
           <div className="catalog-browser-list">
             {filteredItems.map((item, idx) => {
               const key = item.name || `item-${idx}`;

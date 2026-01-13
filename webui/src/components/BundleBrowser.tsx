@@ -20,21 +20,40 @@ interface BundleBrowserProps {
 export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrowserProps) {
   const [bundles, setBundles] = useState<Bundle[]>([]);
   const [loading, setLoading] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      fetchBundles();
+      updateAndFetchBundles();
     }
   }, [isOpen]);
+
+  const updateCatalog = async () => {
+    try {
+      setUpdating(true);
+      const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
+      await catalogApi.catalogsUpdatePost();
+    } catch (err) {
+      console.error('Error updating catalog:', err);
+      // Don't fail - continue with fetch anyway
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const updateAndFetchBundles = async () => {
+    await updateCatalog();
+    await fetchBundles();
+  };
 
   const fetchBundles = async () => {
     try {
       setLoading(true);
       const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
       const bundleList = await catalogApi.catalogsBundlesGet();
-      setBundles(bundleList);
+      setBundles(bundleList || []);
       setError(null);
     } catch (err) {
       console.error('Error loading bundles:', err);
@@ -72,26 +91,34 @@ export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrows
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="catalog-search-input"
+            disabled={loading || updating}
           />
+          <button
+            className="button button-secondary"
+            onClick={fetchBundles}
+            disabled={loading || updating}
+          >
+            {updating ? 'Updating...' : 'Refresh'}
+          </button>
         </div>
 
-        {loading && (
+        {(loading || updating) && (
           <div className="catalog-browser-loading">
             <div className="spinner"></div>
-            <p>Loading bundles...</p>
+            <p>{updating ? 'Updating catalog...' : 'Loading bundles...'}</p>
           </div>
         )}
 
         {error && (
           <div className="catalog-browser-error">
             <p className="error-message">{error}</p>
-            <button className="button button-secondary" onClick={fetchBundles}>
+            <button className="button button-secondary" onClick={updateAndFetchBundles}>
               Retry
             </button>
           </div>
         )}
 
-        {!loading && !error && filteredBundles.length === 0 && (
+        {!loading && !updating && !error && filteredBundles.length === 0 && (
           <div className="catalog-browser-empty">
             <p>
               {searchTerm
@@ -101,7 +128,7 @@ export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrows
           </div>
         )}
 
-        {!loading && !error && filteredBundles.length > 0 && (
+        {!loading && !updating && !error && filteredBundles.length > 0 && (
           <div className="catalog-browser-list">
             {filteredBundles.map((bundle, idx) => {
               const key = bundle.name || `bundle-${idx}`;
