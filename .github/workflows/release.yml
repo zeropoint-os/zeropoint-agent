@@ -49,9 +49,17 @@ jobs:
             -o zeropoint-agent \
             ./cmd/zeropoint-agent
       
+      - name: Build web UI
+        run: |
+          npm install --prefix webui
+          npm run build --prefix webui -- --mode production
+      
       - name: Create tarball
         run: |
-          tar -czf zeropoint-agent-${{ matrix.suffix }}.tar.gz zeropoint-agent
+          mkdir -p dist/zeropoint-agent
+          cp zeropoint-agent dist/zeropoint-agent/
+          if [ -d "webui/dist" ]; then cp -r webui/dist dist/zeropoint-agent/web; fi
+          tar -czf zeropoint-agent-${{ matrix.suffix }}.tar.gz -C dist zeropoint-agent
       
       - name: Generate OpenAPI spec
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
