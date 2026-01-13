@@ -287,8 +287,9 @@ func BuildSnapshotFromExposures(version string, exposures []*Exposure) (*cache.S
 
 // makeRouteConfigFromExposures creates a route configuration from HTTP exposures
 func makeRouteConfigFromExposures(exposures []*Exposure) *route.RouteConfiguration {
-	virtualHosts := make([]*route.VirtualHost, 0, len(exposures))
+	virtualHosts := make([]*route.VirtualHost, 0, len(exposures)+1) // +1 for catch-all
 
+	// Add hostname-based virtual hosts for mDNS access
 	for _, exp := range exposures {
 		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
 
@@ -330,6 +331,63 @@ func makeRouteConfigFromExposures(exposures []*Exposure) *route.RouteConfigurati
 		}
 		virtualHosts = append(virtualHosts, virtualHost)
 	}
+
+	// Add catch-all virtual host for IP/path-based access
+	// Routes like /openwebui-http/* to the appropriate exposure
+	pathRoutes := make([]*route.Route, 0, len(exposures)+1)
+	for _, exp := range exposures {
+		clusterName := fmt.Sprintf("cluster_%s", exp.ID)
+		pathPrefix := fmt.Sprintf("/%s/", exp.Hostname)
+
+		pathRoutes = append(pathRoutes, &route.Route{
+			Match: &route.RouteMatch{
+				PathSpecifier: &route.RouteMatch_Prefix{
+					Prefix: pathPrefix,
+				},
+			},
+			Action: &route.Route_Route{
+				Route: &route.RouteAction{
+					ClusterSpecifier: &route.RouteAction_Cluster{
+						Cluster: clusterName,
+					},
+					// Strip the exposure path prefix before sending to backend
+					// e.g., /openwebui-http/api/tags → /api/tags
+					PrefixRewrite: "/",
+					// Set long timeouts for AI model downloads and streaming
+					Timeout:     durationpb.New(0),                // Disable request timeout (infinite)
+					IdleTimeout: durationpb.New(300 * 1000000000), // 5 minutes idle timeout
+					// Enable WebSocket upgrade support
+					UpgradeConfigs: []*route.RouteAction_UpgradeConfig{
+						{
+							UpgradeType: "websocket",
+							Enabled:     &wrapperspb.BoolValue{Value: true},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	// Add a catch-all route that returns 404
+	pathRoutes = append(pathRoutes, &route.Route{
+		Match: &route.RouteMatch{
+			PathSpecifier: &route.RouteMatch_Prefix{
+				Prefix: "/",
+			},
+		},
+		Action: &route.Route_DirectResponse{
+			DirectResponse: &route.DirectResponseAction{
+				Status: 404,
+			},
+		},
+	})
+
+	catchAllVirtualHost := &route.VirtualHost{
+		Name:    "catch_all",
+		Domains: []string{"*"}, // Match any domain/IP
+		Routes:  pathRoutes,
+	}
+	virtualHosts = append(virtualHosts, catchAllVirtualHost)
 
 	return &route.RouteConfiguration{
 		Name:         "http_routes",
