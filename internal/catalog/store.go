@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	internalPaths "zeropoint-agent/internal"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +30,7 @@ type Store struct {
 // NewStore creates a new catalog store
 func NewStore(logger *slog.Logger) *Store {
 	return &Store{
-		catalogPath: catalogDir,
+		catalogPath: filepath.Join(internalPaths.GetStorageRoot(), catalogDir),
 		logger:      logger,
 	}
 }

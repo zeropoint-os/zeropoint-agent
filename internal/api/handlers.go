@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/system"
@@ -831,7 +832,7 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 	req.ModuleID = moduleName
 
 	// Check if module already exists
-	modulesDir := modules.GetModulesDir()
+	modulesDir := internalPaths.GetModulesDir()
 	modulePath := filepath.Join(modulesDir, moduleName)
 	if _, err := os.Stat(modulePath); err == nil {
 		http.Error(w, fmt.Sprintf("module '%s' already exists", moduleName), http.StatusConflict)
@@ -953,7 +954,7 @@ func (h *ModuleHandlers) ListModules(w http.ResponseWriter, r *http.Request) {
 
 // discoverModules scans the modules/ directory for installed modules
 func (h *ModuleHandlers) discoverModules(ctx context.Context) ([]Module, error) {
-	modulesDir := modules.GetModulesDir()
+	modulesDir := internalPaths.GetModulesDir()
 	var result []Module
 
 	entries, err := os.ReadDir(modulesDir)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/terraform"
 
 	"github.com/moby/moby/client"
@@ -66,7 +67,7 @@ func (u *Uninstaller) Uninstall(req UninstallRequest, progress ProgressCallback)
 	}
 
 	// Destroy with auto-approve
-	moduleStoragePath := filepath.Join(GetDataDir(), req.ModuleID)
+	moduleStoragePath := filepath.Join(internalPaths.GetDataDir(), req.ModuleID)
 	absModuleStoragePath, err := filepath.Abs(moduleStoragePath)
 	if err != nil {
 		// If we can't get absolute path, try with relative (destroy should still work)

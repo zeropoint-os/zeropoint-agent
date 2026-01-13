@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"zeropoint-agent/internal/modules"
+	internalPaths "zeropoint-agent/internal"
 )
 
 const bootstrapTemplate = `node:
@@ -47,7 +47,7 @@ admin:
 // GetBootstrapPath returns the path to the Envoy bootstrap configuration file.
 // Creates the file if it doesn't exist.
 func GetBootstrapPath(xdsHost string, xdsPort int) (string, error) {
-	envoyDir := filepath.Join(modules.GetStorageRoot(), "envoy")
+	envoyDir := filepath.Join(internalPaths.GetStorageRoot(), "envoy")
 
 	// Convert to absolute path for Docker bind mount
 	absEnvoyDir, err := filepath.Abs(envoyDir)

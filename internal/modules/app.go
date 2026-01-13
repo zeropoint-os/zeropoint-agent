@@ -3,8 +3,6 @@ package modules
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/moby/moby/client"
 )
@@ -52,25 +50,6 @@ const (
 	StateCrashed = "crashed"
 	StateUnknown = "unknown"
 )
-
-// GetStorageRoot returns the storage root directory from environment or default
-func GetStorageRoot() string {
-	root := os.Getenv("MODULE_STORAGE_ROOT")
-	if root == "" {
-		return "."
-	}
-	return root
-}
-
-// GetModulesDir returns the modules directory path
-func GetModulesDir() string {
-	return filepath.Join(GetStorageRoot(), "modules")
-}
-
-// GetDataDir returns the data directory path for module storage
-func GetDataDir() string {
-	return filepath.Join(GetStorageRoot(), "data", "modules")
-}
 
 // GetContainerStatus queries Docker to get the container's runtime state
 func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) error {

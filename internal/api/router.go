@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
@@ -32,7 +33,7 @@ type HealthResponse struct {
 }
 
 func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
-	modulesDir := modules.GetModulesDir()
+	modulesDir := internalPaths.GetModulesDir()
 
 	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
 	uninstaller := modules.NewUninstaller(dockerClient, modulesDir, logger)

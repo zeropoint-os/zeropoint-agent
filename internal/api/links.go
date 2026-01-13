@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/network"
 
 	"github.com/moby/moby/client"
@@ -42,10 +43,7 @@ type LinkStore struct {
 
 // NewLinkStore creates a new link store
 func NewLinkStore(dockerClient *client.Client, logger *slog.Logger) (*LinkStore, error) {
-	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
-	if storageRoot == "" {
-		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
-	}
+	storageRoot := internalPaths.GetStorageRoot()
 
 	// Ensure storage directory exists
 	if err := os.MkdirAll(storageRoot, 0755); err != nil {
