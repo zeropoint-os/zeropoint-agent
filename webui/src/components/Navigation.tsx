@@ -17,6 +17,17 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
+    id: 'bundles',
+    label: 'Bundles',
+    path: '/bundles',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M6.2 2h11.6c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H6.2c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2z"></path>
+        <path d="M12 10v6M9 13h6"></path>
+      </svg>
+    ),
+  },
+  {
     id: 'modules',
     label: 'Modules',
     path: '/',
@@ -48,28 +59,6 @@ const navItems: NavItem[] = [
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
         <circle cx="12" cy="12" r="3"></circle>
-      </svg>
-    ),
-  },
-  {
-    id: 'catalog',
-    label: 'Catalog',
-    path: '/catalog',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-      </svg>
-    ),
-  },
-  {
-    id: 'bundles',
-    label: 'Bundles',
-    path: '/bundles',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M6.2 2h11.6c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H6.2c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2z"></path>
-        <path d="M12 10v6M9 13h6"></path>
       </svg>
     ),
   },

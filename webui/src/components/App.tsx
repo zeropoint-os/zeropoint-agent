@@ -7,10 +7,9 @@ import Navigation from './Navigation';
 import ModulesView from '../views/ModulesView';
 import LinksView from '../views/LinksView';
 import ExposuresView from '../views/ExposuresView';
-import CatalogView from '../views/CatalogView';
 import BundlesView from '../views/BundlesView';
 
-type ViewType = 'modules' | 'links' | 'exposures' | 'catalog' | 'bundles';
+type ViewType = 'modules' | 'links' | 'exposures' | 'bundles';
 
 export default function App() {
   const navigate = useNavigate();
@@ -28,7 +27,7 @@ export default function App() {
     const path = location.pathname;
     if (path === '/') return 'modules';
     const view = path.substring(1) as ViewType;
-    const validViews: ViewType[] = ['modules', 'links', 'exposures', 'catalog', 'bundles'];
+    const validViews: ViewType[] = ['modules', 'links', 'exposures', 'bundles'];
     return validViews.includes(view) ? view : 'modules';
   };
 
@@ -73,7 +72,6 @@ export default function App() {
           <Route path="/modules" element={<ModulesView />} />
           <Route path="/links" element={<LinksView />} />
           <Route path="/exposures" element={<ExposuresView />} />
-          <Route path="/catalog" element={<CatalogView />} />
           <Route path="/bundles" element={<BundlesView />} />
         </Routes>
       </main>

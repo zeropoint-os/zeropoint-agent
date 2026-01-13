@@ -332,6 +332,13 @@
   font-weight: 600;
 }
 
+.bundle-description {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-md);
+  line-height: 1.4;
+}
+
 .bundle-version {
   font-size: 0.85rem;
   color: var(--color-text-secondary);
