@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/terraform"
 )
 
@@ -161,7 +162,7 @@ func parseMounts(raw map[string]interface{}, moduleID string, containerName stri
 		}
 
 		// Generate host path: /data/modules/{module_id}/{container}/{mount_name}
-		hostPath := filepath.Join(GetDataDir(), moduleID, containerName, mountName)
+		hostPath := filepath.Join(internalPaths.GetDataDir(), moduleID, containerName, mountName)
 
 		mounts[mountName] = Mount{
 			ContainerPath: containerPath,

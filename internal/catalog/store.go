@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	internalPaths "zeropoint-agent/internal"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +30,7 @@ type Store struct {
 // NewStore creates a new catalog store
 func NewStore(logger *slog.Logger) *Store {
 	return &Store{
-		catalogPath: catalogDir,
+		catalogPath: filepath.Join(internalPaths.GetStorageRoot(), catalogDir),
 		logger:      logger,
 	}
 }
@@ -76,6 +78,11 @@ func (s *Store) GetModules() ([]CatalogModule, error) {
 	modulesPath := filepath.Join(s.catalogPath, modulesDir)
 	entries, err := os.ReadDir(modulesPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Catalog not initialized yet - return empty list instead of error
+			s.logger.Debug("modules directory not found, returning empty list", "path", modulesPath)
+			return []CatalogModule{}, nil
+		}
 		return nil, fmt.Errorf("failed to read modules directory: %w", err)
 	}
 
@@ -121,6 +128,11 @@ func (s *Store) GetBundles() ([]CatalogBundle, error) {
 	bundlesPath := filepath.Join(s.catalogPath, bundlesDir)
 	entries, err := os.ReadDir(bundlesPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Catalog not initialized yet - return empty list instead of error
+			s.logger.Debug("bundles directory not found, returning empty list", "path", bundlesPath)
+			return []CatalogBundle{}, nil
+		}
 		return nil, fmt.Errorf("failed to read bundles directory: %w", err)
 	}
 

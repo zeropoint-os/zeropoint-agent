@@ -3,13 +3,57 @@
 	"tasks": [
 		{
 			"type": "shell",
-			"label": "build",
+			"label": "go: build",
 			"command": "VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo '0.0.0') && go build -v -ldflags=\"-X main.version=$VERSION\" -o bin/zeropoint-agent ./cmd/zeropoint-agent",
 			"group": "build",
 			"problemMatcher": [
 				"$go"
 			],
 			"isBackground": false
+		},
+		{
+			"type": "npm",
+			"script": "build",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build",
+			"detail": "Build webui"
+		},
+		{
+			"type": "npm",
+			"script": "watch",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: watch",
+			"detail": "Watch webui and rebuild on changes"
+		},
+		{
+			"type": "shell",
+			"label": "build: all",
+			"dependsOn": [
+				"go: build",
+				"npm: build"
+			],
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Build all"
+		},
+		{
+			"label": "waitForServer",
+			"type": "shell",
+			"command": "while ! nc -z localhost 2370; do sleep 1; done",
+			"group": "none",
+			"dependsOn": ["npm: build"],
+			"problemMatcher": {
+				"base": "$tsc",
+				"background": {
+					"beginsPattern": ".*",
+					"endsPattern": ".*"
+				}
+			}
 		}
 	]
 }

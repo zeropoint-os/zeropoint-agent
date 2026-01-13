@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/mdns"
 	"zeropoint-agent/internal/network"
 	"zeropoint-agent/internal/xds"
@@ -58,10 +59,7 @@ type ExposureStore struct {
 
 // NewExposureStore creates a new exposure store
 func NewExposureStore(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (*ExposureStore, error) {
-	storageRoot := os.Getenv("MODULE_STORAGE_ROOT")
-	if storageRoot == "" {
-		storageRoot = filepath.Join(os.Getenv("HOME"), ".zeropoint-agent")
-	}
+	storageRoot := internalPaths.GetStorageRoot()
 
 	// Ensure storage directory exists
 	if err := os.MkdirAll(storageRoot, 0755); err != nil {

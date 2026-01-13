@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/system"
 	"zeropoint-agent/internal/terraform"
 	"zeropoint-agent/internal/validator"
@@ -158,7 +159,7 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 	}
 
 	// Create module storage root directory
-	moduleStoragePath := filepath.Join(GetDataDir(), req.ModuleID)
+	moduleStoragePath := filepath.Join(internalPaths.GetDataDir(), req.ModuleID)
 	if err := os.MkdirAll(moduleStoragePath, 0755); err != nil {
 		logger.Error("failed to create module storage directory", "path", moduleStoragePath, "error", err)
 		return fmt.Errorf("failed to create module storage directory: %w", err)

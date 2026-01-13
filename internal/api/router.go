@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
+	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
@@ -30,7 +33,7 @@ type HealthResponse struct {
 }
 
 func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
-	modulesDir := modules.GetModulesDir()
+	modulesDir := internalPaths.GetModulesDir()
 
 	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
 	uninstaller := modules.NewUninstaller(dockerClient, modulesDir, logger)
@@ -68,30 +71,40 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	r := mux.NewRouter()
 
+	// API routes MUST be registered before the static file server
 	// Health endpoint
-	r.HandleFunc("/health", env.healthHandler).Methods(http.MethodGet)
+	r.HandleFunc("/api/health", env.healthHandler).Methods(http.MethodGet)
 
 	// Module endpoints
-	r.HandleFunc("/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
-	r.HandleFunc("/modules/{name}", moduleHandlers.InstallModule).Methods(http.MethodPost)
-	r.HandleFunc("/modules/{name}", moduleHandlers.UninstallModule).Methods(http.MethodDelete)
-	r.HandleFunc("/modules/{module_id}/inspect", inspectHandlers.InspectModule).Methods(http.MethodGet)
+	r.HandleFunc("/api/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
+	r.HandleFunc("/api/modules/{name}", moduleHandlers.InstallModule).Methods(http.MethodPost)
+	r.HandleFunc("/api/modules/{name}", moduleHandlers.UninstallModule).Methods(http.MethodDelete)
+	r.HandleFunc("/api/modules/{module_id}/inspect", inspectHandlers.InspectModule).Methods(http.MethodGet)
 
 	// Link endpoints
-	linkHandlers.RegisterRoutes(r)
+	r.HandleFunc("/api/links", linkHandlers.ListLinks).Methods(http.MethodGet)
+	r.HandleFunc("/api/links/{id}", linkHandlers.GetLink).Methods(http.MethodGet)
+	r.HandleFunc("/api/links/{id}", linkHandlers.CreateOrUpdateLink).Methods(http.MethodPost)
+	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLink).Methods(http.MethodDelete)
 
 	// Exposure endpoints
-	r.HandleFunc("/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/api/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
 
 	// Catalog endpoints
-	r.HandleFunc("/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
-	r.HandleFunc("/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/modules/{module_name}", catalogHandlers.HandleGetModule).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
-	r.HandleFunc("/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
+	r.HandleFunc("/api/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/modules/{module_name}", catalogHandlers.HandleGetModule).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
+	r.HandleFunc("/api/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
+
+	// Web UI - serve static files as fallback after API routes
+	webDir := getWebDir()
+	if webDir != "" {
+		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
+	}
 
 	return r, nil
 }
@@ -119,4 +132,30 @@ func (e *apiEnv) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// getWebDir finds the web UI directory
+func getWebDir() string {
+	// Try relative to executable
+	if webDir := "web"; fileExists(webDir) {
+		return webDir
+	}
+
+	// Try relative to working directory
+	if webDir := filepath.Join(".", "web"); fileExists(webDir) {
+		return webDir
+	}
+
+	// Try standard installation location
+	if webDir := filepath.Join("/app", "web"); fileExists(webDir) {
+		return webDir
+	}
+
+	return ""
+}
+
+// fileExists checks if a directory exists
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
