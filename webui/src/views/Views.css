@@ -345,6 +345,41 @@
   margin-bottom: var(--spacing-md);
 }
 
+.bundle-details {
+  margin-bottom: var(--spacing-md);
+}
+
+.bundle-section {
+  margin-bottom: var(--spacing-sm);
+}
+
+.section-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.bundle-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bundle-list li {
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  padding-left: 1rem;
+  position: relative;
+}
+
+.bundle-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+}
+
 .bundle-modules {
   margin-bottom: var(--spacing-md);
 }

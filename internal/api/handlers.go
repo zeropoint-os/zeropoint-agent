@@ -831,10 +831,11 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 	// Use path parameter as module_id
 	req.ModuleID = moduleName
 
-	// Check if module already exists
+	// Check if module already exists (must have main.tf to be valid)
 	modulesDir := internalPaths.GetModulesDir()
 	modulePath := filepath.Join(modulesDir, moduleName)
-	if _, err := os.Stat(modulePath); err == nil {
+	mainTfPath := filepath.Join(modulePath, "main.tf")
+	if _, err := os.Stat(mainTfPath); err == nil {
 		http.Error(w, fmt.Sprintf("module '%s' already exists", moduleName), http.StatusConflict)
 		return
 	}
