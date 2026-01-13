@@ -1,29 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { LinksApi, Configuration, ApiLink } from 'artifacts/clients/typescript';
 import CreateLinkDialog from '../components/CreateLinkDialog';
 import './Views.css';
 
-interface LinkReference {
-  [key: string]: string;
-}
-
-interface LinkModule {
-  [key: string]: any;
-}
-
-interface Link {
-  id?: string;
-  modules?: { [key: string]: LinkModule };
-  references?: { [key: string]: LinkReference };
-  shared_networks?: string[];
-  dependency_order?: string[];
-  created_at?: string;
-  updated_at?: string;
-  tags?: string[];
-  [key: string]: any;
-}
+type Link = ApiLink;
 
 export default function LinksView() {
-  const [links, setLinks] = useState<Link[]>([]);
+  const [links, setLinks] = useState<ApiLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingLink, setDeletingLink] = useState<string | null>(null);
@@ -36,12 +19,9 @@ export default function LinksView() {
   const fetchLinks = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/links');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch links: ${response.statusText}`);
-      }
-      const data = await response.json();
-      const linkList = Array.isArray(data) ? data : (data.links || data.data || []);
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+      const response = await linksApi.linksGet();
+      const linkList = response.links ?? [];
       setLinks(linkList);
       setError(null);
     } catch (err) {
@@ -79,13 +59,8 @@ export default function LinksView() {
       setDeletingLink(linkId);
       setError(null);
 
-      const response = await fetch(`/api/links/${linkId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete link: ${response.statusText}`);
-      }
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+      await linksApi.linksIdDelete({ id: linkId });
 
       // Refresh links list
       await fetchLinks();
@@ -142,8 +117,8 @@ export default function LinksView() {
           {links.map((link) => {
             const linkId = link.id || 'unknown';
             const moduleIds = Object.keys(link.modules || {});
-            const createdDate = link.created_at 
-              ? new Date(link.created_at).toLocaleDateString()
+            const createdDate = link.createdAt 
+              ? new Date(link.createdAt).toLocaleDateString()
               : 'N/A';
 
             return (
@@ -176,14 +151,14 @@ export default function LinksView() {
                   </div>
                 </div>
 
-                {link.dependency_order && link.dependency_order.length > 0 && (
+                {link.dependencyOrder && link.dependencyOrder.length > 0 && (
                   <div className="link-dependencies-section">
                     <h4 className="section-label">Dependency Order</h4>
                     <div className="dependency-flow">
-                      {link.dependency_order.map((dep, idx) => (
+                      {link.dependencyOrder.map((dep, idx) => (
                         <React.Fragment key={dep}>
                           <span className="dependency-item">{dep}</span>
-                          {idx < link.dependency_order!.length - 1 && (
+                          {idx < link.dependencyOrder!.length - 1 && (
                             <span className="dependency-arrow">→</span>
                           )}
                         </React.Fragment>
@@ -192,11 +167,11 @@ export default function LinksView() {
                   </div>
                 )}
 
-                {link.shared_networks && link.shared_networks.length > 0 && (
+                {link.sharedNetworks && link.sharedNetworks.length > 0 && (
                   <div className="link-networks-section">
                     <h4 className="section-label">Networks</h4>
                     <div className="networks-list">
-                      {link.shared_networks.map((network) => (
+                      {link.sharedNetworks.map((network) => (
                         <span key={network} className="tag">{network}</span>
                       ))}
                     </div>

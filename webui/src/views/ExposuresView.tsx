@@ -1,34 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { ExposuresApi, ModulesApi, Configuration, ApiModule, ApiExposureResponse } from 'artifacts/clients/typescript';
 import CreateExposureDialog from '../components/CreateExposureDialog';
 import './Views.css';
 
-interface Module {
-  id?: string;
-  module_path?: string;
-  state?: string;
-  container_id?: string;
-  container_name?: string;
-  ip_address?: string;
-  containers?: any;
-  tags?: string[];
-  [key: string]: any;
-}
-
-interface Exposure {
-  id?: string;
-  module_id?: string;
-  protocol?: string;
-  hostname?: string;
-  container_port?: number;
-  status?: string;
-  created_at?: string;
-  tags?: string[];
-  [key: string]: any;
-}
+type Module = ApiModule;
+type Exposure = ApiExposureResponse;
 
 export default function ExposuresView() {
-  const [exposures, setExposures] = useState<Exposure[]>([]);
-  const [modules, setModules] = useState<Module[]>([]);
+  const [exposures, setExposures] = useState<ApiExposureResponse[]>([]);
+  const [modules, setModules] = useState<ApiModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -43,22 +23,17 @@ export default function ExposuresView() {
     try {
       setLoading(true);
       
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+      
       // Fetch exposures
-      const exposuresResponse = await fetch('/api/exposures');
-      if (!exposuresResponse.ok) {
-        throw new Error(`Failed to fetch exposures: ${exposuresResponse.statusText}`);
-      }
-      const exposuresData = await exposuresResponse.json();
-      const exposureList = Array.isArray(exposuresData) ? exposuresData : (exposuresData.exposures || exposuresData.data || []);
+      const exposuresResponse = await exposuresApi.exposuresGet();
+      const exposureList = exposuresResponse.exposures ?? [];
       setExposures(exposureList);
 
       // Fetch modules
-      const modulesResponse = await fetch('/api/modules');
-      if (!modulesResponse.ok) {
-        throw new Error(`Failed to fetch modules: ${modulesResponse.statusText}`);
-      }
-      const modulesData = await modulesResponse.json();
-      const modulesList = Array.isArray(modulesData) ? modulesData : (modulesData.modules || modulesData.data || []);
+      const modulesResponse = await modulesApi.modulesGet();
+      const modulesList = modulesResponse.modules ?? [];
       setModules(modulesList);
 
       setError(null);
@@ -83,17 +58,16 @@ export default function ExposuresView() {
     container_port: number;
   }) => {
     try {
-      const response = await fetch(`/api/exposures/${data.module_id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      await exposuresApi.exposuresExposureIdPost({
+        exposureId: data.module_id,
+        apiCreateExposureRequest: {
+          moduleId: data.module_id,
+          hostname: data.hostname,
+          protocol: data.protocol,
+          containerPort: data.container_port,
         },
-        body: JSON.stringify(data),
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to create exposure: ${response.statusText}`);
-      }
 
       setSuccessMessage(`Exposure for "${data.module_id}" created successfully`);
       setTimeout(() => setSuccessMessage(null), 4000);
@@ -115,13 +89,8 @@ export default function ExposuresView() {
       setDeletingExposure(exposureId);
       setError(null);
 
-      const response = await fetch(`/api/exposures/${exposureId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete exposure: ${response.statusText}`);
-      }
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      await exposuresApi.exposuresExposureIdDelete({ exposureId });
 
       setSuccessMessage(`Exposure "${exposureId}" deleted successfully`);
       setTimeout(() => setSuccessMessage(null), 4000);
@@ -194,17 +163,17 @@ export default function ExposuresView() {
         <div className="grid grid-2">
           {exposures.map((exposure, idx) => {
             const exposureId = exposure.id || `exposure-${idx}`;
-            const url = exposure.hostname && exposure.container_port 
-              ? `${exposure.protocol || 'http'}://${exposure.hostname}.local:${exposure.container_port}`
+            const url = exposure.hostname && exposure.containerPort 
+              ? `${exposure.protocol || 'http'}://${exposure.hostname}.local:${exposure.containerPort}`
               : 'N/A';
-            const createdDate = exposure.created_at 
-              ? new Date(exposure.created_at).toLocaleDateString()
+            const createdDate = exposure.createdAt 
+              ? new Date(exposure.createdAt).toLocaleDateString()
               : 'N/A';
             return (
               <div key={exposureId} className="card">
                 <div className="exposure-header">
                   <div>
-                    <h3 className="exposure-module">{exposure.module_id || 'Unknown'}</h3>
+                    <h3 className="exposure-module">{exposure.moduleId || 'Unknown'}</h3>
                     <p className="exposure-id">{exposure.id}</p>
                   </div>
                   <span className={`status-badge status-${(exposure.status || 'unknown').toLowerCase()}`}>
@@ -230,7 +199,7 @@ export default function ExposuresView() {
 
                 <div className="exposure-detail">
                   <span className="detail-label">Port:</span>
-                  <span className="detail-value">{exposure.container_port || 'N/A'}</span>
+                  <span className="detail-value">{exposure.containerPort || 'N/A'}</span>
                 </div>
 
                 <div className="exposure-detail">

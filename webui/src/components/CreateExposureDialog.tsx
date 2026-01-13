@@ -1,17 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { ApiModule, ModulesContainer, ModulesPort } from 'artifacts/clients/typescript';
 import './CreateExposureDialog.css';
 
-interface Module {
-  id?: string;
-  module_path?: string;
-  state?: string;
-  container_id?: string;
-  container_name?: string;
-  ip_address?: string;
-  containers?: any;
-  tags?: string[];
-  [key: string]: any;
-}
+type Module = ApiModule;
 
 interface PortOption {
   name: string;

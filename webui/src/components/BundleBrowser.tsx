@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CatalogApi, Configuration } from 'artifacts/clients/typescript';
 import './BundleBrowser.css';
 
 interface Bundle {
@@ -31,12 +32,8 @@ export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrows
   const fetchBundles = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/catalogs/bundles');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch bundles: ${response.statusText}`);
-      }
-      const data = await response.json();
-      const bundleList = Array.isArray(data) ? data : (data.bundles || data.data || []);
+      const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
+      const bundleList = await catalogApi.catalogsBundlesGet();
       setBundles(bundleList);
       setError(null);
     } catch (err) {

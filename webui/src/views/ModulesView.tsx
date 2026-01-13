@@ -1,36 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ModulesApi, CatalogApi, Configuration } from 'artifacts/clients/typescript';
+import { ModulesApi, ExposuresApi, LinksApi, CatalogApi, Configuration, ApiModule, ApiExposureResponse, ApiLink } from 'artifacts/clients/typescript';
 import type { CatalogModuleResponse } from 'artifacts/clients/typescript';
 import CatalogBrowser from '../components/CatalogBrowser';
 import './Views.css';
 
-interface Module {
-  id?: string;
-  module_path?: string;
-  state?: string;
-  container_id?: string;
-  container_name?: string;
-  ip_address?: string;
-  containers?: any;
-  tags?: string[];
-  [key: string]: any;
-}
-
-interface Exposure {
-  id?: string;
-  module_id?: string;
-  protocol?: string;
-  hostname?: string;
-  container_port?: number;
-  status?: string;
-  [key: string]: any;
-}
-
-interface Link {
-  id?: string;
-  modules?: { [key: string]: any };
-  [key: string]: any;
-}
+type Module = ApiModule;
+type Exposure = ApiExposureResponse;
+type Link = ApiLink;
 
 export default function ModulesView() {
   const [modules, setModules] = useState<Module[]>([]);
@@ -46,6 +22,8 @@ export default function ModulesView() {
 
   // Initialize API clients
   const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+  const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+  const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
     fetchModulesAndExposures();
@@ -61,20 +39,14 @@ export default function ModulesView() {
       setModules(modulesList);
       
       // Fetch exposures
-      const exposuresResponse = await fetch('/api/exposures');
-      if (exposuresResponse.ok) {
-        const exposuresData = await exposuresResponse.json();
-        const exposuresList = Array.isArray(exposuresData.exposures) ? exposuresData.exposures : [];
-        setExposures(exposuresList);
-      }
+      const exposuresResponse = await exposuresApi.exposuresGet();
+      const exposuresList = exposuresResponse.exposures ?? [];
+      setExposures(exposuresList);
 
       // Fetch links
-      const linksResponse = await fetch('/api/links');
-      if (linksResponse.ok) {
-        const linksData = await linksResponse.json();
-        const linksList = Array.isArray(linksData.links) ? linksData.links : [];
-        setLinks(linksList);
-      }
+      const linksResponse = await linksApi.linksGet();
+      const linksList = linksResponse.links ?? [];
+      setLinks(linksList);
       
       setError(null);
     } catch (err) {
@@ -89,7 +61,7 @@ export default function ModulesView() {
 
   const getModuleExposure = (moduleId: string | undefined): Exposure | undefined => {
     if (!moduleId) return undefined;
-    return exposures.find(exp => exp.module_id === moduleId);
+    return exposures.find(exp => exp.moduleId === moduleId);
   };
 
   const getLinkedModules = (moduleId: string | undefined): string[] => {
@@ -114,16 +86,16 @@ export default function ModulesView() {
 
   const hasModuleDependencies = (moduleId: string | undefined): boolean => {
     if (!moduleId) return false;
-    const hasExposures = exposures.some(e => e.module_id === moduleId);
+    const hasExposures = exposures.some(e => e.moduleId === moduleId);
     const hasLinks = links.some(link => link.modules && moduleId in link.modules);
     return hasExposures || hasLinks;
   };
 
   const getExposureUrl = (exposure: Exposure): string => {
-    if (!exposure.protocol || !exposure.hostname || !exposure.container_port) {
+    if (!exposure.protocol || !exposure.hostname || !exposure.containerPort) {
       return 'N/A';
     }
-    return `${exposure.protocol}://${exposure.hostname}:${exposure.container_port}`;
+    return `${exposure.protocol}://${exposure.hostname}:${exposure.containerPort}`;
   };
 
   const getModulePorts = (module: Module): Array<{name: string; port: number; protocol: string}> => {
@@ -235,7 +207,7 @@ export default function ModulesView() {
     }
 
     // Check for exposures and links
-    const moduleExposures = exposures.filter(e => e.module_id === moduleName);
+    const moduleExposures = exposures.filter(e => e.moduleId === moduleName);
     const moduleLinks = links.filter(link => link.modules && moduleName in link.modules);
 
     if (moduleExposures.length > 0 || moduleLinks.length > 0) {
@@ -412,17 +384,17 @@ export default function ModulesView() {
                   </div>
                 </div>
 
-              {module.container_name && (
+              {module.containerName && (
                 <div className="module-detail">
                   <span className="detail-label">Container:</span>
-                  <span className="detail-value">{module.container_name}</span>
+                  <span className="detail-value">{module.containerName}</span>
                 </div>
               )}
 
-              {module.ip_address && (
+              {module.ipAddress && (
                 <div className="module-detail">
                   <span className="detail-label">IP Address:</span>
-                  <span className="detail-value">{module.ip_address}</span>
+                  <span className="detail-value">{module.ipAddress}</span>
                 </div>
               )}
 

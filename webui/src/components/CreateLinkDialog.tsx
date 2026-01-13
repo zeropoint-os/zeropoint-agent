@@ -1,30 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { ModulesApi, LinksApi, Configuration, ApiModule, ApiInputSchema, ApiOutputSchema, ApiInspectResponse } from 'artifacts/clients/typescript';
 import './CreateLinkDialog.css';
 
-interface Module {
-  id?: string;
-  [key: string]: any;
-}
-
-interface InputSchema {
-  type: string;
-  description?: string;
-  default_value?: any;
-  current_value?: any;
-  required: boolean;
-  system_managed: boolean;
-}
-
-interface OutputSchema {
-  description?: string;
-  current_value?: any;
-}
-
-interface InspectResponse {
-  module_id: string;
-  inputs: { [key: string]: InputSchema };
-  outputs: { [key: string]: OutputSchema };
-}
+type Module = ApiModule;
+type InputSchema = ApiInputSchema;
+type OutputSchema = ApiOutputSchema;
+type InspectResponse = ApiInspectResponse;
 
 interface CreateLinkDialogProps {
   isOpen: boolean;
@@ -53,12 +34,9 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
 
   const fetchModules = async () => {
     try {
-      const response = await fetch('/api/modules');
-      if (!response.ok) {
-        throw new Error('Failed to fetch modules');
-      }
-      const data = await response.json();
-      const moduleList = Array.isArray(data) ? data : (data.modules || []);
+      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+      const response = await modulesApi.modulesGet();
+      const moduleList = response.modules ?? [];
       setAllModules(moduleList);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch modules');
@@ -67,12 +45,9 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
 
   const fetchInspectData = async (moduleId: string) => {
     try {
-      const response = await fetch(`/api/modules/${moduleId}/inspect`);
-      if (!response.ok) {
-        throw new Error(`Failed to inspect module ${moduleId}`);
-      }
-      const data: InspectResponse = await response.json();
-      return data;
+      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+      const data = await modulesApi.modulesModuleIdInspectGet({ moduleId });
+      return data as unknown as InspectResponse;
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : `Failed to inspect ${moduleId}`);
     }
@@ -102,11 +77,13 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
 
       // Initialize input values for this module
       const moduleInputs: { [key: string]: string } = {};
-      Object.entries(inspect.inputs).forEach(([inputName, inputSchema]) => {
-        if (!inputSchema.system_managed) {
-          moduleInputs[inputName] = '';
-        }
-      });
+      if (inspect.inputs) {
+        Object.entries(inspect.inputs).forEach(([inputName, inputSchema]) => {
+          if (!inputSchema.systemManaged) {
+            moduleInputs[inputName] = '';
+          }
+        });
+      }
 
       setInputValues({
         ...inputValues,
@@ -190,7 +167,7 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
         modulesData[moduleId] = {};
 
         Object.entries(values).forEach(([inputName, value]) => {
-          if (value && !inputs[inputName]?.system_managed) {
+          if (value && !inputs[inputName]?.systemManaged) {
             // Wrap value in ${}
             modulesData[moduleId][inputName] = `\${${value}}`;
           }
@@ -198,20 +175,13 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
       });
 
       // POST to /api/links/{linkName}
-      const response = await fetch(`/api/links/${linkName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+      await linksApi.linksIdPost({
+        id: linkName,
+        apiCreateLinkRequest: {
+          modules: modulesData,
         },
-        body: JSON.stringify({
-          modules: modulesData
-        }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to create link: ${response.statusText}`);
-      }
 
       // Call the onCreate callback
       await onCreate({
@@ -304,9 +274,9 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
                 const otherOutputs = getAvailableOutputs(moduleId);
 
                 // Filter inputs to exclude system-managed ones
-                const userInputs = inspect
+                const userInputs = inspect && inspect.inputs
                   ? Object.entries(inspect.inputs).filter(
-                      ([_, inputSchema]) => !inputSchema.system_managed
+                      ([_, inputSchema]) => !inputSchema.systemManaged
                     )
                   : [];
 

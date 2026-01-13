@@ -1,28 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import BundleBrowser from '../components/BundleBrowser';
+import { CatalogApi, ExposuresApi, LinksApi, ModulesApi, Configuration, ApiExposureResponse, ApiLink } from 'artifacts/clients/typescript';
+import type { CatalogBundleResponse } from 'artifacts/clients/typescript';
 import './Views.css';
 
-interface Bundle {
-  name?: string;
-  description?: string;
-  modules?: string[];
-  links?: { [key: string]: any };
-  exposures?: { [key: string]: any };
-  tags?: string[];
-  [key: string]: any;
-}
-
-interface Exposure {
-  id?: string;
-  tags?: string[];
-  [key: string]: any;
-}
-
-interface Link {
-  id?: string;
-  tags?: string[];
-  [key: string]: any;
-}
+type Bundle = CatalogBundleResponse;
+type Exposure = ApiExposureResponse;
+type Link = ApiLink;
 
 export default function BundlesView() {
   const [installedBundles, setInstalledBundles] = useState<Bundle[]>([]);
@@ -39,17 +23,17 @@ export default function BundlesView() {
   const fetchInstalledBundles = async () => {
     try {
       setLoading(true);
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+      
       // Fetch all exposures and links to find installed bundles (tagged components)
-      const [exposuresRes, linksRes] = await Promise.all([
-        fetch('/api/exposures'),
-        fetch('/api/links'),
+      const [exposuresData, linksData] = await Promise.all([
+        exposuresApi.exposuresGet(),
+        linksApi.linksGet(),
       ]);
 
-      const exposuresData = exposuresRes.ok ? await exposuresRes.json() : { exposures: [] };
-      const linksData = linksRes.ok ? await linksRes.json() : { links: [] };
-
-      const exposures = Array.isArray(exposuresData.exposures) ? exposuresData.exposures : [];
-      const links = Array.isArray(linksData.links) ? linksData.links : [];
+      const exposures = exposuresData.exposures ?? [];
+      const links = linksData.links ?? [];
 
       // Collect all unique bundle names from tags
       const bundleNames = new Set<string>();
@@ -98,22 +82,18 @@ export default function BundlesView() {
       setProgressMessage(null);
 
       // Fetch the bundle definition
-      const bundleResponse = await fetch(`/api/catalogs/bundles/${bundleName}`);
-      if (!bundleResponse.ok) {
-        throw new Error(`Failed to fetch bundle: ${bundleResponse.statusText}`);
-      }
-      const bundle = await bundleResponse.json();
+      const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
+      const bundle = await catalogApi.catalogsBundlesBundleNameGet({ bundleName });
+
+      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
 
       // Step 1: Install modules
       if (bundle.modules && bundle.modules.length > 0) {
         for (const moduleName of bundle.modules) {
           setProgressMessage(`Installing module: ${moduleName}...`);
-          const moduleResponse = await fetch(`/api/modules/${moduleName}`, {
-            method: 'POST',
-          });
-          if (!moduleResponse.ok) {
-            throw new Error(`Failed to install module ${moduleName}: ${moduleResponse.statusText}`);
-          }
+          await modulesApi.modulesNamePost({ name: moduleName });
           // Wait for module to install
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
@@ -133,17 +113,13 @@ export default function BundlesView() {
             }
           }
 
-          const linkResponse = await fetch(`/api/links/${linkName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          await linksApi.linksIdPost({
+            id: linkName,
+            apiCreateLinkRequest: {
               modules: modules,
               tags: [bundleName], // Tag with bundle name
-            }),
+            },
           });
-          if (!linkResponse.ok) {
-            throw new Error(`Failed to create link ${linkName}: ${linkResponse.statusText}`);
-          }
         }
       }
 
@@ -152,19 +128,15 @@ export default function BundlesView() {
         for (const [exposureName, exposureDef] of Object.entries(bundle.exposures)) {
           setProgressMessage(`Creating exposure: ${exposureName}...`);
           const exposure = exposureDef as any;
-          const exposureResponse = await fetch(`/api/exposures/${exposureName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              module_id: exposure.module,
+          await exposuresApi.exposuresExposureIdPost({
+            exposureId: exposureName,
+            apiCreateExposureRequest: {
+              moduleId: exposure.module,
               protocol: exposure.protocol,
-              container_port: exposure.module_port,
+              containerPort: exposure.module_port,
               tags: [bundleName], // Tag with bundle name
-            }),
+            },
           });
-          if (!exposureResponse.ok) {
-            throw new Error(`Failed to create exposure ${exposureName}: ${exposureResponse.statusText}`);
-          }
         }
       }
 
@@ -200,21 +172,17 @@ export default function BundlesView() {
       setInstallingBundle(bundleName);
       setError(null);
 
+      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+
       // Fetch all components to find tagged items
-      const [exposuresRes, linksRes] = await Promise.all([
-        fetch('/api/exposures'),
-        fetch('/api/links'),
+      const [exposuresData, linksData] = await Promise.all([
+        exposuresApi.exposuresGet(),
+        linksApi.linksGet(),
       ]);
 
-      if (!exposuresRes.ok || !linksRes.ok) {
-        throw new Error('Failed to fetch bundle components');
-      }
-
-      const exposuresData = await exposuresRes.json();
-      const linksData = await linksRes.json();
-
-      const exposures = Array.isArray(exposuresData.exposures) ? exposuresData.exposures : [];
-      const links = Array.isArray(linksData.links) ? linksData.links : [];
+      const exposures = exposuresData.exposures ?? [];
+      const links = linksData.links ?? [];
 
       // Delete exposures tagged with this bundle
       const bundleExposures = exposures.filter((exp: any) => 
@@ -222,12 +190,7 @@ export default function BundlesView() {
       );
       for (const exposure of bundleExposures) {
         setProgressMessage(`Removing exposure: ${exposure.id}...`);
-        const deleteRes = await fetch(`/api/exposures/${exposure.id}`, {
-          method: 'DELETE',
-        });
-        if (!deleteRes.ok) {
-          throw new Error(`Failed to delete exposure ${exposure.id}`);
-        }
+        await exposuresApi.exposuresExposureIdDelete({ exposureId: exposure.id ?? '' });
       }
 
       // Delete links tagged with this bundle
@@ -236,12 +199,7 @@ export default function BundlesView() {
       );
       for (const link of bundleLinks) {
         setProgressMessage(`Removing link: ${link.id}...`);
-        const deleteRes = await fetch(`/api/links/${link.id}`, {
-          method: 'DELETE',
-        });
-        if (!deleteRes.ok) {
-          throw new Error(`Failed to delete link ${link.id}`);
-        }
+        await linksApi.linksIdDelete({ id: link.id ?? '' });
       }
 
       setProgressMessage(`${bundleName} uninstalled successfully!`);
