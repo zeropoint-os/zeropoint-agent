@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,13 +25,26 @@ type Service struct {
 	cancel    context.CancelFunc
 	exposures map[string]*zeroconf.Server // hostname -> server
 	mu        sync.RWMutex
+	ttl       uint32 // TTL for mDNS records in seconds
 }
 
 // NewService creates a new mDNS service announcer
 func NewService(logger *slog.Logger) *Service {
+	// Parse TTL from environment variable, default to 75 seconds
+	ttl := uint32(75)
+	if ttlEnv := os.Getenv("ZEROPOINT_MDNS_TTL"); ttlEnv != "" {
+		if parsedTTL, err := strconv.ParseUint(ttlEnv, 10, 32); err == nil {
+			ttl = uint32(parsedTTL)
+			logger.Debug("using custom mDNS TTL from environment", "ttl", ttl)
+		} else {
+			logger.Warn("invalid ZEROPOINT_MDNS_TTL value, using default", "value", ttlEnv, "default", ttl)
+		}
+	}
+
 	return &Service{
 		logger:    logger,
 		exposures: make(map[string]*zeroconf.Server),
+		ttl:       ttl,
 	}
 }
 
@@ -140,6 +154,10 @@ func (s *Service) Register(ctx context.Context, port int) error {
 	if err != nil {
 		return fmt.Errorf("failed to register mDNS service: %w", err)
 	}
+
+	// Set TTL for mobile compatibility
+	server.TTL(s.ttl)
+	s.logger.Debug("set mDNS TTL for agent", "ttl", s.ttl)
 
 	s.server = server
 
@@ -253,6 +271,8 @@ func (s *Service) RegisterExposure(hostname string, port int) error {
 	// e.g., "openwebui-zeropoint-bright-river.local" -> "openwebui-zeropoint-bright-river"
 	instanceName := strings.TrimSuffix(hostname, ".local")
 
+	s.logger.Debug("registering mDNS exposure", "hostname", hostname, "instanceName", instanceName, "port", port, "ips", ips)
+
 	server, err := zeroconf.RegisterProxy(
 		instanceName, // instance name (without .local)
 		"_http._tcp", // service type (HTTP service)
@@ -270,8 +290,11 @@ func (s *Service) RegisterExposure(hostname string, port int) error {
 		return fmt.Errorf("failed to register mDNS exposure: %w", err)
 	}
 
+	// Set TTL for mobile compatibility
+	server.TTL(s.ttl)
+
 	s.exposures[hostname] = server
-	s.logger.Info("mDNS exposure registered", "hostname", hostname, "port", port)
+	s.logger.Info("mDNS exposure registered", "hostname", hostname, "instanceName", instanceName, "port", port, "ips", ips, "ttl", s.ttl)
 	return nil
 }
 
@@ -344,7 +367,7 @@ type ExposureInfo struct {
 
 // supervise monitors the mDNS service and refreshes TTL
 func (s *Service) supervise() {
-	ticker := time.NewTicker(60 * time.Second) // Refresh TTL every 60 seconds
+	ticker := time.NewTicker(30 * time.Second) // Refresh TTL every 30 seconds (more frequent for mobile compatibility)
 	defer ticker.Stop()
 
 	for {
@@ -384,6 +407,9 @@ func (s *Service) refreshAgent() {
 		return
 	}
 
+	// Set TTL for mobile compatibility
+	newServer.TTL(s.ttl)
+
 	// Update to new server
 	s.server = newServer
 
@@ -398,12 +424,20 @@ func (s *Service) refreshAllExposures() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if len(s.exposures) == 0 {
+		s.logger.Debug("no exposures to refresh")
+		return
+	}
+
+	s.logger.Debug("refreshing mDNS for exposures", "count", len(s.exposures))
+
 	for hostname, oldServer := range s.exposures {
 		// Get IP addresses from interfaces
 		var ips []string
 		for _, iface := range s.ifaces {
 			addrs, err := iface.Addrs()
 			if err != nil {
+				s.logger.Debug("failed to get addresses from interface", "interface", iface.Name, "error", err)
 				continue
 			}
 			for _, addr := range addrs {
@@ -422,6 +456,8 @@ func (s *Service) refreshAllExposures() {
 
 		// Convert dots to dashes for instance name
 		instanceName := strings.TrimSuffix(hostname, ".local")
+
+		s.logger.Debug("refreshing mDNS for exposure", "hostname", hostname, "instanceName", instanceName, "ips", ips)
 
 		// Create new registration
 		newServer, err := zeroconf.RegisterProxy(
@@ -442,6 +478,9 @@ func (s *Service) refreshAllExposures() {
 			continue
 		}
 
+		// Set TTL for mobile compatibility
+		newServer.TTL(s.ttl)
+
 		// Update to new server
 		s.exposures[hostname] = newServer
 
@@ -449,6 +488,8 @@ func (s *Service) refreshAllExposures() {
 		if oldServer != nil {
 			oldServer.Shutdown()
 		}
+
+		s.logger.Debug("successfully refreshed mDNS for exposure", "hostname", hostname)
 	}
 }
 
