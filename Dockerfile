@@ -44,6 +44,9 @@ RUN npx @openapitools/openapi-generator-cli version-manager set 7.0.1
 # Ensure the /go directory is writable for all users (for development purposes)
 RUN chmod -R a+rwx /go
 
+# Configure git to trust mounted workspace directories (needed for Docker bind mounts)
+RUN git config --global --add safe.directory '*'
+
 # Ensure Go binaries installed into /go/bin are available on PATH
 ENV PATH="/go/bin:${PATH}"
 
