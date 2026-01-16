@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	internalPaths "zeropoint-agent/internal"
+	"zeropoint-agent/internal/boot"
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
@@ -23,6 +24,7 @@ type apiEnv struct {
 	exposures *ExposureHandlers
 	inspect   *InspectHandlers
 	catalog   *catalog.Handlers
+	boot      *BootHandlers
 	logger    *slog.Logger
 }
 
@@ -32,7 +34,7 @@ type HealthResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
+func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, bootMonitor *boot.BootMonitor, logger *slog.Logger) (http.Handler, error) {
 	modulesDir := internalPaths.GetModulesDir()
 
 	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
@@ -59,6 +61,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
 	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
+	bootHandlers := NewBootHandlers(bootMonitor)
 
 	env := &apiEnv{
 		docker:    dockerClient,
@@ -66,6 +69,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		exposures: exposureHandlers,
 		inspect:   inspectHandlers,
 		catalog:   catalogHandlers,
+		boot:      bootHandlers,
 		logger:    logger,
 	}
 
@@ -74,6 +78,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	// API routes MUST be registered before the static file server
 	// Health endpoint
 	r.HandleFunc("/api/health", env.healthHandler).Methods(http.MethodGet)
+
+	// Boot monitoring endpoints (always available)
+	r.HandleFunc("/api/boot/status", bootHandlers.HandleBootStatus).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/logs", bootHandlers.HandleBootLogs).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/stream", bootHandlers.HandleBootStream)
 
 	// Module endpoints
 	r.HandleFunc("/api/modules", moduleHandlers.ListModules).Methods(http.MethodGet)

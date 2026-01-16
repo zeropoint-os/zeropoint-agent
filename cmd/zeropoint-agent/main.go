@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"zeropoint-agent/internal/api"
+	"zeropoint-agent/internal/boot"
 	"zeropoint-agent/internal/envoy"
 	"zeropoint-agent/internal/mdns"
 	"zeropoint-agent/internal/xds"
@@ -120,7 +121,17 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	defer mdnsService.Shutdown()
 
-	router, err := api.NewRouter(dockerClient, xdsServer, mdnsService, logger)
+	// Initialize boot monitor
+	bootMonitor := boot.NewBootMonitor(logger)
+
+	// Start boot monitoring in background
+	go func() {
+		if err := bootMonitor.StreamJournal(); err != nil {
+			logger.Error("boot monitor error", "error", err)
+		}
+	}()
+
+	router, err := api.NewRouter(dockerClient, xdsServer, mdnsService, bootMonitor, logger)
 	if err != nil {
 		log.Fatalf("failed to create router: %v", err)
 	}

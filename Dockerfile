@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     lsb-release \
     netcat-traditional \
+    libsystemd-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (needed for OpenAPI generator)
