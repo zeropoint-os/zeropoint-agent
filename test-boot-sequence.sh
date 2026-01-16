@@ -5,11 +5,13 @@
 set -e
 
 DELAY="${1:-1}"  # Default 1 second between log entries
+LOG_FIFO="/tmp/zeropoint-log"
 
 log_service() {
     local service=$1
     local message=$2
     logger -t "zeropoint-$service" "$message"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-$service: $message" >> "$LOG_FIFO" 2>/dev/null || true
     sleep "$DELAY"
 }
 
@@ -17,11 +19,12 @@ mark_step() {
     local service=$1
     local step=$2
     logger -t "zeropoint-$service" "✓ $step"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-$service: ✓ $step" >> "$LOG_FIFO" 2>/dev/null || true
     sleep "$DELAY"
 }
 
 echo "🚀 Starting boot sequence simulation..."
-echo "   Service tags will be logged to syslog"
+echo "   Logs will be written to $LOG_FIFO"
 echo "   Agent should be running: ./bin/zeropoint-agent"
 echo ""
 

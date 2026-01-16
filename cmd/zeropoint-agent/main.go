@@ -124,10 +124,10 @@ func run(cmd *cobra.Command, args []string) {
 	// Initialize boot monitor
 	bootMonitor := boot.NewBootMonitor(logger)
 
-	// Start boot monitoring in background
+	// Start boot monitoring from FIFO
 	go func() {
-		if err := bootMonitor.StreamJournal(); err != nil {
-			logger.Error("boot monitor error", "error", err)
+		if err := bootMonitor.StreamBootLog("/tmp/zeropoint-log"); err != nil {
+			logger.Error("boot log monitoring failed", "error", err)
 		}
 	}()
 

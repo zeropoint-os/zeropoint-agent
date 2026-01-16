@@ -1,23 +1,20 @@
 package boot
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/coreos/go-systemd/v22/sdjournal"
 )
 
-// BootMonitor tracks the boot process via systemd journal
+// BootMonitor tracks the boot process via FIFO-based log monitoring
 type BootMonitor struct {
 	mu               sync.RWMutex
 	logger           *slog.Logger
 	phases           map[string]*PhaseStatus   // keyed by phase name
 	services         map[string]*ServiceStatus // keyed by service name
-	phaseOrder       []BootPhase               // order: base, storage, utilities, drivers
+	phaseOrder       []string                  // order of phases discovered from logs
 	allLogs          []LogEntry                // all captured logs
 	isComplete       bool
 	isBootFailed     bool
@@ -36,30 +33,12 @@ func NewBootMonitor(logger *slog.Logger) *BootMonitor {
 		logger:         logger,
 		phases:         make(map[string]*PhaseStatus),
 		services:       make(map[string]*ServiceStatus),
-		phaseOrder:     []BootPhase{PhaseBase, PhaseStorage, PhaseUtilities, PhaseDrivers},
+		phaseOrder:     []string{}, // Will be built dynamically from journal
 		allLogs:        make([]LogEntry, 0, 1000),
 		failedServices: make(map[string]string),
 		subscribers:    make(map[int]chan StatusUpdate),
 		startTime:      time.Now(),
 		markerDir:      "/etc/zeropoint",
-	}
-
-	// Initialize phases
-	phaseDescriptions := map[string]string{
-		"base":      "Base System Services",
-		"storage":   "Storage Setup Services",
-		"utilities": "Utility Services",
-		"drivers":   "Hardware Driver Services",
-	}
-
-	for _, phase := range m.phaseOrder {
-		phaseStr := string(phase)
-		m.phases[phaseStr] = &PhaseStatus{
-			Name:        phaseStr,
-			Description: phaseDescriptions[phaseStr],
-			State:       StatePending,
-			Services:    []ServiceStatus{},
-		}
 	}
 
 	// Load persistent markers from disk
@@ -163,110 +142,6 @@ func (m *BootMonitor) broadcast(update StatusUpdate) {
 	}
 }
 
-// StreamJournal starts monitoring the systemd journal for boot service events
-func (m *BootMonitor) StreamJournal() error {
-	journal, err := sdjournal.NewJournal()
-	if err != nil {
-		return fmt.Errorf("failed to open journal: %w", err)
-	}
-	defer journal.Close()
-
-	// Filter for zeropoint services
-	if err := journal.AddMatch("_SYSLOG_IDENTIFIER=zeropoint*"); err != nil {
-		m.logger.Warn("failed to add journal match", "error", err)
-		// Continue anyway, try without match
-	}
-
-	// Start from the end (most recent)
-	if err := journal.SeekTail(); err != nil {
-		m.logger.Warn("failed to seek journal tail", "error", err)
-	}
-
-	m.logger.Info("starting journal streaming")
-
-	for {
-		n, err := journal.Next()
-		if err != nil {
-			m.logger.Error("journal read error", "error", err)
-			time.Sleep(time.Second)
-			continue
-		}
-
-		if n == 0 {
-			// No more entries, wait for new ones
-			journal.Wait(time.Second)
-			continue
-		}
-
-		// Parse entry
-		entry, err := m.parseJournalEntry(journal)
-		if err != nil {
-			m.logger.Warn("failed to parse journal entry", "error", err)
-			continue
-		}
-
-		// Skip if not a zeropoint service
-		if entry.Service == "" {
-			continue
-		}
-
-		// Update state
-		m.updateServiceStatus(entry)
-
-		// Broadcast update
-		m.broadcast(StatusUpdate{
-			Type: "log_entry",
-			Data: entry,
-		})
-	}
-}
-
-// parseJournalEntry extracts service, message, etc. from a journal entry
-func (m *BootMonitor) parseJournalEntry(journal *sdjournal.Journal) (LogEntry, error) {
-	msg, err := journal.GetData("MESSAGE")
-	if err != nil {
-		return LogEntry{}, err
-	}
-
-	// Try to get syslog identifier (service name)
-	identifier, _ := journal.GetData("_SYSLOG_IDENTIFIER")
-
-	// Extract service name from identifier (zeropoint-hostname → hostname)
-	service := strings.TrimPrefix(identifier, "zeropoint-")
-
-	// Get timestamp
-	usec, err := journal.GetRealtimeUsec()
-	if err != nil {
-		return LogEntry{}, err
-	}
-	ts := time.UnixMicro(int64(usec))
-
-	// Get severity level
-	priority, _ := journal.GetData("PRIORITY")
-	level := "info"
-	if strings.Contains(priority, "0") || strings.Contains(priority, "1") || strings.Contains(priority, "2") {
-		level = "error"
-	} else if strings.Contains(priority, "3") || strings.Contains(priority, "4") {
-		level = "warn"
-	}
-
-	// Check if this is a marker message (✓ ...)
-	isMarker := strings.HasPrefix(msg, "✓ ")
-	step := ""
-	if isMarker {
-		step = strings.TrimPrefix(msg, "✓ ")
-	}
-
-	return LogEntry{
-		Timestamp: ts,
-		Service:   service,
-		Message:   msg,
-		Level:     level,
-		IsMarker:  isMarker,
-		Step:      step,
-	}, nil
-}
-
 // updateServiceStatus updates or creates a service status based on a log entry
 func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 	m.mu.Lock()
@@ -275,12 +150,31 @@ func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 	// Add to log history
 	m.allLogs = append(m.allLogs, entry)
 
+	var updates []StatusUpdate
+
 	// Initialize service if not exists
 	if _, ok := m.services[entry.Service]; !ok {
 		m.services[entry.Service] = &ServiceStatus{
 			Name:  entry.Service,
 			State: StatePending,
 			Steps: []string{},
+		}
+
+		// Add service name as a phase (if not already present)
+		found := false
+		for _, phase := range m.phaseOrder {
+			if phase == entry.Service {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.phaseOrder = append(m.phaseOrder, entry.Service)
+			m.phases[entry.Service] = &PhaseStatus{
+				Name:     entry.Service,
+				State:    StatePending,
+				Services: []ServiceStatus{},
+			}
 		}
 	}
 
@@ -291,8 +185,16 @@ func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 		svc.Steps = append(svc.Steps, entry.Step)
 		svc.CurrentStep = entry.Step
 
-		// Broadcast service update
-		m.broadcast(StatusUpdate{
+		// Check for boot completion marker
+		if entry.Step == "boot-complete" {
+			m.isComplete = true
+			now := time.Now()
+			m.completedAt = &now
+			m.logger.Info("boot process completed")
+		}
+
+		// Queue service update broadcast
+		updates = append(updates, StatusUpdate{
 			Type: "service_update",
 			Data: svc,
 		})
@@ -307,7 +209,7 @@ func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 			m.isBootFailed = true
 
 			m.logger.Error("boot service failed", "service", entry.Service, "error", entry.Message)
-			m.broadcast(StatusUpdate{
+			updates = append(updates, StatusUpdate{
 				Type: "service_failed",
 				Data: map[string]interface{}{
 					"service": entry.Service,
@@ -326,11 +228,22 @@ func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 		}
 	}
 
-	// Broadcast current status after any change
-	m.broadcast(StatusUpdate{
+	// Queue current status broadcast after any change
+	updates = append(updates, StatusUpdate{
 		Type: "status_update",
 		Data: m.getStatusSnapshot(),
 	})
+
+	// Unlock before broadcasting
+	m.mu.Unlock()
+
+	// Now broadcast all updates after unlocking
+	for _, update := range updates {
+		m.broadcast(update)
+	}
+
+	// Re-lock for defer unlock
+	m.mu.Lock()
 }
 
 // getStatusSnapshot creates a snapshot without locking (assumes mu is held)

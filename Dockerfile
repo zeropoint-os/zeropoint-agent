@@ -58,3 +58,6 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
     apt-get install -y terraform && \
     rm -rf /var/lib/apt/lists/* &&\
     terraform init
+
+# Install wscat for WebSocket testing
+RUN npm -g install wscat
