@@ -1,7 +1,7 @@
 .boot-status-container {
   padding: 20px;
-  max-width: 900px;
-  margin: 0 auto;
+  width: 900px;
+  margin: 0;
 }
 
 .boot-status-header {
@@ -92,6 +92,10 @@
 
 .service-row.complete .service-indicator {
   color: #2e7d32;
+}
+
+.service-row.warning .service-indicator {
+  color: #f57c00;
 }
 
 .service-row.failed .service-indicator {

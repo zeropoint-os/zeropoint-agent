@@ -75,11 +75,10 @@ type MarkerEntry struct {
 	Step      string    `json:"step"`
 	Message   string    `json:"message"`
 	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"` // info, warn, error
+	Status    string    `json:"status"` // notice, warn, error
 }
 
-// ServiceMarkers is a small wrapper used for ordered serialization of
-// service -> markers while preserving the order they were observed.
+// ServiceMarkers represents a service and its ordered list of markers
 type ServiceMarkers struct {
 	Service string        `json:"service"`
 	Markers []MarkerEntry `json:"markers"`

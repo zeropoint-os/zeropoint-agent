@@ -55,7 +55,7 @@ func (m *BootMonitor) StreamBootLog(logFile string) error {
 	}
 }
 
-// parseBootLogLine parses a line from boot log in format: "[timestamp] SERVICE: message"
+// parseBootLogLine parses a line from boot log in format: "[timestamp] SERVICE: [priority] message"
 func (m *BootMonitor) parseBootLogLine(line string) *LogEntry {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -82,22 +82,38 @@ func (m *BootMonitor) parseBootLogLine(line string) *LogEntry {
 	service := strings.TrimSpace(parts[0])
 	message := strings.TrimSpace(parts[1])
 
-	// Check if this is a marker message (✓ ... or ✗ ...)
-	isMarker := strings.HasPrefix(message, "✓ ") || strings.HasPrefix(message, "✗ ")
-	step := ""
-	if isMarker {
-		if strings.HasPrefix(message, "✓ ") {
-			step = strings.TrimPrefix(message, "✓ ")
-		} else {
-			step = strings.TrimPrefix(message, "✗ ")
+	// Extract priority level from [notice], [warn], [err] format
+	// Format: "[notice] step-name" or "[warn] step-name" or "[err] step-name"
+	status := "notice" // default
+	step := message
+
+	if strings.HasPrefix(message, "[") {
+		closeBracketIdx := strings.Index(message, "]")
+		if closeBracketIdx > 0 {
+			priority := message[1:closeBracketIdx]
+			// Normalize priorities
+			switch priority {
+			case "notice":
+				status = "notice"
+			case "warn":
+				status = "warn"
+			case "err":
+				status = "error"
+			default:
+				status = "notice"
+			}
+			// Extract step name (after the priority bracket)
+			step = strings.TrimSpace(message[closeBracketIdx+1:])
 		}
 	}
+
+	isMarker := step != ""
 
 	return &LogEntry{
 		Timestamp: time.Now(),
 		Service:   service,
 		Message:   message,
-		Level:     "info",
+		Level:     status,
 		IsMarker:  isMarker,
 		Step:      step,
 	}

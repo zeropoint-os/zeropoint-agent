@@ -394,7 +394,7 @@ func (m *BootMonitor) updateMarkerTracker(entry LogEntry) {
 		Step:      entry.Step,
 		Message:   entry.Message,
 		Timestamp: entry.Timestamp,
-		Level:     entry.Level,
+		Status:    entry.Level, // notice, warn, error
 	}
 
 	// Get existing markers for this service or create new entry

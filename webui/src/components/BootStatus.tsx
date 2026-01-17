@@ -13,7 +13,7 @@ interface LogEntry {
 
 interface ServiceStatus {
   service: string;
-  state: 'pending' | 'running' | 'completed' | 'failed';
+  state: 'pending' | 'running' | 'completed' | 'warning' | 'failed';
   currentStep: string;
   timestamp: string;
 }
@@ -34,7 +34,7 @@ export default function BootStatus() {
         // data is now BootServiceMarkers[] - array of {service, markers}
         setMarkersList(data || []);
         setError(null);
-        // detect final marker
+        // detect final marker (boot-complete step)
         let finalSeen = false;
         if (data && Array.isArray(data)) {
           for (const serviceMarkers of data) {
@@ -94,6 +94,25 @@ export default function BootStatus() {
     // markers become 'completed' (or keep other states if applicable).
     let latestSvc: string | null = null;
     let latestTs = 0;
+    
+    // Determine service states based on marker statuses
+    // For inactive services: error > warn > completed
+    const getServiceState = (markers: BootMarkerEntry[] | undefined): ServiceStatus['state'] => {
+      if (!markers || markers.length === 0) return 'pending';
+      
+      let hasError = false;
+      let hasWarn = false;
+      
+      for (const m of markers) {
+        if (m.status === 'error') hasError = true;
+        if (m.status === 'warn') hasWarn = true;
+      }
+      
+      if (hasError) return 'failed';
+      if (hasWarn) return 'warning';
+      return 'completed';
+    };
+    
     for (const serviceMarkers of markersList) {
       const list = serviceMarkers.markers || [];
       if (list.length === 0) continue;
@@ -105,18 +124,37 @@ export default function BootStatus() {
       }
     }
 
+    // Check if boot is actually complete (boot-complete marker seen)
+    let bootComplete = false;
+    if (markersList.length > 0) {
+      const lastService = markersList[markersList.length - 1];
+      if ((lastService.service || '').includes('boot-complete')) {
+        const lastMarker = (lastService.markers || []).find(m => m.step === 'boot-complete');
+        if (lastMarker) {
+          bootComplete = true;
+        }
+      }
+    }
+
     return markersList.map((serviceMarkers) => {
       const list = serviceMarkers.markers || [];
       const last = list.length > 0 ? list[list.length - 1] : undefined;
-      let state: ServiceStatus['state'] = 'pending';
-      if (!last) {
-        state = 'pending';
-      } else if (last.step === 'boot-complete') {
-        state = 'completed';
-      } else if ((serviceMarkers.service || '') === latestSvc) {
+      
+      let state: ServiceStatus['state'];
+      
+      // If this is the latest service, it's "running" (spinner)
+      // EXCEPT if boot is complete - that service should show as completed
+      const isBootComplete = (serviceMarkers.service || '').includes('boot-complete');
+      if ((serviceMarkers.service || '') === latestSvc && !bootComplete) {
         state = 'running';
+      } else if (isBootComplete && bootComplete) {
+        // boot-complete service - get its final state
+        state = getServiceState(list);
+      } else if ((serviceMarkers.service || '') !== latestSvc) {
+        // For completed services, determine final state based on errors/warnings
+        state = getServiceState(list);
       } else {
-        state = 'completed';
+        state = 'running';
       }
 
       return {
@@ -182,6 +220,7 @@ export default function BootStatus() {
                 <div className="service-indicator">
                   {svc.state === 'failed' && '✗'}
                   {svc.state === 'completed' && '✓'}
+                  {svc.state === 'warning' && '⚠'}
                   {svc.state === 'running' && <span className="spinner"></span>}
                   {svc.state === 'pending' && ''}
                 </div>

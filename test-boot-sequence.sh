@@ -25,8 +25,8 @@ log_service() {
 mark_step() {
     local service=$1
     local step=$2
-    logger -t "zeropoint-$service" "✓ $step"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-$service: ✓ $step" >> "$LOG_FIFO" 2>/dev/null || true
+    logger -t "zeropoint-$service" "[notice] $step"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-$service: [notice] $step" >> "$LOG_FIFO" 2>/dev/null || true
     sleep "$DELAY"
 }
 
@@ -54,6 +54,8 @@ log_service "rootfs" "=== Starting Root Filesystem Expansion ==="
 log_service "rootfs" "Detected root device: /dev/sda1"
 mark_step "rootfs" "device-detected"
 log_service "rootfs" "Expanding partition..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-rootfs: [warn] partition expansion slower than expected" >> "$LOG_FIFO" 2>/dev/null || true
+sleep "$DELAY"
 mark_step "rootfs" "partition-expanded"
 log_service "rootfs" "Expanding filesystem..."
 mark_step "rootfs" "filesystem-expanded"
@@ -79,6 +81,8 @@ log_service "apt-storage" "Updating apt sources.list..."
 log_service "apt-storage" "Configuring apt cache directory: /nvme/apt-cache"
 mark_step "apt-storage" "apt-cache-configured"
 log_service "apt-storage" "Running apt update..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-apt-storage: [warn] some package indexes may be out of sync" >> "$LOG_FIFO" 2>/dev/null || true
+sleep "$DELAY"
 log_service "apt-storage" "Successfully downloaded package lists"
 mark_step "apt-storage" "package-lists-updated"
 log_service "apt-storage" "=== Apt Configuration Complete ==="
@@ -92,9 +96,11 @@ echo "📋 PHASE 3: Utility Services"
 log_service "update-agent" "=== Checking for Agent Updates ==="
 log_service "update-agent" "Current version: 0.1.0"
 log_service "update-agent" "Checking upstream repository..."
-log_service "update-agent" "Latest version available: 0.1.0 (already current)"
-mark_step "update-agent" "version-check-complete"
-log_service "update-agent" "=== Agent Update Check Complete ==="
+log_service "update-agent" "Latest version available: 0.2.0"
+log_service "update-agent" "Attempting to download update..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-update-agent: [err] Failed to download update: connection timeout" >> "$LOG_FIFO" 2>/dev/null || true
+sleep "$DELAY"
+mark_step "update-agent" "update-failed"
 
 # ============================================================================
 # PHASE 4: Hardware Driver Services
@@ -107,6 +113,8 @@ log_service "nvidia-drivers" "Detecting NVIDIA GPU..."
 log_service "nvidia-drivers" "Found: NVIDIA A100 (CUDA Compute 8.0)"
 mark_step "nvidia-drivers" "gpu-detected"
 log_service "nvidia-drivers" "Installing NVIDIA driver dependencies..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] zeropoint-nvidia-drivers: [warn] some dependencies already installed, skipping" >> "$LOG_FIFO" 2>/dev/null || true
+sleep "$DELAY"
 log_service "nvidia-drivers" "Installing CUDA toolkit 12.1..."
 mark_step "nvidia-drivers" "cuda-installed"
 log_service "nvidia-drivers" "Installing cuDNN..."
