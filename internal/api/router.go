@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	internalPaths "zeropoint-agent/internal"
 	"zeropoint-agent/internal/boot"
@@ -75,6 +76,35 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	r := mux.NewRouter()
 
+	// Middleware to check boot completion for non-boot APIs
+	bootCheckMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Always allow health, boot endpoints, and static files/index
+			if r.URL.Path == "/api/health" ||
+				strings.HasPrefix(r.URL.Path, "/api/boot/") ||
+				r.URL.Path == "/api/boot" ||
+				r.URL.Path == "/" ||
+				r.URL.Path == "/index.html" ||
+				!strings.HasPrefix(r.URL.Path, "/api/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// For all other APIs, check if boot is complete
+			if !bootMonitor.IsComplete() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error":   "system_booting",
+					"message": "System is still booting. Please wait for boot to complete before accessing this API.",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+
 	// API routes MUST be registered before the static file server
 	// Health endpoint
 	r.HandleFunc("/api/health", env.healthHandler).Methods(http.MethodGet)
@@ -118,7 +148,8 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
 	}
 
-	return r, nil
+	// Wrap router with boot check middleware
+	return bootCheckMiddleware(r), nil
 }
 
 // HealthHandler handles GET /health requests

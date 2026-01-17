@@ -9,6 +9,7 @@ import ModulesView from '../views/ModulesView';
 import LinksView from '../views/LinksView';
 import ExposuresView from '../views/ExposuresView';
 import BundlesView from '../views/BundlesView';
+import { BootApi, Configuration } from 'artifacts/clients/typescript';
 
 type ViewType = 'boot' | 'modules' | 'links' | 'exposures' | 'bundles';
 
@@ -22,17 +23,64 @@ export default function App() {
     if (saved) return saved === 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
+  const [bootComplete, setBootComplete] = useState(false);
+  const [checkingBoot, setCheckingBoot] = useState(true);
+
+  const bootApi = new BootApi(new Configuration({ basePath: '' }));
+
+  // Check boot status and redirect if needed
+  useEffect(() => {
+    const checkBoot = async () => {
+      try {
+        const data = await bootApi.apiBootStatusGet();
+        // Check if boot-complete marker exists
+        let isComplete = false;
+        if (data && Array.isArray(data)) {
+          const lastService = data[data.length - 1];
+          if (lastService?.service?.includes('boot-complete')) {
+            const hasBootCompleteMarker = (lastService.markers || []).some(m => m.step === 'boot-complete');
+            isComplete = hasBootCompleteMarker;
+          }
+        }
+        setBootComplete(isComplete);
+      } catch (err) {
+        console.error('Failed to check boot status:', err);
+      } finally {
+        setCheckingBoot(false);
+      }
+    };
+
+    checkBoot();
+  }, [bootApi]);
 
   // Get current view from URL path
   const getCurrentView = (): ViewType => {
     const path = location.pathname;
-    if (path === '/') return 'boot';
+    if (path === '/') {
+      // Root redirects to first nav item: boot if not complete, bundles if complete
+      return bootComplete ? 'bundles' : 'boot';
+    }
     const view = path.substring(1) as ViewType;
     const validViews: ViewType[] = ['boot', 'modules', 'links', 'exposures', 'bundles'];
     return validViews.includes(view) ? view : 'boot';
   };
 
   const currentView = getCurrentView();
+
+  // If boot is not complete and user tries to navigate to non-boot page, redirect to boot
+  useEffect(() => {
+    if (!checkingBoot && !bootComplete && currentView !== 'boot') {
+      navigate('/boot');
+    }
+  }, [bootComplete, checkingBoot, currentView, navigate]);
+
+  // Redirect root path to first nav item
+  useEffect(() => {
+    if (!checkingBoot && location.pathname === '/') {
+      const firstItem = bootComplete ? 'bundles' : 'boot';
+      navigate(`/${firstItem === 'boot' ? 'boot' : firstItem}`);
+    }
+  }, [bootComplete, checkingBoot, navigate, location.pathname]);
 
   // Update theme
   useEffect(() => {
@@ -46,6 +94,10 @@ export default function App() {
 
   // Close nav when view changes on mobile
   const handleViewChange = (view: ViewType) => {
+    // Block navigation away from boot if boot is not complete
+    if (!bootComplete && view !== 'boot') {
+      return;
+    }
     navigate(`/${view === 'boot' ? '' : view}`);
     setNavOpen(false);
   };
@@ -66,10 +118,10 @@ export default function App() {
         isOpen={navOpen}
         currentView={currentView}
         onViewChange={handleViewChange}
+        bootComplete={bootComplete}
       />
       <main className="main-content">
         <Routes>
-          <Route path="/" element={<BootView />} />
           <Route path="/boot" element={<BootView />} />
           <Route path="/modules" element={<ModulesView />} />
           <Route path="/links" element={<LinksView />} />

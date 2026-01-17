@@ -22,6 +22,7 @@ export default function BootStatus() {
   const [markersList, setMarkersList] = useState<BootServiceMarkers[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [bootJustCompleted, setBootJustCompleted] = useState(false);
 
   const bootApi = new BootApi(new Configuration({ basePath: '' }));
 
@@ -49,6 +50,8 @@ export default function BootStatus() {
         }
 
         if (finalSeen) {
+          // Mark that boot just completed in this session
+          setBootJustCompleted(true);
           // stop polling
           if (polling !== null) {
             window.clearInterval(polling);
@@ -71,7 +74,7 @@ export default function BootStatus() {
     return () => {
       if (polling !== null) window.clearInterval(polling);
     };
-  }, []);
+  }, [bootApi]);
 
   // fetchStatus/polling handled in effect above; helper to manually refresh if needed
   const refreshStatusOnce = async () => {
@@ -208,6 +211,20 @@ export default function BootStatus() {
       </div>
 
       {error && <div className="boot-status-error">{error}</div>}
+
+      {/* Show reload message only when boot just completed in this session */}
+      {bootJustCompleted && (
+        <div style={{
+          backgroundColor: '#e8f5e9',
+          border: '1px solid #4caf50',
+          borderRadius: '4px',
+          padding: '15px',
+          marginBottom: '20px',
+          color: '#2e7d32'
+        }}>
+          <strong>✓ Boot process complete!</strong> Reload the page to access all features.
+        </div>
+      )}
 
       <div className="boot-services">
         <h2>Services</h2>

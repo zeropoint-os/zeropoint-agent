@@ -406,4 +406,17 @@ func (m *BootMonitor) updateMarkerTracker(entry LogEntry) {
 		// New service: add to ordered map
 		m.markers.Set(entry.Service, []MarkerEntry{marker})
 	}
+
+	// If this is the boot-complete marker, mark boot as complete
+	if entry.Step == "boot-complete" && entry.Service == "zeropoint-boot-complete" {
+		m.isComplete = true
+		now := time.Now()
+		m.completedAt = &now
+		m.logger.Info("boot process completed (boot-complete marker detected)")
+
+		// Write marker file
+		if err := os.WriteFile(m.markerDir+"/.boot-complete", []byte(now.Format(time.RFC3339)), 0644); err != nil {
+			m.logger.Warn("failed to write boot-complete marker", "error", err)
+		}
+	}
 }
