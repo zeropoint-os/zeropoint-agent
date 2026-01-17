@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -12,15 +11,25 @@ import (
 // handling multiple writers opening and closing the FIFO
 func (m *BootMonitor) StreamBootLog(logFile string) error {
 	for {
-		// Open FIFO with O_NONBLOCK - won't block if no writer yet
-		file, err := os.OpenFile(logFile, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		// Open FIFO in blocking mode (without O_NONBLOCK).
+		// This will block if no writers are connected yet.
+		file, err := os.OpenFile(logFile, os.O_RDONLY, 0)
 		if err != nil {
-			m.logger.Warn("error opening FIFO, retrying", "error", err)
+			// If the file doesn't exist, this can indicate the system has
+			// rebooted and the FIFO/marker files were removed. Clear in-
+			// memory state so we don't keep stale markers.
+			if os.IsNotExist(err) {
+				m.logger.Info("log file missing; clearing in-memory state")
+				m.ResetState()
+			} else {
+				m.logger.Debug("error opening FIFO, retrying", "error", err)
+			}
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		// Read lines from FIFO
+		// Read lines from FIFO until all writers close (EOF).
+		// New data will block the scanner if no writers are active.
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -31,10 +40,6 @@ func (m *BootMonitor) StreamBootLog(logFile string) error {
 					m.logger.Info("boot step completed", "service", entry.Service, "step", entry.Step)
 				}
 				m.updateServiceStatus(*entry)
-				m.broadcast(StatusUpdate{
-					Type: "log_entry",
-					Data: entry,
-				})
 			}
 		}
 
@@ -44,7 +49,8 @@ func (m *BootMonitor) StreamBootLog(logFile string) error {
 
 		file.Close()
 
-		// Small delay before trying to reopen
+		// All writers have closed the FIFO. Wait a moment before reopening
+		// to listen for new writers.
 		time.Sleep(100 * time.Millisecond)
 	}
 }

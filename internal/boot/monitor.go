@@ -3,9 +3,10 @@ package boot
 import (
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"time"
+
+	orderedmap "github.com/wk8/go-ordered-map/v2"
 )
 
 // BootMonitor tracks the boot process via FIFO-based log monitoring
@@ -25,6 +26,7 @@ type BootMonitor struct {
 	startTime        time.Time
 	needsReboot      bool
 	markerDir        string
+	markers          *orderedmap.OrderedMap[string, []MarkerEntry] // service name → ordered list of markers
 }
 
 // NewBootMonitor creates a new boot monitor
@@ -39,12 +41,40 @@ func NewBootMonitor(logger *slog.Logger) *BootMonitor {
 		subscribers:    make(map[int]chan StatusUpdate),
 		startTime:      time.Now(),
 		markerDir:      "/etc/zeropoint",
+		markers:        orderedmap.New[string, []MarkerEntry](),
 	}
 
 	// Load persistent markers from disk
 	m.loadPersistentMarkers()
 
 	return m
+}
+
+// ResetState clears in-memory boot state for a fresh boot (e.g., when the
+// boot log FIFO or marker files are gone because the system rebooted).
+func (m *BootMonitor) ResetState() {
+	m.mu.Lock()
+
+	m.logger.Info("resetting in-memory boot state due to missing markers/log file")
+
+	m.phases = make(map[string]*PhaseStatus)
+	m.services = make(map[string]*ServiceStatus)
+	m.phaseOrder = []string{}
+	m.allLogs = make([]LogEntry, 0, 1000)
+	m.isComplete = false
+	m.isBootFailed = false
+	m.completedAt = nil
+	m.failedServices = make(map[string]string)
+	m.needsReboot = false
+	m.markerDir = m.markerDir // keep same markerDir
+	m.markers = orderedmap.New[string, []MarkerEntry]()
+
+	// Build a snapshot while still holding the lock (getStatusSnapshot assumes lock held)
+	snapshot := m.getStatusSnapshot()
+	m.mu.Unlock()
+
+	// Broadcast cleared status to subscribers so UI updates immediately
+	m.broadcast(snapshot)
 }
 
 // loadPersistentMarkers checks for marker files to determine already-completed services
@@ -124,8 +154,8 @@ func (m *BootMonitor) Subscribe() <-chan StatusUpdate {
 	return ch
 }
 
-// broadcast sends an update to all subscribers
-func (m *BootMonitor) broadcast(update StatusUpdate) {
+// broadcastUpdate sends a StatusUpdate to all subscribers
+func (m *BootMonitor) broadcastUpdate(update StatusUpdate) {
 	m.mu.Lock()
 	subs := make(map[int]chan StatusUpdate)
 	for k, v := range m.subscribers {
@@ -137,113 +167,35 @@ func (m *BootMonitor) broadcast(update StatusUpdate) {
 		select {
 		case ch <- update:
 		default:
-			// Drop if buffer full (subscriber not reading fast enough)
+			// Don't block if subscriber is slow
 		}
 	}
 }
 
-// updateServiceStatus updates or creates a service status based on a log entry
+// broadcast sends the current full status to all subscribers
+func (m *BootMonitor) broadcast(status BootStatus) {
+	update := StatusUpdate{
+		Type: "status_update",
+		Data: status,
+	}
+	m.broadcastUpdate(update)
+}
+
+// updateServiceStatus broadcasts a log entry as a streaming update
 func (m *BootMonitor) updateServiceStatus(entry LogEntry) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Add to log history
 	m.allLogs = append(m.allLogs, entry)
-
-	var updates []StatusUpdate
-
-	// Initialize service if not exists
-	if _, ok := m.services[entry.Service]; !ok {
-		m.services[entry.Service] = &ServiceStatus{
-			Name:  entry.Service,
-			State: StatePending,
-			Steps: []string{},
-		}
-
-		// Add service name as a phase (if not already present)
-		found := false
-		for _, phase := range m.phaseOrder {
-			if phase == entry.Service {
-				found = true
-				break
-			}
-		}
-		if !found {
-			m.phaseOrder = append(m.phaseOrder, entry.Service)
-			m.phases[entry.Service] = &PhaseStatus{
-				Name:     entry.Service,
-				State:    StatePending,
-				Services: []ServiceStatus{},
-			}
-		}
-	}
-
-	svc := m.services[entry.Service]
-
-	// If marker, add to steps
-	if entry.IsMarker {
-		svc.Steps = append(svc.Steps, entry.Step)
-		svc.CurrentStep = entry.Step
-
-		// Check for boot completion marker
-		if entry.Step == "boot-complete" {
-			m.isComplete = true
-			now := time.Now()
-			m.completedAt = &now
-			m.logger.Info("boot process completed")
-		}
-
-		// Queue service update broadcast
-		updates = append(updates, StatusUpdate{
-			Type: "service_update",
-			Data: svc,
-		})
-	}
-
-	// Detect error messages
-	if strings.Contains(entry.Message, "error") || strings.Contains(entry.Message, "failed") || entry.Level == "error" {
-		if svc.State != StateCompleted {
-			svc.State = StateFailed
-			svc.Error = entry.Message
-			m.failedServices[entry.Service] = entry.Message
-			m.isBootFailed = true
-
-			m.logger.Error("boot service failed", "service", entry.Service, "error", entry.Message)
-			updates = append(updates, StatusUpdate{
-				Type: "service_failed",
-				Data: map[string]interface{}{
-					"service": entry.Service,
-					"error":   entry.Message,
-				},
-			})
-		}
-	}
-
-	// Detect state transitions from messages
-	if entry.IsMarker && entry.Step == "started" {
-		if svc.State == StatePending {
-			svc.State = StateRunning
-			now := time.Now()
-			svc.StartedAt = &now
-		}
-	}
-
-	// Queue current status broadcast after any change
-	updates = append(updates, StatusUpdate{
-		Type: "status_update",
-		Data: m.getStatusSnapshot(),
-	})
-
-	// Unlock before broadcasting
 	m.mu.Unlock()
 
-	// Now broadcast all updates after unlocking
-	for _, update := range updates {
-		m.broadcast(update)
-	}
+	// Update marker tracker (only affects marker entries)
+	m.updateMarkerTracker(entry)
 
-	// Re-lock for defer unlock
-	m.mu.Lock()
+	// Broadcast the log entry as a streaming update
+	update := StatusUpdate{
+		Type: "log_entry",
+		Data: entry,
+	}
+	m.broadcastUpdate(update)
 }
 
 // getStatusSnapshot creates a snapshot without locking (assumes mu is held)
@@ -315,10 +267,9 @@ func (m *BootMonitor) SetServiceState(name string, state ServiceState) {
 			now := time.Now()
 			svc.CompletedAt = &now
 		}
-		m.broadcast(StatusUpdate{
-			Type: "service_update",
-			Data: svc,
-		})
+		m.mu.Unlock()
+		m.broadcast(m.getStatusSnapshot())
+		m.mu.Lock()
 	}
 }
 
@@ -338,10 +289,9 @@ func (m *BootMonitor) MarkBootComplete() {
 		m.logger.Warn("failed to write boot-complete marker", "error", err)
 	}
 
-	m.broadcast(StatusUpdate{
-		Type: "boot_complete",
-		Data: m.getStatusSnapshot(),
-	})
+	m.mu.Unlock()
+	m.broadcast(m.getStatusSnapshot())
+	m.mu.Lock()
 }
 
 // SetNeedsReboot marks that a reboot is needed
@@ -350,10 +300,9 @@ func (m *BootMonitor) SetNeedsReboot(needsReboot bool) {
 	defer m.mu.Unlock()
 
 	m.needsReboot = needsReboot
-	m.broadcast(StatusUpdate{
-		Type: "needs_reboot",
-		Data: needsReboot,
-	})
+	m.mu.Unlock()
+	m.broadcast(m.getStatusSnapshot())
+	m.mu.Lock()
 }
 
 // GetLogsByService returns logs for a specific service
@@ -382,4 +331,79 @@ func (m *BootMonitor) GetLogsByLevel(level string) []LogEntry {
 		}
 	}
 	return result
+}
+
+// GetServiceStatuses returns an ordered slice of services and their marker
+// histories in the order they were first observed.
+func (m *BootMonitor) GetServiceStatuses() []ServiceMarkers {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]ServiceMarkers, 0)
+	for el := m.markers.Oldest(); el != nil; el = el.Next() {
+		// Make a fresh copy of the markers slice so callers get a snapshot
+		// that won't be aliased to the internal storage.
+		src := el.Value
+		copied := make([]MarkerEntry, len(src))
+		copy(copied, src)
+		result = append(result, ServiceMarkers{
+			Service: el.Key,
+			Markers: copied,
+		})
+	}
+	return result
+}
+
+// GetServiceStatus returns markers for a specific service
+func (m *BootMonitor) GetServiceStatus(serviceName string) ([]MarkerEntry, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	markers, ok := m.markers.Get(serviceName)
+	return markers, ok
+}
+
+// GetMarker returns a specific marker for a service
+func (m *BootMonitor) GetMarker(serviceName, step string) (MarkerEntry, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	markers, ok := m.markers.Get(serviceName)
+	if !ok {
+		return MarkerEntry{}, false
+	}
+
+	for _, marker := range markers {
+		if marker.Step == step {
+			return marker, true
+		}
+	}
+	return MarkerEntry{}, false
+}
+
+// updateMarkerTracker updates the ordered marker map for a log entry
+func (m *BootMonitor) updateMarkerTracker(entry LogEntry) {
+	if !entry.IsMarker {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	marker := MarkerEntry{
+		Step:      entry.Step,
+		Message:   entry.Message,
+		Timestamp: entry.Timestamp,
+		Level:     entry.Level,
+	}
+
+	// Get existing markers for this service or create new entry
+	if markers, ok := m.markers.Get(entry.Service); ok {
+		// Append to existing markers
+		markers = append(markers, marker)
+		m.markers.Set(entry.Service, markers)
+	} else {
+		// New service: add to ordered map
+		m.markers.Set(entry.Service, []MarkerEntry{marker})
+	}
 }

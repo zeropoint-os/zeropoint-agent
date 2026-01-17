@@ -17,6 +17,18 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
+    id: 'boot',
+    label: 'Boot',
+    path: '/',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M6 9l6-7 6 7"></path>
+        <path d="M6 15h12"></path>
+        <rect x="2" y="15" width="20" height="7" rx="1"></rect>
+      </svg>
+    ),
+  },
+  {
     id: 'bundles',
     label: 'Bundles',
     path: '/bundles',
@@ -30,7 +42,7 @@ const navItems: NavItem[] = [
   {
     id: 'modules',
     label: 'Modules',
-    path: '/',
+    path: '/modules',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="3" y="3" width="7" height="7"></rect>

@@ -70,6 +70,21 @@ type BootStatus struct {
 	NeedsReboot    bool              `json:"needs_reboot"`
 }
 
+// MarkerEntry represents a single marker in a service's progress
+type MarkerEntry struct {
+	Step      string    `json:"step"`
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"` // info, warn, error
+}
+
+// ServiceMarkers is a small wrapper used for ordered serialization of
+// service -> markers while preserving the order they were observed.
+type ServiceMarkers struct {
+	Service string        `json:"service"`
+	Markers []MarkerEntry `json:"markers"`
+}
+
 // StatusUpdate is sent to subscribers when status changes
 type StatusUpdate struct {
 	Type string      `json:"type"` // "status_update", "log_entry", "service_failed", "phase_complete"

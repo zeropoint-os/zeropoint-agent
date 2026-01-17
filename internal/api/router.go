@@ -83,6 +83,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/boot/status", bootHandlers.HandleBootStatus).Methods(http.MethodGet)
 	r.HandleFunc("/api/boot/logs", bootHandlers.HandleBootLogs).Methods(http.MethodGet)
 	r.HandleFunc("/api/boot/stream", bootHandlers.HandleBootStream)
+	// Per-service and marker endpoints
+	r.HandleFunc("/api/boot/status/{service}", bootHandlers.HandleBootService).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/status/{service}/{marker}", bootHandlers.HandleBootMarker).Methods(http.MethodGet)
 
 	// Module endpoints
 	r.HandleFunc("/api/modules", moduleHandlers.ListModules).Methods(http.MethodGet)

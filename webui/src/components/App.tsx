@@ -4,12 +4,13 @@ import '../styles/theme.css';
 import '../styles/layout.css';
 import Header from './Header';
 import Navigation from './Navigation';
+import BootView from '../views/BootView';
 import ModulesView from '../views/ModulesView';
 import LinksView from '../views/LinksView';
 import ExposuresView from '../views/ExposuresView';
 import BundlesView from '../views/BundlesView';
 
-type ViewType = 'modules' | 'links' | 'exposures' | 'bundles';
+type ViewType = 'boot' | 'modules' | 'links' | 'exposures' | 'bundles';
 
 export default function App() {
   const navigate = useNavigate();
@@ -25,10 +26,10 @@ export default function App() {
   // Get current view from URL path
   const getCurrentView = (): ViewType => {
     const path = location.pathname;
-    if (path === '/') return 'modules';
+    if (path === '/') return 'boot';
     const view = path.substring(1) as ViewType;
-    const validViews: ViewType[] = ['modules', 'links', 'exposures', 'bundles'];
-    return validViews.includes(view) ? view : 'modules';
+    const validViews: ViewType[] = ['boot', 'modules', 'links', 'exposures', 'bundles'];
+    return validViews.includes(view) ? view : 'boot';
   };
 
   const currentView = getCurrentView();
@@ -45,7 +46,7 @@ export default function App() {
 
   // Close nav when view changes on mobile
   const handleViewChange = (view: ViewType) => {
-    navigate(`/${view === 'modules' ? '' : view}`);
+    navigate(`/${view === 'boot' ? '' : view}`);
     setNavOpen(false);
   };
 
@@ -68,7 +69,8 @@ export default function App() {
       />
       <main className="main-content">
         <Routes>
-          <Route path="/" element={<ModulesView />} />
+          <Route path="/" element={<BootView />} />
+          <Route path="/boot" element={<BootView />} />
           <Route path="/modules" element={<ModulesView />} />
           <Route path="/links" element={<LinksView />} />
           <Route path="/exposures" element={<ExposuresView />} />

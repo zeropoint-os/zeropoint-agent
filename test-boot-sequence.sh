@@ -7,6 +7,13 @@ set -e
 DELAY="${1:-1}"  # Default 1 second between log entries
 LOG_FIFO="/tmp/zeropoint-log"
 
+# Ensure we have a fresh FIFO for this test run
+rm -f "$LOG_FIFO"
+mkfifo "$LOG_FIFO" || {
+    echo "Failed to create FIFO at $LOG_FIFO"
+    exit 1
+}
+
 log_service() {
     local service=$1
     local message=$2
@@ -24,7 +31,7 @@ mark_step() {
 }
 
 echo "🚀 Starting boot sequence simulation..."
-echo "   Logs will be written to $LOG_FIFO"
+echo "   Logs will be written to $LOG_FIFO (FIFO)"
 echo "   Agent should be running: ./bin/zeropoint-agent"
 echo ""
 
@@ -127,6 +134,9 @@ log_service "nvidia-post" "=== NVIDIA Post-Reboot Verification Complete ==="
 log_service "boot-complete" "=== All Boot Services Complete ==="
 mark_step "boot-complete" "boot-complete"
 log_service "boot-complete" "System initialization successful"
+
+# Clean up FIFO after test
+rm -f "$LOG_FIFO"
 
 echo ""
 echo "✅ Boot sequence simulation complete!"
