@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	internalPaths "zeropoint-agent/internal"
+	"zeropoint-agent/internal/boot"
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 	"zeropoint-agent/internal/xds"
@@ -23,6 +25,7 @@ type apiEnv struct {
 	exposures *ExposureHandlers
 	inspect   *InspectHandlers
 	catalog   *catalog.Handlers
+	boot      *BootHandlers
 	logger    *slog.Logger
 }
 
@@ -32,7 +35,7 @@ type HealthResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, logger *slog.Logger) (http.Handler, error) {
+func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService MDNSService, bootMonitor *boot.BootMonitor, logger *slog.Logger) (http.Handler, error) {
 	modulesDir := internalPaths.GetModulesDir()
 
 	installer := modules.NewInstaller(dockerClient, modulesDir, logger)
@@ -59,6 +62,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
 	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
+	bootHandlers := NewBootHandlers(bootMonitor)
 
 	env := &apiEnv{
 		docker:    dockerClient,
@@ -66,14 +70,52 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		exposures: exposureHandlers,
 		inspect:   inspectHandlers,
 		catalog:   catalogHandlers,
+		boot:      bootHandlers,
 		logger:    logger,
 	}
 
 	r := mux.NewRouter()
 
+	// Middleware to check boot completion for non-boot APIs
+	bootCheckMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Always allow health, boot endpoints, and static files/index
+			if r.URL.Path == "/api/health" ||
+				strings.HasPrefix(r.URL.Path, "/api/boot/") ||
+				r.URL.Path == "/api/boot" ||
+				r.URL.Path == "/" ||
+				r.URL.Path == "/index.html" ||
+				!strings.HasPrefix(r.URL.Path, "/api/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// For all other APIs, check if boot is complete
+			if !bootMonitor.IsComplete() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error":   "system_booting",
+					"message": "System is still booting. Please wait for boot to complete before accessing this API.",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+
 	// API routes MUST be registered before the static file server
 	// Health endpoint
 	r.HandleFunc("/api/health", env.healthHandler).Methods(http.MethodGet)
+
+	// Boot monitoring endpoints (always available)
+	r.HandleFunc("/api/boot/status", bootHandlers.HandleBootStatus).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/logs", bootHandlers.HandleBootLogs).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/stream", bootHandlers.HandleBootStream)
+	// Per-service and marker endpoints
+	r.HandleFunc("/api/boot/status/{service}", bootHandlers.HandleBootService).Methods(http.MethodGet)
+	r.HandleFunc("/api/boot/status/{service}/{marker}", bootHandlers.HandleBootMarker).Methods(http.MethodGet)
 
 	// Module endpoints
 	r.HandleFunc("/api/modules", moduleHandlers.ListModules).Methods(http.MethodGet)
@@ -106,7 +148,8 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
 	}
 
-	return r, nil
+	// Wrap router with boot check middleware
+	return bootCheckMiddleware(r), nil
 }
 
 // HealthHandler handles GET /health requests

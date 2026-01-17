@@ -6,6 +6,7 @@ interface NavigationProps {
   isOpen: boolean;
   currentView: string;
   onViewChange: (view: any) => void;
+  bootComplete?: boolean;
 }
 
 interface NavItem {
@@ -15,7 +16,19 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
-const navItems: NavItem[] = [
+const allNavItems: NavItem[] = [
+  {
+    id: 'boot',
+    label: 'Boot',
+    path: '/boot',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M6 9l6-7 6 7"></path>
+        <path d="M6 15h12"></path>
+        <rect x="2" y="15" width="20" height="7" rx="1"></rect>
+      </svg>
+    ),
+  },
   {
     id: 'bundles',
     label: 'Bundles',
@@ -30,7 +43,7 @@ const navItems: NavItem[] = [
   {
     id: 'modules',
     label: 'Modules',
-    path: '/',
+    path: '/modules',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="3" y="3" width="7" height="7"></rect>
@@ -64,7 +77,17 @@ const navItems: NavItem[] = [
   },
 ];
 
-export default function Navigation({ isOpen, currentView, onViewChange }: NavigationProps) {
+const getNavItems = (bootComplete: boolean): NavItem[] => {
+  if (bootComplete) {
+    // Boot complete: move boot to bottom
+    return allNavItems.slice(1).concat([allNavItems[0]]);
+  }
+  // Boot not complete: show boot first
+  return allNavItems;
+};
+
+export default function Navigation({ isOpen, currentView, onViewChange, bootComplete = false }: NavigationProps) {
+  const navItems = getNavItems(bootComplete);
   return (
     <>
       {/* Overlay for mobile */}
@@ -74,19 +97,28 @@ export default function Navigation({ isOpen, currentView, onViewChange }: Naviga
       {/* Navigation */}
       <nav className={`navigation ${isOpen ? 'open' : ''}`}>
         <ul className="nav-list">
-          {navItems.map((item) => (
-            <li key={item.id}>
-              <Link
-                to={item.path}
-                className={`nav-item ${currentView === item.id ? 'active' : ''}`}
-                title={item.label}
-                onClick={() => onViewChange(item.id)}
-              >
-                <span className="nav-icon">{item.icon}</span>
-                <span className="nav-label">{item.label}</span>
-              </Link>
-            </li>
-          ))}
+          {navItems.map((item) => {
+            const isDisabled = !bootComplete && item.id !== 'boot';
+            return (
+              <li key={item.id}>
+                <Link
+                  to={item.path}
+                  className={`nav-item ${currentView === item.id ? 'active' : ''} ${isDisabled ? 'disabled' : ''}`}
+                  title={isDisabled ? 'Boot must complete first' : item.label}
+                  onClick={(e) => {
+                    if (isDisabled) {
+                      e.preventDefault();
+                      return;
+                    }
+                    onViewChange(item.id);
+                  }}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-label">{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       </nav>
     </>

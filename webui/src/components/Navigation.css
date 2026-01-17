@@ -74,6 +74,12 @@
   font-weight: 500;
 }
 
+.nav-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .nav-item .nav-icon {
   display: flex;
   align-items: center;
