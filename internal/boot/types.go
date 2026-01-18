@@ -42,6 +42,7 @@ type ServiceStatus struct {
 	StartedAt   *time.Time   `json:"started_at,omitempty"`
 	CompletedAt *time.Time   `json:"completed_at,omitempty"`
 	Error       string       `json:"error,omitempty"`
+	Warning     string       `json:"warning,omitempty"`
 	Steps       []string     `json:"steps"` // Completed milestones
 	CurrentStep string       `json:"current_step,omitempty"`
 	NeedsReboot bool         `json:"needs_reboot"`

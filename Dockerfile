@@ -81,3 +81,5 @@ RUN export NVIDIA_CONTAINER_TOOLKIT_VERSION=1.18.1-1 &&\
     libnvidia-container1=${NVIDIA_CONTAINER_TOOLKIT_VERSION}
 
 RUN nvidia-ctk runtime configure --runtime=docker
+
+RUN mkdir -p /etc/zeropoint

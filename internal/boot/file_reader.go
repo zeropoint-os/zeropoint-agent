@@ -11,6 +11,19 @@ import (
 // handling multiple writers opening and closing the FIFO
 func (m *BootMonitor) StreamBootLog(logFile string) error {
 	for {
+		// Check if boot is already complete via persistent markers.
+		// If so, don't bother trying to open the FIFO (it may not exist).
+		m.mu.RLock()
+		isComplete := m.isComplete
+		m.mu.RUnlock()
+
+		if isComplete {
+			// Boot already marked as complete via persistent markers.
+			// Just listen for changes to marker files and wait for potential reboot.
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
 		// Open FIFO in blocking mode (without O_NONBLOCK).
 		// This will block if no writers are connected yet.
 		file, err := os.OpenFile(logFile, os.O_RDONLY, 0)

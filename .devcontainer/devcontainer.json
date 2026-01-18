@@ -5,6 +5,7 @@
 		"context": ".."
 	},
 	"overrideCommand": true,
+	"postCreateCommand": "sudo touch /etc/zeropoint/.zeropoint-boot-complete",
 	"postAttachCommand": "go mod download && npm install",
 	"forwardPorts": [80, 443, 2370],
 	"portsAttributes": {
