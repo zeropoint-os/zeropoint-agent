@@ -3,6 +3,8 @@ package boot
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,16 +79,129 @@ func (m *BootMonitor) ResetState() {
 	m.broadcast(snapshot)
 }
 
-// loadPersistentMarkers checks for marker files to determine already-completed services
+// loadPersistentMarkers scans /etc/zeropoint for marker files and loads completed/failed services
 func (m *BootMonitor) loadPersistentMarkers() {
-	// Check if boot already completed
-	if _, err := os.Stat(m.markerDir + "/.boot-complete"); err == nil {
-		m.isComplete = true
-		m.logger.Info("boot already completed (marker file found)")
+	entries, err := os.ReadDir(m.markerDir)
+	if err != nil {
+		m.logger.Warn("failed to read marker directory", "error", err)
 		return
 	}
 
-	m.logger.Info("boot process monitoring started")
+	now := time.Now()
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filename := entry.Name()
+		if !strings.HasPrefix(filename, ".zeropoint-") {
+			continue
+		}
+
+		// Parse marker type and service name
+		// .zeropoint-setup-storage → service: zeropoint-setup-storage
+		// .zeropoint-setup-storage.error → service: zeropoint-setup-storage (error)
+		// .zeropoint-setup-storage.warning → service: zeropoint-setup-storage (warning)
+
+		serviceName := strings.TrimPrefix(filename, ".")
+
+		if strings.HasSuffix(serviceName, ".error") {
+			// Error marker
+			svcName := strings.TrimSuffix(serviceName, ".error")
+			markerPath := filepath.Join(m.markerDir, filename)
+			errorDetails := m.readMarkerFile(markerPath)
+
+			m.services[svcName] = &ServiceStatus{
+				Name:        svcName,
+				Phase:       "boot",
+				State:       "failed",
+				StartedAt:   &now,
+				CompletedAt: &now,
+				Steps:       []string{"error"},
+				Error:       errorDetails,
+			}
+			m.isBootFailed = true
+			m.failedServices[svcName] = errorDetails
+
+			m.logger.Info("loaded error marker", "service", svcName)
+
+		} else if strings.HasSuffix(serviceName, ".warning") {
+			// Warning marker
+			svcName := strings.TrimSuffix(serviceName, ".warning")
+			markerPath := filepath.Join(m.markerDir, filename)
+			warningDetails := m.readMarkerFile(markerPath)
+
+			// If service not yet loaded, create it
+			if _, exists := m.services[svcName]; !exists {
+				m.services[svcName] = &ServiceStatus{
+					Name:        svcName,
+					Phase:       "boot",
+					State:       "completed",
+					StartedAt:   &now,
+					CompletedAt: &now,
+					Steps:       []string{"warning"},
+				}
+			}
+
+			// Add warning to existing service
+			if svc, exists := m.services[svcName]; exists {
+				svc.Warning = warningDetails
+			}
+
+			m.logger.Info("loaded warning marker", "service", svcName)
+
+		} else {
+			// Completion marker
+			markerPath := filepath.Join(m.markerDir, filename)
+			fileInfo, err := os.Stat(markerPath)
+			if err != nil {
+				continue
+			}
+
+			modTime := fileInfo.ModTime()
+
+			m.services[serviceName] = &ServiceStatus{
+				Name:        serviceName,
+				Phase:       "boot",
+				State:       "completed",
+				StartedAt:   &modTime,
+				CompletedAt: &modTime,
+				Steps:       []string{serviceName},
+			}
+
+			// If this is boot-complete, mark boot as done
+			if serviceName == "zeropoint-boot-complete" {
+				m.isComplete = true
+				m.completedAt = &modTime
+
+				markerEntry := MarkerEntry{
+					Step:      "boot-complete",
+					Timestamp: modTime,
+					Status:    "notice",
+				}
+				m.markers.Set("zeropoint-boot-complete", []MarkerEntry{markerEntry})
+
+				m.logger.Info("boot completed (marker file found)")
+			} else {
+				m.logger.Info("loaded completion marker", "service", serviceName)
+			}
+		}
+	}
+
+	if m.isBootFailed {
+		m.logger.Info("boot failed - errors detected in marker files", "failed_services", m.failedServices)
+	}
+}
+
+// readMarkerFile reads the contents of a marker file
+func (m *BootMonitor) readMarkerFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.logger.Warn("failed to read marker file", "path", path, "error", err)
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // IsComplete returns whether boot has completed
@@ -285,7 +400,7 @@ func (m *BootMonitor) MarkBootComplete() {
 	m.logger.Info("boot process completed")
 
 	// Write marker file
-	if err := os.WriteFile(m.markerDir+"/.boot-complete", []byte(now.Format(time.RFC3339)), 0644); err != nil {
+	if err := os.WriteFile(m.markerDir+"/.zeropoint-boot-complete", []byte(now.Format(time.RFC3339)), 0644); err != nil {
 		m.logger.Warn("failed to write boot-complete marker", "error", err)
 	}
 
@@ -415,7 +530,7 @@ func (m *BootMonitor) updateMarkerTracker(entry LogEntry) {
 		m.logger.Info("boot process completed (boot-complete marker detected)")
 
 		// Write marker file
-		if err := os.WriteFile(m.markerDir+"/.boot-complete", []byte(now.Format(time.RFC3339)), 0644); err != nil {
+		if err := os.WriteFile(m.markerDir+"/.zeropoint-boot-complete", []byte(now.Format(time.RFC3339)), 0644); err != nil {
 			m.logger.Warn("failed to write boot-complete marker", "error", err)
 		}
 	}

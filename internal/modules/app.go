@@ -32,15 +32,28 @@ type Container struct {
 
 // Module represents an installed module managed by zeropoint-agent.
 // State is discovered from filesystem + Terraform outputs + Docker API.
+// @Description Installed module with runtime status and GPU information
 type Module struct {
-	ID            string               `json:"id"`                       // Module identifier (directory name)
-	ModulePath    string               `json:"module_path"`              // Path to Terraform module (e.g., "modules/ollama")
-	State         string               `json:"state"`                    // Runtime state: "running" | "stopped" | "crashed" | "unknown"
-	ContainerID   string               `json:"container_id,omitempty"`   // Docker container ID (for main container)
-	ContainerName string               `json:"container_name,omitempty"` // Docker container name (for main container)
-	IPAddress     string               `json:"ip_address,omitempty"`     // Container IP address (for main container)
-	Containers    map[string]Container `json:"containers,omitempty"`     // Module containers with their ports (from {container}_ports outputs)
-	Tags          []string             `json:"tags,omitempty"`           // optional tags for categorization
+	// @Description Module identifier (directory name)
+	ID string `json:"id"`
+	// @Description Path to Terraform module (e.g., "modules/ollama")
+	ModulePath string `json:"module_path"`
+	// @Description Runtime state (running, stopped, crashed, unknown)
+	State string `json:"state"`
+	// @Description Docker container ID for main container (omitted if not running)
+	ContainerID string `json:"container_id,omitempty"`
+	// @Description Docker container name for main container (omitted if not running)
+	ContainerName string `json:"container_name,omitempty"`
+	// @Description Container IP address (omitted if not running)
+	IPAddress string `json:"ip_address,omitempty"`
+	// @Description GPU vendor if container runtime is GPU-capable (e.g., "nvidia", empty if not GPU-capable)
+	GPUVendor string `json:"gpu_vendor,omitempty"`
+	// @Description Whether container has GPU devices allocated
+	UsingGPU bool `json:"using_gpu"`
+	// @Description Module containers with their ports (from {container}_ports outputs)
+	Containers map[string]Container `json:"containers,omitempty"`
+	// @Description Optional tags for categorization
+	Tags []string `json:"tags,omitempty"`
 }
 
 // Module states
@@ -67,7 +80,7 @@ func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) 
 				m.ContainerName = containerName
 				m.State = string(c.State)
 
-				// Get IP address if running
+				// Get IP address and GPU info if running
 				if c.State == "running" {
 					inspect, err := docker.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 					if err == nil {
@@ -76,6 +89,16 @@ func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) 
 								m.IPAddress = network.IPAddress.String()
 								break
 							}
+						}
+
+						// Check if container is using NVIDIA GPU
+						if inspect.Container.HostConfig.Runtime == "nvidia" {
+							m.GPUVendor = "nvidia"
+						}
+
+						// Check if container has GPU devices allocated
+						if len(inspect.Container.HostConfig.DeviceRequests) > 0 {
+							m.UsingGPU = true
 						}
 					}
 				}

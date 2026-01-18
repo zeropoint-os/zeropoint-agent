@@ -398,6 +398,20 @@ export default function ModulesView() {
                 </div>
               )}
 
+              {module.gpuVendor && (
+                <div className="module-detail">
+                  <span className="detail-label">GPU Vendor:</span>
+                  <span className="detail-value">{module.gpuVendor}</span>
+                </div>
+              )}
+
+              {module.usingGpu && (
+                <div className="module-detail">
+                  <span className="detail-label">GPU Usage:</span>
+                  <span className="detail-value">Enabled</span>
+                </div>
+              )}
+
               {ports.length > 0 && (
                 <div className="module-ports">
                   <span className="detail-label">Ports:</span>
