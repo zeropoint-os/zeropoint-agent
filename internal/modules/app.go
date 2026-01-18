@@ -39,6 +39,8 @@ type Module struct {
 	ContainerID   string               `json:"container_id,omitempty"`   // Docker container ID (for main container)
 	ContainerName string               `json:"container_name,omitempty"` // Docker container name (for main container)
 	IPAddress     string               `json:"ip_address,omitempty"`     // Container IP address (for main container)
+	GPUVendor     string               `json:"gpu_vendor,omitempty"`     // GPU vendor if container runtime is GPU-capable (e.g., "nvidia")
+	UsingGPU      bool                 `json:"using_gpu"`                // True if container has GPU devices allocated
 	Containers    map[string]Container `json:"containers,omitempty"`     // Module containers with their ports (from {container}_ports outputs)
 	Tags          []string             `json:"tags,omitempty"`           // optional tags for categorization
 }
@@ -67,7 +69,7 @@ func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) 
 				m.ContainerName = containerName
 				m.State = string(c.State)
 
-				// Get IP address if running
+				// Get IP address and GPU info if running
 				if c.State == "running" {
 					inspect, err := docker.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 					if err == nil {
@@ -76,6 +78,16 @@ func (m *Module) GetContainerStatus(ctx context.Context, docker *client.Client) 
 								m.IPAddress = network.IPAddress.String()
 								break
 							}
+						}
+
+						// Check if container is using NVIDIA GPU
+						if inspect.Container.HostConfig.Runtime == "nvidia" {
+							m.GPUVendor = "nvidia"
+						}
+
+						// Check if container has GPU devices allocated
+						if len(inspect.Container.HostConfig.DeviceRequests) > 0 {
+							m.UsingGPU = true
 						}
 					}
 				}
