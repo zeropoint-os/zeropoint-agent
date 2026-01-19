@@ -55,9 +55,15 @@ export default function ModulesView() {
                 updatedJobs.delete(moduleName);
                 jobsChanged = true;
               }
-              // If job failed, show error
+              // If job failed or cancelled, remove from polling
               else if (updatedJob.status === 'failed') {
                 setError(`Failed to install ${moduleName}: ${updatedJob.error || 'Unknown error'}`);
+                updatedJobs.delete(moduleName);
+                jobsChanged = true;
+              }
+              else if (updatedJob.status === 'cancelled') {
+                updatedJobs.delete(moduleName);
+                jobsChanged = true;
               }
             }
           } catch (err) {
@@ -91,9 +97,15 @@ export default function ModulesView() {
                 updatedJobs.delete(moduleName);
                 jobsChanged = true;
               }
-              // If job failed, show error
+              // If job failed or cancelled, remove from polling
               else if (updatedJob.status === 'failed') {
                 setError(`Failed to uninstall ${moduleName}: ${updatedJob.error || 'Unknown error'}`);
+                updatedJobs.delete(moduleName);
+                jobsChanged = true;
+              }
+              else if (updatedJob.status === 'cancelled') {
+                updatedJobs.delete(moduleName);
+                jobsChanged = true;
               }
             }
           } catch (err) {

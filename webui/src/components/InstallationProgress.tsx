@@ -2,15 +2,41 @@ import React from 'react';
 import type { QueueJobResponse } from 'artifacts/clients/typescript';
 import './InstallationProgress.css';
 
+type OperationType = 'install' | 'uninstall' | 'create_link' | 'create_exposure' | 'delete_link' | 'delete_exposure';
+
 interface InstallationProgressProps {
   moduleName: string;
   job: QueueJobResponse | null;
   onCancel?: () => void;
-  operationType?: 'install' | 'uninstall';
+  operationType?: OperationType;
+}
+
+function getActionLabel(operationType: OperationType): string {
+  const labels: Record<OperationType, string> = {
+    'install': 'Installing',
+    'uninstall': 'Uninstalling',
+    'create_link': 'Creating Link',
+    'create_exposure': 'Creating Exposure',
+    'delete_link': 'Deleting Link',
+    'delete_exposure': 'Deleting Exposure',
+  };
+  return labels[operationType];
+}
+
+function getProgressLabel(operationType: OperationType): string {
+  const labels: Record<OperationType, string> = {
+    'install': 'Installing',
+    'uninstall': 'Uninstalling',
+    'create_link': 'Creating Link',
+    'create_exposure': 'Creating Exposure',
+    'delete_link': 'Deleting Link',
+    'delete_exposure': 'Deleting Exposure',
+  };
+  return labels[operationType];
 }
 
 export default function InstallationProgress({ moduleName, job, onCancel, operationType = 'install' }: InstallationProgressProps) {
-  const actionLabel = operationType === 'uninstall' ? 'Uninstalling' : 'Installing';
+  const actionLabel = getActionLabel(operationType);
   
   if (!job) {
     return (
@@ -32,7 +58,7 @@ export default function InstallationProgress({ moduleName, job, onCancel, operat
 
   const displayStatus = () => {
     if (isQueued) return 'Queued';
-    if (isRunning) return operationType === 'uninstall' ? 'Uninstalling' : 'Installing';
+    if (isRunning) return getProgressLabel(operationType);
     if (isCompleted) return 'Completed';
     if (isFailed) return 'Failed';
     if (isCancelled) return 'Cancelled';

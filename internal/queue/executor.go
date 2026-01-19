@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -192,21 +193,24 @@ func (e *JobExecutor) executeCreateLink(ctx context.Context, cmd Command) (inter
 		return nil, fmt.Errorf("link_id is required")
 	}
 
-	sourceModule, _ := cmd.Args["source_module"].(string)
-	targetModule, _ := cmd.Args["target_module"].(string)
-	targetPortVal, _ := cmd.Args["target_port"]
-
-	var targetPort uint32
-	switch v := targetPortVal.(type) {
-	case float64:
-		targetPort = uint32(v)
-	case uint32:
-		targetPort = v
+	modules, ok := cmd.Args["modules"].(map[string]interface{})
+	if !ok || len(modules) == 0 {
+		return nil, fmt.Errorf("modules is required")
 	}
 
-	// Build request body
-	reqBody := fmt.Sprintf(`{"source_module":"%s","target_module":"%s","target_port":%d}`,
-		escapeJSON(sourceModule), escapeJSON(targetModule), targetPort)
+	// Build the request body with the modules structure
+	modulesJSON, err := json.Marshal(modules)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal modules: %w", err)
+	}
+
+	reqBody := fmt.Sprintf(`{"modules":%s}`, modulesJSON)
+
+	// Add tags if provided
+	if tags, ok := cmd.Args["tags"].([]interface{}); ok && len(tags) > 0 {
+		tagsJSON, _ := json.Marshal(tags)
+		reqBody = fmt.Sprintf(`{"modules":%s,"tags":%s}`, modulesJSON, tagsJSON)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/links/%s", linkID), strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")

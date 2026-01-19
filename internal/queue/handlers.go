@@ -55,11 +55,10 @@ type EnqueueDeleteExposureRequest struct {
 
 // EnqueueCreateLinkRequest is the request for enqueueing a create link job
 type EnqueueCreateLinkRequest struct {
-	LinkID       string   `json:"link_id"`
-	SourceModule string   `json:"source_module,omitempty"`
-	TargetModule string   `json:"target_module"`
-	TargetPort   uint32   `json:"target_port"`
-	DependsOn    []string `json:"depends_on,omitempty"`
+	LinkID    string                            `json:"link_id"`
+	Modules   map[string]map[string]interface{} `json:"modules,omitempty"`
+	Tags      []string                          `json:"tags,omitempty"`
+	DependsOn []string                          `json:"depends_on,omitempty"`
 }
 
 // EnqueueDeleteLinkRequest is the request for enqueueing a delete link job
@@ -294,18 +293,23 @@ func (h *Handlers) EnqueueCreateLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.LinkID == "" || req.TargetModule == "" || req.TargetPort == 0 {
-		http.Error(w, "link_id, target_module, and target_port are required", http.StatusBadRequest)
+	if req.LinkID == "" {
+		http.Error(w, "link_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// If modules are provided, they must not be empty
+	if req.Modules == nil || len(req.Modules) == 0 {
+		http.Error(w, "modules is required", http.StatusBadRequest)
 		return
 	}
 
 	cmd := Command{
 		Type: CmdCreateLink,
 		Args: map[string]interface{}{
-			"link_id":       req.LinkID,
-			"source_module": req.SourceModule,
-			"target_module": req.TargetModule,
-			"target_port":   req.TargetPort,
+			"link_id": req.LinkID,
+			"modules": req.Modules,
+			"tags":    req.Tags,
 		},
 	}
 

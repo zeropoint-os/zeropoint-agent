@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ExposuresApi, ModulesApi, Configuration, ApiModule, ApiExposureResponse } from 'artifacts/clients/typescript';
+import { ExposuresApi, ModulesApi, JobsApi, Configuration, ApiModule, ApiExposureResponse, QueueJobResponse } from 'artifacts/clients/typescript';
 import CreateExposureDialog from '../components/CreateExposureDialog';
+import InstallationProgress from '../components/InstallationProgress';
 import './Views.css';
 
 type Module = ApiModule;
@@ -12,12 +13,79 @@ export default function ExposuresView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [deletingExposure, setDeletingExposure] = useState<string | null>(null);
+  const [createJobs, setCreateJobs] = useState<Map<string, QueueJobResponse>>(new Map());
+  const [deleteJobs, setDeleteJobs] = useState<Map<string, QueueJobResponse>>(new Map());
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   useEffect(() => {
     fetchExposuresAndModules();
   }, []);
+
+  useEffect(() => {
+    const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+
+    const pollCreateJobs = async () => {
+      const updatedJobs = new Map(createJobs);
+
+      for (const [exposureId, job] of createJobs.entries()) {
+        if (job.id && job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
+          try {
+            const updatedJob = await jobsApi.getJob({ id: job.id });
+            
+            if (updatedJob.status === 'completed' || updatedJob.status === 'failed' || updatedJob.status === 'cancelled') {
+              // Remove completed/failed/cancelled jobs from the map
+              updatedJobs.delete(exposureId);
+              // Refresh exposures list when job completes
+              if (updatedJob.status === 'completed') {
+                await fetchExposuresAndModules();
+              }
+            } else {
+              updatedJobs.set(exposureId, updatedJob);
+            }
+          } catch (err) {
+            console.error('Error polling create job:', err);
+          }
+        }
+      }
+
+      setCreateJobs(updatedJobs);
+    };
+
+    const pollDeleteJobs = async () => {
+      const updatedJobs = new Map(deleteJobs);
+
+      for (const [exposureId, job] of deleteJobs.entries()) {
+        if (job.id && job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
+          try {
+            const updatedJob = await jobsApi.getJob({ id: job.id });
+            
+            if (updatedJob.status === 'completed' || updatedJob.status === 'failed' || updatedJob.status === 'cancelled') {
+              // Remove completed/failed/cancelled jobs from the map
+              updatedJobs.delete(exposureId);
+              // Refresh exposures list when job completes
+              if (updatedJob.status === 'completed') {
+                await fetchExposuresAndModules();
+              }
+            } else {
+              updatedJobs.set(exposureId, updatedJob);
+            }
+          } catch (err) {
+            console.error('Error polling delete job:', err);
+          }
+        }
+      }
+
+      setDeleteJobs(updatedJobs);
+    };
+
+    if (createJobs.size > 0 || deleteJobs.size > 0) {
+      const interval = setInterval(() => {
+        pollCreateJobs();
+        pollDeleteJobs();
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [createJobs, deleteJobs]);
 
   const fetchExposuresAndModules = async () => {
     try {
@@ -58,10 +126,14 @@ export default function ExposuresView() {
     container_port: number;
   }) => {
     try {
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.createExposure({
-        exposureId: data.module_id,
-        apiCreateExposureRequest: {
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+      
+      // Generate an exposure ID from module and hostname
+      const exposureId = `${data.module_id}-${data.hostname}`;
+      
+      const jobResponse = await jobsApi.enqueueCreateExposure({
+        queueEnqueueCreateExposureRequest: {
+          exposureId: exposureId,
           moduleId: data.module_id,
           hostname: data.hostname,
           protocol: data.protocol,
@@ -69,14 +141,11 @@ export default function ExposuresView() {
         },
       });
 
-      setSuccessMessage(`Exposure for "${data.module_id}" created successfully`);
-      setTimeout(() => setSuccessMessage(null), 4000);
-
-      // Refresh exposures list
-      await fetchExposuresAndModules();
+      setCreateJobs(prev => new Map(prev).set(exposureId, jobResponse));
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create exposure');
-      throw err; // Re-throw to let dialog handle it
+      throw err;
     }
   };
 
@@ -86,21 +155,18 @@ export default function ExposuresView() {
     }
 
     try {
-      setDeletingExposure(exposureId);
       setError(null);
 
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.deleteExposure({ exposureId });
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+      const jobResponse = await jobsApi.enqueueDeleteExposure({
+        queueEnqueueDeleteExposureRequest: {
+          exposureId: exposureId,
+        },
+      });
 
-      setSuccessMessage(`Exposure "${exposureId}" deleted successfully`);
-      setTimeout(() => setSuccessMessage(null), 4000);
-      
-      // Refresh exposures list
-      await fetchExposuresAndModules();
+      setDeleteJobs(prev => new Map(prev).set(exposureId, jobResponse));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete exposure');
-    } finally {
-      setDeletingExposure(null);
     }
   };
 
@@ -113,7 +179,7 @@ export default function ExposuresView() {
         onCreate={handleCreateExposureSubmit}
       />
 
-      {!loading && exposures.length > 0 && (
+      {!loading && (exposures.length > 0 || createJobs.size > 0) && (
         <div className="view-header">
           <h1 className="section-title">Exposures</h1>
           <button className="button button-primary" onClick={handleCreateExposure}>
@@ -121,13 +187,12 @@ export default function ExposuresView() {
           </button>
         </div>
       )}
-      {(loading || exposures.length === 0) && (
+      {!loading && exposures.length === 0 && createJobs.size === 0 && (
         <div className="view-header">
           <h1 className="section-title">Exposures</h1>
         </div>
       )}
-
-      {error && (
+      {error && !loading && (
         <div className="error-state">
           <p className="error-message">{error}</p>
           <button className="button button-secondary" onClick={() => setError(null)}>
@@ -147,7 +212,7 @@ export default function ExposuresView() {
           <div className="spinner"></div>
           <p>Loading exposures...</p>
         </div>
-      ) : exposures.length === 0 ? (
+      ) : exposures.length === 0 && createJobs.size === 0 ? (
         <div className="empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -161,6 +226,23 @@ export default function ExposuresView() {
         </div>
       ) : (
         <div className="grid grid-2">
+          {Array.from(createJobs.entries()).map(([exposureId, job]) => (
+            <div key={`create-${exposureId}`} className="card">
+              <InstallationProgress 
+                moduleName={exposureId} 
+                job={job}
+                operationType="create_exposure"
+                onCancel={job.status === 'queued' ? () => {
+                  if (job.id) {
+                    const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+                    jobsApi.cancelJob({ id: job.id }).catch(err => 
+                      console.error('Failed to cancel create exposure job:', err)
+                    );
+                  }
+                } : undefined}
+              />
+            </div>
+          ))}
           {exposures.map((exposure, idx) => {
             const exposureId = exposure.id || `exposure-${idx}`;
             const url = exposure.hostname && exposure.containerPort 
@@ -169,6 +251,9 @@ export default function ExposuresView() {
             const createdDate = exposure.createdAt 
               ? new Date(exposure.createdAt).toLocaleDateString()
               : 'N/A';
+            const deleteJob = deleteJobs.get(exposureId);
+            const isDeleting = !!deleteJob;
+
             return (
               <div key={exposureId} className="card">
                 <div className="exposure-header">
@@ -180,52 +265,72 @@ export default function ExposuresView() {
                     {exposure.status || 'unknown'}
                   </span>
                 </div>
-                
-                <div className="exposure-detail">
-                  <span className="detail-label">URL:</span>
-                  {url !== 'N/A' ? (
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="detail-link">
-                      {url}
-                    </a>
-                  ) : (
-                    <span className="detail-value">{url}</span>
-                  )}
-                </div>
 
-                <div className="exposure-detail">
-                  <span className="detail-label">Protocol:</span>
-                  <span className="detail-value">{exposure.protocol || 'N/A'}</span>
-                </div>
-
-                <div className="exposure-detail">
-                  <span className="detail-label">Port:</span>
-                  <span className="detail-value">{exposure.containerPort || 'N/A'}</span>
-                </div>
-
-                <div className="exposure-detail">
-                  <span className="detail-label">Created:</span>
-                  <span className="detail-value">{createdDate}</span>
-                </div>
-
-                {exposure.tags && exposure.tags.length > 0 && (
-                  <div className="exposure-tags">
-                    {exposure.tags.map((tag) => (
-                      <span key={tag} className="tag">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
+                {deleteJob && (
+                  <InstallationProgress 
+                    moduleName={exposureId} 
+                    job={deleteJob}
+                    operationType="delete_exposure"
+                    onCancel={deleteJob.status === 'queued' ? () => {
+                      if (deleteJob.id) {
+                        const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+                        jobsApi.cancelJob({ id: deleteJob.id }).catch(err => 
+                          console.error('Failed to cancel delete exposure job:', err)
+                        );
+                      }
+                    } : undefined}
+                  />
                 )}
-                
-                <div className="exposure-actions">
-                  <button
-                    className="button button-danger"
-                    onClick={() => handleDeleteExposure(exposureId)}
-                    disabled={deletingExposure === exposureId}
-                  >
-                    {deletingExposure === exposureId ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
+
+                {!isDeleting && (
+                  <>
+                    <div className="exposure-detail">
+                      <span className="detail-label">URL:</span>
+                      {url !== 'N/A' ? (
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="detail-link">
+                          {url}
+                        </a>
+                      ) : (
+                        <span className="detail-value">{url}</span>
+                      )}
+                    </div>
+
+                    <div className="exposure-detail">
+                      <span className="detail-label">Protocol:</span>
+                      <span className="detail-value">{exposure.protocol || 'N/A'}</span>
+                    </div>
+
+                    <div className="exposure-detail">
+                      <span className="detail-label">Port:</span>
+                      <span className="detail-value">{exposure.containerPort || 'N/A'}</span>
+                    </div>
+
+                    <div className="exposure-detail">
+                      <span className="detail-label">Created:</span>
+                      <span className="detail-value">{createdDate}</span>
+                    </div>
+
+                    {exposure.tags && exposure.tags.length > 0 && (
+                      <div className="exposure-tags">
+                        {exposure.tags.map((tag) => (
+                          <span key={tag} className="tag">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <div className="exposure-actions">
+                      <button
+                        className="button button-danger"
+                        onClick={() => handleDeleteExposure(exposureId)}
+                        disabled={isDeleting}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
