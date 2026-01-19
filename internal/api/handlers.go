@@ -73,6 +73,7 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 }
 
 // CreateExposure handles POST /exposures/{exposure_id}
+// @ID createExposure
 // @Summary Create an exposure for an application
 // @Description Exposes an application externally via Envoy reverse proxy
 // @Tags exposures
@@ -131,6 +132,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 }
 
 // ListExposures handles GET /exposures
+// @ID listExposures
 // @Summary List all exposures
 // @Description Returns all active exposures
 // @Tags exposures
@@ -152,6 +154,7 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 }
 
 // GetExposure handles GET /exposures/{exposure_id}
+// @ID getExposure
 // @Summary Get exposure for an application
 // @Description Returns the exposure details for a specific exposure
 // @Tags exposures
@@ -176,6 +179,7 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteExposure handles DELETE /exposures/{exposure_id}
+// @ID deleteExposure
 // @Summary Delete an exposure
 // @Description Removes external access for an exposure
 // @Tags exposures
@@ -287,6 +291,7 @@ func (h *LinkHandlers) RegisterRoutes(router *mux.Router) {
 }
 
 // ListLinks handles GET /links
+// @ID listLinks
 // @Summary List all links
 // @Description Returns all active app links
 // @Tags links
@@ -303,6 +308,7 @@ func (h *LinkHandlers) ListLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetLink handles GET /links/{id}
+// @ID getLink
 // @Summary Get link details
 // @Description Returns details for a specific link
 // @Tags links
@@ -326,6 +332,7 @@ func (h *LinkHandlers) GetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateOrUpdateLink handles POST /links/{id}
+// @ID createOrUpdateLink
 // @Summary Create or update a link
 // @Description Create or update a link between multiple modules
 // @Tags links
@@ -363,6 +370,7 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 }
 
 // DeleteLink handles DELETE /links/{id}
+// @ID deleteLink
 // @Summary Delete a link
 // @Description Remove a link and clean up associated resources
 // @Tags links
@@ -794,6 +802,7 @@ func NewModuleHandlers(installer *Installer, uninstaller *Uninstaller, docker *c
 }
 
 // InstallModule handles POST /modules/{name} with streaming progress updates
+// @ID installModule
 // @Summary Install a module
 // @Description Installs a module by name with optional configuration
 // @Tags modules
@@ -877,6 +886,7 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // UninstallModule handles DELETE /modules/{name} with streaming progress updates
+// @ID uninstallModule
 // @Summary Uninstall a module
 // @Description Uninstalls a module by name with streaming progress updates
 // @Tags modules
@@ -935,6 +945,7 @@ func (h *ModuleHandlers) UninstallModule(w http.ResponseWriter, r *http.Request)
 }
 
 // ListModules handles GET /modules
+// @ID listModules
 // @Summary List installed modules
 // @Description Returns installed modules metadata
 // @Tags modules

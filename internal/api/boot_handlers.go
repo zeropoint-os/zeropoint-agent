@@ -27,6 +27,7 @@ func NewBootHandlers(monitor *boot.BootMonitor) *BootHandlers {
 // HandleBootStatus serves GET /api/boot/status
 // Returns an ordered array of service marker lists in the order observed.
 //
+// @ID getBootStatus
 // @Summary Get boot service markers
 // @Description Returns an ordered array of services each with an array of MarkerEntry seen so far for that service
 // @Tags boot
@@ -43,6 +44,7 @@ func (h *BootHandlers) HandleBootStatus(w http.ResponseWriter, r *http.Request) 
 
 // HandleBootService serves GET /api/boot/status/{service}
 // Returns marker history for a single service as an array of MarkerEntry
+// @ID getBootService
 // @Summary Get service marker history
 // @Description Returns markers seen so far for a specific service
 // @Tags boot
@@ -76,6 +78,7 @@ func (h *BootHandlers) HandleBootService(w http.ResponseWriter, r *http.Request)
 
 // HandleBootMarker serves GET /api/boot/status/{service}/{marker}
 // Returns a single MarkerEntry for the given service and marker name, or an empty object if not seen
+// @ID getBootMarker
 // @Summary Get single marker for a service
 // @Description Returns the last-seen marker entry for a given service and marker name
 // @Tags boot
@@ -126,6 +129,7 @@ func (h *BootHandlers) HandleBootMarker(w http.ResponseWriter, r *http.Request) 
 //	limit=<n>       - max entries to return (default 100)
 //	offset=<n>      - offset into log list (default 0)
 //
+// @ID getBootLogs
 // @Summary Get boot logs
 // @Description Returns boot process logs with optional filtering by service or level
 // @Tags boot
@@ -195,6 +199,7 @@ func (h *BootHandlers) HandleBootLogs(w http.ResponseWriter, r *http.Request) {
 // HandleBootStream serves WS /api/boot/stream
 // Streams boot status updates in real-time
 //
+// @ID streamBootUpdates
 // @Summary Stream boot updates
 // @Description WebSocket endpoint that streams real-time boot status updates and log entries
 // @Tags boot

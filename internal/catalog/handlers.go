@@ -34,6 +34,7 @@ func NewHandlers(store *Store, resolver *Resolver, logger *slog.Logger) *Handler
 }
 
 // HandleUpdateCatalog handles POST /catalogs/update
+// @ID updateCatalog
 // @Summary Update catalog
 // @Description Updates the local catalog by cloning/pulling from the remote repository
 // @Tags catalog
@@ -73,6 +74,7 @@ func (h *Handlers) HandleUpdateCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleListModules handles GET /catalogs/modules
+// @ID listCatalogModules
 // @Summary List catalog modules
 // @Description Returns all available modules from the catalog with their metadata
 // @Tags catalog
@@ -123,6 +125,7 @@ func (h *Handlers) HandleListModules(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleListBundles handles GET /catalogs/bundles
+// @ID listCatalogBundles
 // @Summary List catalog bundles
 // @Description Returns all available bundles from the catalog with their metadata
 // @Tags catalog
@@ -174,6 +177,7 @@ func (h *Handlers) HandleListBundles(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetModule handles GET /catalogs/modules/{module_name}
+// @ID getCatalogModule
 // @Summary Get specific catalog module
 // @Description Returns a specific module from the catalog with its metadata
 // @Tags catalog
@@ -212,6 +216,7 @@ func (h *Handlers) HandleGetModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetBundle handles GET /catalogs/bundles/{bundle_name}
+// @ID getCatalogBundle
 // @Summary Get specific catalog bundle
 // @Description Returns a specific bundle from the catalog with its metadata
 // @Tags catalog
