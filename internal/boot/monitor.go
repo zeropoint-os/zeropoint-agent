@@ -54,9 +54,23 @@ func NewBootMonitor(logger *slog.Logger) *BootMonitor {
 
 // ResetState clears in-memory boot state for a fresh boot (e.g., when the
 // boot log FIFO or marker files are gone because the system rebooted).
+// However, if persistent markers exist on disk, we reload them instead of
+// fully clearing state.
 func (m *BootMonitor) ResetState() {
 	m.mu.Lock()
 
+	// Check if persistent markers exist on disk
+	hasMarkers := m.checkPersistentMarkersExist()
+
+	if hasMarkers {
+		// Markers exist on disk - reload them instead of clearing state
+		m.logger.Info("persistent markers found on disk; reloading state instead of resetting")
+		m.mu.Unlock()
+		m.loadPersistentMarkers()
+		return
+	}
+
+	// No markers on disk - full reset for new boot
 	m.logger.Info("resetting in-memory boot state due to missing markers/log file")
 
 	m.phases = make(map[string]*PhaseStatus)
@@ -79,6 +93,21 @@ func (m *BootMonitor) ResetState() {
 	m.broadcast(snapshot)
 }
 
+// checkPersistentMarkersExist checks if any marker files exist in the marker directory
+func (m *BootMonitor) checkPersistentMarkersExist() bool {
+	entries, err := os.ReadDir(m.markerDir)
+	if err != nil {
+		return false // Directory doesn't exist or unreadable = no markers
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), ".zeropoint-") {
+			return true // Found at least one marker file
+		}
+	}
+	return false
+}
+
 // loadPersistentMarkers scans /etc/zeropoint for marker files and loads completed/failed services
 func (m *BootMonitor) loadPersistentMarkers() {
 	entries, err := os.ReadDir(m.markerDir)
@@ -88,6 +117,9 @@ func (m *BootMonitor) loadPersistentMarkers() {
 	}
 
 	now := time.Now()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for _, entry := range entries {
 		if entry.IsDir() {
