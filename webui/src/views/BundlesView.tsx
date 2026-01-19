@@ -36,9 +36,9 @@ export default function BundlesView() {
 
       // Fetch all exposures, links, and modules to find installed bundles
       const [exposuresData, linksData, modulesData] = await Promise.all([
-        exposuresApi.exposuresGet(),
-        linksApi.linksGet(),
-        modulesApi.modulesGet(),
+        exposuresApi.listExposures(),
+        linksApi.listLinks(),
+        modulesApi.listModules(),
       ]);
 
       const exposures = exposuresData.exposures ?? [];
@@ -118,7 +118,7 @@ export default function BundlesView() {
 
       // Fetch the bundle definition
       const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
-      const bundle = await catalogApi.catalogsBundlesBundleNameGet({ bundleName });
+      const bundle = await catalogApi.getCatalogBundle({ bundleName });
 
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
@@ -131,7 +131,7 @@ export default function BundlesView() {
 
           // Fetch module details from catalog to get source
           const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
-          const moduleInfo = await catalogApi.catalogsModulesModuleNameGet({ moduleName });
+          const moduleInfo = await catalogApi.getCatalogModule({ moduleName });
 
           // Use raw fetch to handle streaming response
           const response = await fetch(`/api/modules/${moduleName}`, {
@@ -196,7 +196,7 @@ export default function BundlesView() {
             }
           }
 
-          await linksApi.linksIdPost({
+          await linksApi.createOrUpdateLink({
             id: linkName,
             apiCreateLinkRequest: {
               modules: modules,
@@ -210,7 +210,7 @@ export default function BundlesView() {
       if (bundle.exposures && Object.keys(bundle.exposures).length > 0) {
         // Fetch modules to get port information
         const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-        const modulesResponse = await modulesApi.modulesGet();
+        const modulesResponse = await modulesApi.listModules();
         const installedModules = modulesResponse.modules ?? [];
 
         for (const [exposureName, exposureDef] of Object.entries(bundle.exposures)) {
@@ -254,7 +254,7 @@ export default function BundlesView() {
             hostname = exposureName;
           }
 
-          await exposuresApi.exposuresExposureIdPost({
+          await exposuresApi.createExposure({
             exposureId: exposureName,
             apiCreateExposureRequest: {
               moduleId: exposure.module,
@@ -306,9 +306,9 @@ export default function BundlesView() {
 
       // Fetch all components to find tagged items
       const [exposuresData, linksData, modulesData] = await Promise.all([
-        exposuresApi.exposuresGet(),
-        linksApi.linksGet(),
-        modulesApi.modulesGet(),
+        exposuresApi.listExposures(),
+        linksApi.listLinks(),
+        modulesApi.listModules(),
       ]);
 
       const exposures = exposuresData.exposures ?? [];
@@ -321,7 +321,7 @@ export default function BundlesView() {
       );
       for (const exposure of bundleExposures) {
         setProgressMessage(`Removing exposure: ${exposure.id}...`);
-        await exposuresApi.exposuresExposureIdDelete({ exposureId: exposure.id ?? '' });
+        await exposuresApi.deleteExposure({ exposureId: exposure.id ?? '' });
       }
 
       // Delete links tagged with this bundle
@@ -330,7 +330,7 @@ export default function BundlesView() {
       );
       for (const link of bundleLinks) {
         setProgressMessage(`Removing link: ${link.id}...`);
-        await linksApi.linksIdDelete({ id: link.id ?? '' });
+        await linksApi.deleteLink({ id: link.id ?? '' });
       }
 
       // Delete modules tagged with this bundle

@@ -32,7 +32,7 @@ export default function App() {
   useEffect(() => {
     const checkBoot = async () => {
       try {
-        const data = await bootApi.apiBootStatusGet();
+        const data = await bootApi.getBootStatus();
         // Check if boot-complete marker exists
         let isComplete = false;
         if (data && Array.isArray(data)) {

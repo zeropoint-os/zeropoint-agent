@@ -20,7 +20,7 @@ export default function LinksView() {
     try {
       setLoading(true);
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
-      const response = await linksApi.linksGet();
+      const response = await linksApi.listLinks();
       const linkList = response.links ?? [];
       setLinks(linkList);
       setError(null);
@@ -60,7 +60,7 @@ export default function LinksView() {
       setError(null);
 
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
-      await linksApi.linksIdDelete({ id: linkId });
+      await linksApi.deleteLink({ id: linkId });
 
       // Refresh links list
       await fetchLinks();

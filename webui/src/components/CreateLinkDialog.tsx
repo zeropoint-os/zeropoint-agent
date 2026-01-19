@@ -35,7 +35,7 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
   const fetchModules = async () => {
     try {
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-      const response = await modulesApi.modulesGet();
+      const response = await modulesApi.listModules();
       const moduleList = response.modules ?? [];
       setAllModules(moduleList);
     } catch (err) {
@@ -46,7 +46,7 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
   const fetchInspectData = async (moduleId: string) => {
     try {
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-      const data = await modulesApi.modulesModuleIdInspectGet({ moduleId });
+      const data = await modulesApi.inspectModule({ moduleId });
       return data as unknown as InspectResponse;
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : `Failed to inspect ${moduleId}`);
@@ -176,7 +176,7 @@ export default function CreateLinkDialog({ isOpen, onClose, onCreate }: CreateLi
 
       // POST to /api/links/{linkName}
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
-      await linksApi.linksIdPost({
+      await linksApi.createOrUpdateLink({
         id: linkName,
         apiCreateLinkRequest: {
           modules: modulesData,

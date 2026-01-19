@@ -27,12 +27,12 @@ export default function ExposuresView() {
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
       
       // Fetch exposures
-      const exposuresResponse = await exposuresApi.exposuresGet();
+      const exposuresResponse = await exposuresApi.listExposures();
       const exposureList = exposuresResponse.exposures ?? [];
       setExposures(exposureList);
 
       // Fetch modules
-      const modulesResponse = await modulesApi.modulesGet();
+      const modulesResponse = await modulesApi.listModules();
       const modulesList = modulesResponse.modules ?? [];
       setModules(modulesList);
 
@@ -59,7 +59,7 @@ export default function ExposuresView() {
   }) => {
     try {
       const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.exposuresExposureIdPost({
+      await exposuresApi.createExposure({
         exposureId: data.module_id,
         apiCreateExposureRequest: {
           moduleId: data.module_id,
@@ -90,7 +90,7 @@ export default function ExposuresView() {
       setError(null);
 
       const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.exposuresExposureIdDelete({ exposureId });
+      await exposuresApi.deleteExposure({ exposureId });
 
       setSuccessMessage(`Exposure "${exposureId}" deleted successfully`);
       setTimeout(() => setSuccessMessage(null), 4000);
