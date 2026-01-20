@@ -174,8 +174,8 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	// Create router with middleware for boot checking
 	routerWithMiddleware := bootCheckMiddleware(r)
 
-	// Initialize job executor with the router (for re-using existing handlers)
-	jobExecutor := queue.NewJobExecutor(routerWithMiddleware, logger)
+	// Initialize job executor with handlers for direct execution
+	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, logger)
 
 	// Create and start the job worker
 	worker := queue.NewWorker(queueManager, jobExecutor, logger)

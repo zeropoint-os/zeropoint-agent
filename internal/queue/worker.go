@@ -9,7 +9,7 @@ import (
 
 // Executor is responsible for executing a command and returning a result
 type Executor interface {
-	Execute(ctx context.Context, cmd Command) (interface{}, error)
+	ExecuteWithJob(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error)
 }
 
 // Worker processes queued jobs in topological order
@@ -154,7 +154,7 @@ func (w *Worker) executeJob(ctx context.Context, job *Job) {
 	}
 
 	// Execute the command
-	result, execErr := w.executor.Execute(ctx, job.Command)
+	result, execErr := w.executor.ExecuteWithJob(ctx, job.ID, w.manager, job.Command)
 
 	// Mark job as completed or failed
 	completedTime := time.Now().UTC()
