@@ -59,11 +59,33 @@ func (e *JobExecutor) executeInstallModule(ctx context.Context, cmd Command) (in
 		return nil, fmt.Errorf("either source or local_path is required")
 	}
 
-	// Create a request body that matches the existing handler expectations
-	reqBody := fmt.Sprintf(`{"source":"%s","local_path":"%s"}`, escapeJSON(source), escapeJSON(localPath))
+	// Extract tags if provided
+	var tags []string
+	if tagsInterface, ok := cmd.Args["tags"]; ok {
+		if tagsSlice, ok := tagsInterface.([]interface{}); ok {
+			for _, tag := range tagsSlice {
+				if tagStr, ok := tag.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		} else if tagsSlice, ok := tagsInterface.([]string); ok {
+			tags = tagsSlice
+		}
+	}
+
+	// Build request body with tags support
+	reqBody := map[string]interface{}{
+		"source":     source,
+		"local_path": localPath,
+	}
+	if len(tags) > 0 {
+		reqBody["tags"] = tags
+	}
+
+	reqBodyJSON, _ := json.Marshal(reqBody)
 
 	// Create an HTTP request to the existing endpoint
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/modules/%s", moduleID), strings.NewReader(reqBody))
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/modules/%s", moduleID), strings.NewReader(string(reqBodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 

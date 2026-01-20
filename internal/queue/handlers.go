@@ -27,6 +27,7 @@ type EnqueueInstallRequest struct {
 	ModuleID  string   `json:"module_id"`
 	Source    string   `json:"source,omitempty"`
 	LocalPath string   `json:"local_path,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 }
 
@@ -101,6 +102,7 @@ func (h *Handlers) EnqueueInstall(w http.ResponseWriter, r *http.Request) {
 			"module_id":  req.ModuleID,
 			"source":     req.Source,
 			"local_path": req.LocalPath,
+			"tags":       req.Tags,
 		},
 	}
 
@@ -299,7 +301,7 @@ func (h *Handlers) EnqueueCreateLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If modules are provided, they must not be empty
-	if req.Modules == nil || len(req.Modules) == 0 {
+	if len(req.Modules) == 0 {
 		http.Error(w, "modules is required", http.StatusBadRequest)
 		return
 	}

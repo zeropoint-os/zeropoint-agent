@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ExposuresApi, ModulesApi, JobsApi, Configuration, ApiModule, ApiExposureResponse, QueueJobResponse } from 'artifacts/clients/typescript';
 import CreateExposureDialog from '../components/CreateExposureDialog';
-import InstallationProgress from '../components/InstallationProgress';
+import JobProgressCard from '../components/JobProgressCard';
 import './Views.css';
 
 type Module = ApiModule;
@@ -228,8 +228,8 @@ export default function ExposuresView() {
         <div className="grid grid-2">
           {Array.from(createJobs.entries()).map(([exposureId, job]) => (
             <div key={`create-${exposureId}`} className="card">
-              <InstallationProgress 
-                moduleName={exposureId} 
+              <JobProgressCard 
+                itemName={exposureId} 
                 job={job}
                 operationType="create_exposure"
                 onCancel={job.status === 'queued' ? () => {
@@ -267,8 +267,8 @@ export default function ExposuresView() {
                 </div>
 
                 {deleteJob && (
-                  <InstallationProgress 
-                    moduleName={exposureId} 
+                  <JobProgressCard 
+                    itemName={exposureId} 
                     job={deleteJob}
                     operationType="delete_exposure"
                     onCancel={deleteJob.status === 'queued' ? () => {

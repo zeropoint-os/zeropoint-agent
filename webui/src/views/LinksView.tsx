@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LinksApi, JobsApi, Configuration, ApiLink, QueueJobResponse } from 'artifacts/clients/typescript';
 import CreateLinkDialog from '../components/CreateLinkDialog';
-import InstallationProgress from '../components/InstallationProgress';
+import JobProgressCard from '../components/JobProgressCard';
 import './Views.css';
 
 type Link = ApiLink;
@@ -195,8 +195,8 @@ export default function LinksView() {
         <div className="grid grid-1">
           {Array.from(createJobs.entries()).map(([linkId, job]) => (
             <div key={`create-${linkId}`} className="card">
-              <InstallationProgress 
-                moduleName={linkId} 
+              <JobProgressCard 
+                itemName={linkId} 
                 job={job}
                 operationType="create_link"
                 onCancel={job.status === 'queued' ? () => {
@@ -229,8 +229,8 @@ export default function LinksView() {
                 </div>
 
                 {deleteJob && (
-                  <InstallationProgress 
-                    moduleName={linkId} 
+                  <JobProgressCard 
+                    itemName={linkId} 
                     job={deleteJob}
                     operationType="delete_link"
                     onCancel={deleteJob.status === 'queued' ? () => {

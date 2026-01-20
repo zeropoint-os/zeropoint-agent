@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ModulesApi, ExposuresApi, LinksApi, CatalogApi, JobsApi, Configuration, ApiModule, ApiExposureResponse, ApiLink } from 'artifacts/clients/typescript';
 import type { CatalogModuleResponse, QueueJobResponse } from 'artifacts/clients/typescript';
 import CatalogBrowser from '../components/CatalogBrowser';
-import InstallationProgress from '../components/InstallationProgress';
+import JobProgressCard from '../components/JobProgressCard';
 import './Views.css';
 
 type Module = ApiModule;
@@ -375,8 +375,8 @@ export default function ModulesView() {
               <div className="module-header">
                 <h3 className="module-name">{moduleName}</h3>
               </div>
-              <InstallationProgress 
-                moduleName={moduleName} 
+              <JobProgressCard 
+                itemName={moduleName} 
                 job={job}
                 operationType="install"
                 onCancel={job.status === 'queued' ? () => {
@@ -418,8 +418,8 @@ export default function ModulesView() {
                 </div>
 
                 {uninstallJob && (
-                  <InstallationProgress 
-                    moduleName={module.id || 'Module'} 
+                  <JobProgressCard 
+                    itemName={module.id || 'Module'} 
                     job={uninstallJob}
                     operationType="uninstall"
                     onCancel={uninstallJob.status === 'queued' ? () => {

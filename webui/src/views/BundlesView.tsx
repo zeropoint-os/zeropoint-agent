@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import BundleBrowser from '../components/BundleBrowser';
-import { CatalogApi, ExposuresApi, LinksApi, ModulesApi, Configuration, ApiExposureResponse, ApiLink } from 'artifacts/clients/typescript';
+import { CatalogApi, ExposuresApi, LinksApi, ModulesApi, JobsApi, Configuration, ApiExposureResponse, ApiLink, QueueJobResponse } from 'artifacts/clients/typescript';
 import type { CatalogBundleResponse } from 'artifacts/clients/typescript';
+import JobProgressCard from '../components/JobProgressCard';
 import './Views.css';
 
 type Bundle = CatalogBundleResponse;
@@ -22,6 +23,7 @@ export default function BundlesView() {
   const [installingBundle, setInstallingBundle] = useState<string | null>(null);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [showBundleBrowser, setShowBundleBrowser] = useState(false);
+  const [bundleJobs, setBundleJobs] = useState<Map<string, QueueJobResponse>>(new Map());
 
   useEffect(() => {
     fetchInstalledBundles();
@@ -116,77 +118,41 @@ export default function BundlesView() {
       setError(null);
       setProgressMessage(null);
 
-      // Fetch the bundle definition
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
       const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
       const bundle = await catalogApi.getCatalogBundle({ bundleName });
 
-      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+      const newJobs = new Map(bundleJobs);
+      const moduleJobIds: string[] = [];
+      const linkJobIds: string[] = [];
 
-      // Step 1: Install modules with streaming
+      // Step 1: Enqueue module installation jobs
       if (bundle.modules && bundle.modules.length > 0) {
         for (const moduleName of bundle.modules) {
-          setProgressMessage(`Installing module: ${moduleName}...`);
+          setProgressMessage(`Queuing module installation: ${moduleName}...`);
 
-          // Fetch module details from catalog to get source
-          const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
           const moduleInfo = await catalogApi.getCatalogModule({ moduleName });
 
-          // Use raw fetch to handle streaming response
-          const response = await fetch(`/api/modules/${moduleName}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
+          const response = await jobsApi.enqueueInstall({
+            queueEnqueueInstallRequest: {
+              moduleId: moduleName,
               source: moduleInfo.source || '',
-              module_id: moduleName,
               tags: [bundleName]
-            })
+            }
           });
 
-          if (!response.ok) {
-            throw new Error(`Failed to install module ${moduleName}: ${response.statusText}`);
-          }
-
-          // Process the streaming response
-          const reader = response.body?.getReader();
-          const decoder = new TextDecoder();
-
-          if (reader) {
-            let buffer = '';
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-
-              for (const line of lines) {
-                if (line.trim()) {
-                  try {
-                    const data = JSON.parse(line);
-                    const message = data.message || data.status || line;
-                    setProgressMessage(`Installing module: ${moduleName}... ${message}`);
-                  } catch {
-                    if (line.trim()) {
-                      setProgressMessage(`Installing module: ${moduleName}... ${line}`);
-                    }
-                  }
-                }
-              }
-            }
+          if (response.id) {
+            moduleJobIds.push(response.id);
+            newJobs.set(response.id, response);
           }
         }
       }
 
-      // Step 2: Create links with bundle tag
+      // Step 2: Enqueue link creation jobs with module job dependencies
       if (bundle.links && Object.keys(bundle.links).length > 0) {
         for (const [linkName, linkDef] of Object.entries(bundle.links)) {
-          setProgressMessage(`Creating link: ${linkName}...`);
-          const modules: { [key: string]: { [key: string]: string } } = {};
+          setProgressMessage(`Queuing link creation: ${linkName}...`);
+          const modules: { [key: string]: { [key: string]: any } } = {};
 
           // linkDef is an array of module bindings
           const linkArray = Array.isArray(linkDef) ? linkDef : [linkDef];
@@ -196,56 +162,32 @@ export default function BundlesView() {
             }
           }
 
-          await linksApi.createOrUpdateLink({
-            id: linkName,
-            apiCreateLinkRequest: {
+          const response = await jobsApi.enqueueCreateLink({
+            queueEnqueueCreateLinkRequest: {
+              linkId: linkName,
               modules: modules,
-              tags: [bundleName], // Tag with bundle name
-            },
+              tags: [bundleName],
+              dependsOn: moduleJobIds // Links depend on all module installations
+            }
           });
+
+          if (response.id) {
+            linkJobIds.push(response.id);
+            newJobs.set(response.id, response);
+          }
         }
       }
 
-      // Step 3: Create exposures with bundle tag
+      // Step 3: Enqueue exposure creation jobs with link job dependencies
       if (bundle.exposures && Object.keys(bundle.exposures).length > 0) {
-        // Fetch modules to get port information
-        const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-        const modulesResponse = await modulesApi.listModules();
-        const installedModules = modulesResponse.modules ?? [];
-
         for (const [exposureName, exposureDef] of Object.entries(bundle.exposures)) {
-          setProgressMessage(`Creating exposure: ${exposureName}...`);
+          setProgressMessage(`Queuing exposure creation: ${exposureName}...`);
           const exposure = exposureDef as any;
 
-          // Find the installed module to get port information
-          const module = installedModules.find(m => m.id === exposure.module);
-          if (!module) {
-            throw new Error(`Module ${exposure.module} not found when creating exposure`);
-          }
-
-          // Get the port from the module's first container's matching port
-          let containerPort: number | undefined;
-          if (module.containers) {
-            for (const container of Object.values(module.containers)) {
-              const containerObj = container as any;
-              if (containerObj.ports) {
-                for (const port of Object.values(containerObj.ports)) {
-                  const portObj = port as any;
-                  // Use the first port matching the exposure's protocol or just the first available port
-                  if (!containerPort || (exposure.protocol && portObj.protocol === exposure.protocol)) {
-                    containerPort = portObj.port;
-                    if (exposure.protocol && portObj.protocol === exposure.protocol) {
-                      break; // Found a matching protocol, use it
-                    }
-                  }
-                }
-                if (containerPort) break;
-              }
-            }
-          }
-
+          // Use the modulePort from the bundle definition
+          const containerPort = exposure.modulePort;
           if (!containerPort) {
-            throw new Error(`No port found for module ${exposure.module} when creating exposure`);
+            throw new Error(`No modulePort defined for exposure ${exposureName} in bundle`);
           }
 
           // Generate hostname for HTTP exposures (required by API)
@@ -254,30 +196,85 @@ export default function BundlesView() {
             hostname = exposureName;
           }
 
-          await exposuresApi.createExposure({
-            exposureId: exposureName,
-            apiCreateExposureRequest: {
+          const response = await jobsApi.enqueueCreateExposure({
+            queueEnqueueCreateExposureRequest: {
+              exposureId: exposureName,
               moduleId: exposure.module,
               protocol: exposure.protocol,
               containerPort: containerPort,
               hostname: hostname,
-              tags: [bundleName], // Tag with bundle name
-            },
+              tags: [bundleName],
+              dependsOn: linkJobIds // Exposures depend on all link creations
+            }
           });
+
+          if (response.id) {
+            newJobs.set(response.id, response);
+          }
         }
       }
 
-      setProgressMessage(`${bundleName} installed successfully!`);
+      setBundleJobs(newJobs);
+      setProgressMessage(`${bundleName} installation queued. Jobs will execute in sequence.`);
       setInstallingBundle(null);
-
-      // Refresh installed bundles list
-      await fetchInstalledBundles();
-      setTimeout(() => setProgressMessage(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to install bundle');
       setInstallingBundle(null);
     }
   };
+
+  // Polling effect for bundle jobs
+  useEffect(() => {
+    if (bundleJobs.size === 0) return;
+
+    const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+    let pollInterval: NodeJS.Timeout | null = null;
+    let cleanupTimeout: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      pollInterval = setInterval(async () => {
+        const updatedJobs = new Map(bundleJobs);
+        let allDone = true;
+
+        for (const [jobId, _] of updatedJobs) {
+          try {
+            const job = await jobsApi.getJob({ id: jobId });
+            updatedJobs.set(jobId, job);
+
+            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+              // Job reached terminal status
+            } else {
+              allDone = false;
+            }
+          } catch (err) {
+            // Job might have been removed
+            updatedJobs.delete(jobId);
+          }
+        }
+
+        setBundleJobs(updatedJobs);
+
+        if (allDone || updatedJobs.size === 0) {
+          if (pollInterval) clearInterval(pollInterval);
+          // Refresh installed bundles list
+          await fetchInstalledBundles();
+          setTimeout(() => setProgressMessage(null), 2000);
+        }
+      }, 1000);
+
+      // Clean up polling after 30 minutes
+      cleanupTimeout = setTimeout(() => {
+        if (pollInterval) clearInterval(pollInterval);
+      }, 30 * 60 * 1000);
+    };
+
+    startPolling();
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      if (cleanupTimeout) clearTimeout(cleanupTimeout);
+    };
+  }, [bundleJobs]);
 
   const handleBundleSelected = (bundle: CatalogBundleResponse) => {
     if (bundle.name) {
@@ -300,6 +297,7 @@ export default function BundlesView() {
       setInstallingBundle(bundleName);
       setError(null);
 
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
       const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
       const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
       const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
@@ -315,80 +313,70 @@ export default function BundlesView() {
       const links = linksData.links ?? [];
       const modules = modulesData.modules ?? [];
 
-      // Delete exposures tagged with this bundle
+      const newJobs = new Map(bundleJobs);
+      const exposureJobIds: string[] = [];
+      const linkJobIds: string[] = [];
+
+      // Step 1: Enqueue exposure deletion jobs
       const bundleExposures = exposures.filter((exp: any) =>
         exp.tags && exp.tags.includes(bundleName)
       );
       for (const exposure of bundleExposures) {
-        setProgressMessage(`Removing exposure: ${exposure.id}...`);
-        await exposuresApi.deleteExposure({ exposureId: exposure.id ?? '' });
+        setProgressMessage(`Queuing exposure removal: ${exposure.id}...`);
+        const response = await jobsApi.enqueueDeleteExposure({
+          queueEnqueueDeleteExposureRequest: {
+            exposureId: exposure.id ?? ''
+          }
+        });
+
+        if (response.id) {
+          exposureJobIds.push(response.id);
+          newJobs.set(response.id, response);
+        }
       }
 
-      // Delete links tagged with this bundle
+      // Step 2: Enqueue link deletion jobs (depend on exposure deletions)
       const bundleLinks = links.filter((link: any) =>
         link.tags && link.tags.includes(bundleName)
       );
       for (const link of bundleLinks) {
-        setProgressMessage(`Removing link: ${link.id}...`);
-        await linksApi.deleteLink({ id: link.id ?? '' });
+        setProgressMessage(`Queuing link removal: ${link.id}...`);
+        const response = await jobsApi.enqueueDeleteLink({
+          queueEnqueueDeleteLinkRequest: {
+            linkId: link.id ?? '',
+            dependsOn: exposureJobIds
+          }
+        });
+
+        if (response.id) {
+          linkJobIds.push(response.id);
+          newJobs.set(response.id, response);
+        }
       }
 
-      // Delete modules tagged with this bundle
+      // Step 3: Enqueue module deletion jobs (depend on link deletions)
       const bundleModules = modules.filter((mod: any) =>
         mod.tags && mod.tags.includes(bundleName)
       );
       for (const module of bundleModules) {
-        setProgressMessage(`Removing module: ${module.id}...`);
-        const uninstallResponse = await fetch(`/api/modules/${module.id}`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json'
+        setProgressMessage(`Queuing module removal: ${module.id}...`);
+        const response = await jobsApi.enqueueUninstall({
+          queueEnqueueUninstallRequest: {
+            moduleId: module.id ?? '',
+            dependsOn: linkJobIds
           }
         });
 
-        if (!uninstallResponse.ok) {
-          throw new Error(`Failed to uninstall module ${module.id}: ${uninstallResponse.statusText}`);
-        }
-
-        // Process the streaming response
-        const reader = uninstallResponse.body?.getReader();
-        const decoder = new TextDecoder();
-
-        if (reader) {
-          let buffer = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.trim()) {
-                try {
-                  const data = JSON.parse(line);
-                  const message = data.message || data.status || line;
-                  setProgressMessage(`Removing module: ${module.id}... ${message}`);
-                } catch {
-                  if (line.trim()) {
-                    setProgressMessage(`Removing module: ${module.id}... ${line}`);
-                  }
-                }
-              }
-            }
-          }
+        if (response.id) {
+          newJobs.set(response.id, response);
         }
       }
 
-      setProgressMessage(`${bundleName} uninstalled successfully!`);
-
-      // Refresh installed bundles list
-      await fetchInstalledBundles();
-      setTimeout(() => setProgressMessage(null), 2000);
+      setBundleJobs(newJobs);
+      setProgressMessage(`${bundleName} uninstallation queued. Jobs will execute in sequence.`);
+      setInstallingBundle(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to uninstall bundle');
-    } finally {
       setInstallingBundle(null);
     }
   };
@@ -449,63 +437,85 @@ export default function BundlesView() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-2">
-          {installedBundles.map((bundle, idx) => {
-            const key = bundle.name || `bundle-${idx}`;
-            return (
-              <div key={key} className="card">
-                <div className="bundle-header">
-                  <h3 className="bundle-name">{bundle.name || 'Unnamed Bundle'}</h3>
+        <>
+          {/* Display job progress cards */}
+          {bundleJobs.size > 0 && (
+            <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
+              {Array.from(bundleJobs.values()).map((job) => (
+                <JobProgressCard
+                  key={job.id}
+                  job={job}
+                  onCancel={job.status === 'queued' ? () => {
+                    if (job.id) {
+                      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+                      jobsApi.cancelJob({ id: job.id }).catch(err => 
+                        console.error('Failed to cancel job:', err)
+                      );
+                    }
+                  } : undefined}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="grid grid-2">
+            {installedBundles.map((bundle, idx) => {
+              const key = bundle.name || `bundle-${idx}`;
+              return (
+                <div key={key} className="card">
+                  <div className="bundle-header">
+                    <h3 className="bundle-name">{bundle.name || 'Unnamed Bundle'}</h3>
+                  </div>
+
+                  <div className="bundle-details">
+                    {bundle.modules.length > 0 && (
+                      <div className="bundle-section">
+                        <p className="section-label">Modules ({bundle.modules.length})</p>
+                        <ul className="bundle-list">
+                          {bundle.modules.map(mod => (
+                            <li key={mod}>{mod}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {bundle.exposures.length > 0 && (
+                      <div className="bundle-section">
+                        <p className="section-label">Exposures ({bundle.exposures.length})</p>
+                        <ul className="bundle-list">
+                          {bundle.exposures.map(exp => (
+                            <li key={exp}>{exp}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {bundle.links.length > 0 && (
+                      <div className="bundle-section">
+                        <p className="section-label">Links ({bundle.links.length})</p>
+                        <ul className="bundle-list">
+                          {bundle.links.map(link => (
+                            <li key={link}>{link}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bundle-actions">
+                    <button
+                      className="button button-danger"
+                      onClick={() => handleUninstallBundle(bundle.name || '')}
+                      disabled={installingBundle === bundle.name}
+                    >
+                      Uninstall
+                    </button>
+                  </div>
                 </div>
-
-                <div className="bundle-details">
-                  {bundle.modules.length > 0 && (
-                    <div className="bundle-section">
-                      <p className="section-label">Modules ({bundle.modules.length})</p>
-                      <ul className="bundle-list">
-                        {bundle.modules.map(mod => (
-                          <li key={mod}>{mod}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {bundle.exposures.length > 0 && (
-                    <div className="bundle-section">
-                      <p className="section-label">Exposures ({bundle.exposures.length})</p>
-                      <ul className="bundle-list">
-                        {bundle.exposures.map(exp => (
-                          <li key={exp}>{exp}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {bundle.links.length > 0 && (
-                    <div className="bundle-section">
-                      <p className="section-label">Links ({bundle.links.length})</p>
-                      <ul className="bundle-list">
-                        {bundle.links.map(link => (
-                          <li key={link}>{link}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-
-                <div className="bundle-actions">
-                  <button
-                    className="button button-danger"
-                    onClick={() => handleUninstallBundle(bundle.name || '')}
-                    disabled={installingBundle === bundle.name}
-                  >
-                    Uninstall
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

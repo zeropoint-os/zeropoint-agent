@@ -478,14 +478,17 @@ func (m *Manager) GetQueued() ([]*Job, error) {
 
 // topoSort performs a topological sort on queued jobs
 func (m *Manager) topoSort(jobs []*Job, jobMap map[string]*Job) []*Job {
-	// Build in-degree map
+	// Build in-degree map - only count dependencies that are still queued
 	inDegree := make(map[string]int)
 	for _, job := range jobs {
 		if _, exists := inDegree[job.ID]; !exists {
 			inDegree[job.ID] = 0
 		}
-		for range job.DependsOn {
-			inDegree[job.ID]++
+		// Only count dependencies that are also in the queued jobs list
+		for _, dep := range job.DependsOn {
+			if _, inQueued := jobMap[dep]; inQueued {
+				inDegree[job.ID]++
+			}
 		}
 	}
 
