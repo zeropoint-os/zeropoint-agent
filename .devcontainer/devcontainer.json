@@ -5,7 +5,7 @@
 		"context": ".."
 	},
 	"overrideCommand": true,
-	"postCreateCommand": "sudo touch /etc/zeropoint/.zeropoint-boot-complete",
+	"postCreateCommand": "touch /etc/zeropoint/.zeropoint-boot-complete",
 	"postAttachCommand": "go mod download && npm install",
 	"forwardPorts": [80, 443, 2370],
 	"portsAttributes": {
@@ -41,12 +41,7 @@
 		"--gpus", "all",
 		"--runtime", "nvidia"
  	],
-	"remoteUser": "vscode",
 	"features": {
-		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
-		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
-			"passwordLessSudo": true,
-			"additionalGroups": ["docker"]
-		}
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	}
 }
