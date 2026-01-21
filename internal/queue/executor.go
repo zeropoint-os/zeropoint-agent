@@ -11,12 +11,14 @@ import (
 
 // ExposureHandler interface for creating/deleting exposures
 type ExposureHandler interface {
-	// Methods will be added as needed
+	CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32, tags []string) error
+	DeleteExposure(ctx context.Context, exposureID string) error
 }
 
 // LinkHandler interface for creating/deleting links
 type LinkHandler interface {
-	// Methods will be added as needed
+	CreateLink(ctx context.Context, linkID string, modules map[string]map[string]interface{}, tags []string) error
+	DeleteLink(ctx context.Context, id string) error
 }
 
 // JobExecutor executes queued commands by calling handlers and installers directly
@@ -180,18 +182,53 @@ func (e *JobExecutor) executeCreateExposure(ctx context.Context, jobID string, m
 		return nil, fmt.Errorf("exposure_id is required")
 	}
 
-	_, _ = cmd.Args["module_id"].(string)
-	_, _ = cmd.Args["protocol"].(string)
-	_, _ = cmd.Args["hostname"].(string)
-	_, _ = cmd.Args["container_port"]
-	_, _ = cmd.Args["tags"]
+	moduleID, ok := cmd.Args["module_id"].(string)
+	if !ok || moduleID == "" {
+		return nil, fmt.Errorf("module_id is required")
+	}
 
-	e.logger.Info("creating exposure", "exposure_id", exposureID)
+	protocol, ok := cmd.Args["protocol"].(string)
+	if !ok || protocol == "" {
+		return nil, fmt.Errorf("protocol is required")
+	}
 
-	// TODO: Call exposure handler method directly to create exposure and capture events
-	// For now, return success
+	containerPort, ok := cmd.Args["container_port"].(int)
+	if !ok {
+		// Try to convert from float64 (JSON numbers come as float64)
+		if portFloat, ok := cmd.Args["container_port"].(float64); ok {
+			containerPort = int(portFloat)
+		} else {
+			return nil, fmt.Errorf("container_port is required and must be an integer")
+		}
+	}
+
+	hostname, _ := cmd.Args["hostname"].(string)
+
+	var tags []string
+	if tagsInterface, ok := cmd.Args["tags"]; ok {
+		if tagsSlice, ok := tagsInterface.([]interface{}); ok {
+			for _, tag := range tagsSlice {
+				if tagStr, ok := tag.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		} else if tagsSlice, ok := tagsInterface.([]string); ok {
+			tags = tagsSlice
+		}
+	}
+
+	e.logger.Info("creating exposure", "exposure_id", exposureID, "module_id", moduleID)
+
+	// Call exposure handler method directly to create exposure
+	if err := e.exposureHandler.CreateExposure(ctx, exposureID, moduleID, protocol, hostname, uint32(containerPort), tags); err != nil {
+		e.logger.Error("failed to create exposure", "exposure_id", exposureID, "error", err)
+		return nil, fmt.Errorf("failed to create exposure: %w", err)
+	}
+
 	result := map[string]interface{}{
 		"exposure_id": exposureID,
+		"module_id":   moduleID,
+		"protocol":    protocol,
 		"status":      "created",
 	}
 
@@ -207,8 +244,12 @@ func (e *JobExecutor) executeDeleteExposure(ctx context.Context, jobID string, m
 
 	e.logger.Info("deleting exposure", "exposure_id", exposureID)
 
-	// TODO: Call exposure handler method directly to delete exposure and capture events
-	// For now, return success
+	// Call exposure handler method directly to delete exposure
+	if err := e.exposureHandler.DeleteExposure(ctx, exposureID); err != nil {
+		e.logger.Error("failed to delete exposure", "exposure_id", exposureID, "error", err)
+		return nil, fmt.Errorf("failed to delete exposure: %w", err)
+	}
+
 	result := map[string]interface{}{
 		"exposure_id": exposureID,
 		"status":      "deleted",
@@ -224,19 +265,46 @@ func (e *JobExecutor) executeCreateLink(ctx context.Context, jobID string, manag
 		return nil, fmt.Errorf("link_id is required")
 	}
 
-	_, ok = cmd.Args["modules"].(map[string]interface{})
+	modules, ok := cmd.Args["modules"].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("modules is required")
 	}
 
-	_, _ = cmd.Args["tags"]
+	var tags []string
+	if tagsInterface, ok := cmd.Args["tags"]; ok {
+		if tagsSlice, ok := tagsInterface.([]interface{}); ok {
+			for _, tag := range tagsSlice {
+				if tagStr, ok := tag.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		} else if tagsSlice, ok := tagsInterface.([]string); ok {
+			tags = tagsSlice
+		}
+	}
 
 	e.logger.Info("creating link", "link_id", linkID)
 
-	// TODO: Call link handler method directly to create link and capture events
-	// For now, return success
+	// Convert modules to the correct type for the handler
+	modulesConfig := make(map[string]map[string]interface{})
+	for moduleName, config := range modules {
+		if moduleConfig, ok := config.(map[string]interface{}); ok {
+			modulesConfig[moduleName] = moduleConfig
+		} else {
+			return nil, fmt.Errorf("module %s config must be a map", moduleName)
+		}
+	}
+
+	// Call link handler method directly to create link
+	if err := e.linkHandler.CreateLink(ctx, linkID, modulesConfig, tags); err != nil {
+		e.logger.Error("failed to create link", "link_id", linkID, "error", err)
+		return nil, fmt.Errorf("failed to create link: %w", err)
+	}
+
 	result := map[string]interface{}{
 		"link_id": linkID,
+		"modules": modulesConfig,
+		"tags":    tags,
 		"status":  "created",
 	}
 
@@ -252,8 +320,12 @@ func (e *JobExecutor) executeDeleteLink(ctx context.Context, jobID string, manag
 
 	e.logger.Info("deleting link", "link_id", linkID)
 
-	// TODO: Call link handler method directly to delete link and capture events
-	// For now, return success
+	// Call link handler method directly to delete link
+	if err := e.linkHandler.DeleteLink(ctx, linkID); err != nil {
+		e.logger.Error("failed to delete link", "link_id", linkID, "error", err)
+		return nil, fmt.Errorf("failed to delete link: %w", err)
+	}
+
 	result := map[string]interface{}{
 		"link_id": linkID,
 		"status":  "deleted",

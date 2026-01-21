@@ -139,13 +139,13 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/links", linkHandlers.ListLinks).Methods(http.MethodGet)
 	r.HandleFunc("/api/links/{id}", linkHandlers.GetLink).Methods(http.MethodGet)
 	r.HandleFunc("/api/links/{id}", linkHandlers.CreateOrUpdateLink).Methods(http.MethodPost)
-	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLink).Methods(http.MethodDelete)
+	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLinkHTTP).Methods(http.MethodDelete)
 
 	// Exposure endpoints
 	r.HandleFunc("/api/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposureHTTP).Methods(http.MethodPost)
 	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposureHTTP).Methods(http.MethodDelete)
 
 	// Catalog endpoints
 	r.HandleFunc("/api/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
