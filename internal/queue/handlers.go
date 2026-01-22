@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"zeropoint-agent/internal/catalog"
 
@@ -439,12 +440,13 @@ func (h *Handlers) GetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// ListJobs handles GET /jobs (returns jobs in topological order)
+// ListJobs handles GET /jobs (returns jobs in topological order, optionally filtered by status)
 // @ID listJobs
 // @Summary List all jobs
-// @Description List all jobs sorted in topological order by dependencies
+// @Description List all jobs sorted in topological order by dependencies, optionally filtered by status
 // @Tags jobs
 // @Produce json
+// @Param status query string false "Status filter: all, active, completed, failed, cancelled (default: all)"
 // @Success 200 {object} ListJobsResponse "List of jobs"
 // @Failure 500 {string} string "Internal server error"
 // @Router /jobs [get]
@@ -456,8 +458,109 @@ func (h *Handlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filter by status if provided
+	statusFilter := r.URL.Query().Get("status")
+	if statusFilter != "" && statusFilter != "all" {
+		filteredJobs := make([]JobResponse, 0)
+		for _, job := range jobs {
+			if matchesStatusFilterResponse(job, statusFilter) {
+				filteredJobs = append(filteredJobs, job)
+			}
+		}
+		jobs = filteredJobs
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ListJobsResponse{Jobs: jobs})
+}
+
+// DeleteJobs handles DELETE /jobs (deletes jobs based on status filter)
+// @ID deleteJobs
+// @Summary Delete jobs by status filter
+// @Description Delete jobs filtered by status. Only allows deletion of completed, failed, or cancelled jobs. Cannot delete active or running jobs for safety.
+// @Tags jobs
+// @Param status query string false "Status filter: completed, failed, cancelled (default: completed,failed,cancelled). 'all', 'active', 'queued', and 'running' are not allowed"
+// @Success 200 {object} map[string]interface{} "Number of jobs deleted"
+// @Failure 400 {string} string "Bad request - invalid or unsafe status filter"
+// @Failure 500 {string} string "Internal server error"
+// @Router /jobs [delete]
+func (h *Handlers) DeleteJobs(w http.ResponseWriter, r *http.Request) {
+	statusFilter := r.URL.Query().Get("status")
+	if statusFilter == "" {
+		// Default to deleting completed and failed jobs only
+		statusFilter = "completed,failed,cancelled"
+	}
+
+	// Prevent deletion of unsafe statuses
+	if statusFilter == "all" {
+		http.Error(w, "cannot delete all jobs - only completed, failed, or cancelled jobs can be deleted", http.StatusBadRequest)
+		return
+	}
+	if statusFilter == "active" || statusFilter == "running" || statusFilter == "queued" {
+		http.Error(w, "cannot delete active, running, or queued jobs - only completed, failed, or cancelled jobs can be deleted", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that all statuses in the filter are safe (no active, running, or queued)
+	statuses := strings.Split(statusFilter, ",")
+	for _, status := range statuses {
+		status = strings.TrimSpace(status)
+		if status == "active" || status == "running" || status == "queued" {
+			http.Error(w, "cannot delete active, running, or queued jobs - only completed, failed, or cancelled jobs can be deleted", http.StatusBadRequest)
+			return
+		}
+	}
+
+	jobs, err := h.manager.ListAllTopoSorted()
+	if err != nil {
+		h.logger.Error("failed to list jobs for deletion", "error", err)
+		http.Error(w, "failed to list jobs", http.StatusInternalServerError)
+		return
+	}
+
+	deletedCount := 0
+	for _, job := range jobs {
+		if matchesStatusFilterResponse(job, statusFilter) {
+			if err := h.manager.Delete(job.ID); err != nil {
+				h.logger.Warn("failed to delete job", "job_id", job.ID, "error", err)
+			} else {
+				deletedCount++
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"deleted": deletedCount,
+	})
+}
+
+// matchesStatusFilterResponse checks if a job response matches one of the provided status filters
+// statusFilter can be comma-separated values like "completed,failed,cancelled"
+func matchesStatusFilterResponse(job JobResponse, statusFilter string) bool {
+	statuses := strings.Split(statusFilter, ",")
+	for _, status := range statuses {
+		status = strings.TrimSpace(status)
+		switch status {
+		case "active":
+			if job.Status == StatusQueued || job.Status == StatusRunning {
+				return true
+			}
+		case "completed":
+			if job.Status == StatusCompleted {
+				return true
+			}
+		case "failed":
+			if job.Status == StatusFailed {
+				return true
+			}
+		case "cancelled":
+			if job.Status == StatusCancelled {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // CancelJob handles DELETE /jobs/{id}

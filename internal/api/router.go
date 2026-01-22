@@ -168,6 +168,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 
 	// Job Queue endpoints
 	r.HandleFunc("/api/jobs", queueHandlers.ListJobs).Methods(http.MethodGet)
+	r.HandleFunc("/api/jobs", queueHandlers.DeleteJobs).Methods(http.MethodDelete)
 	r.HandleFunc("/api/jobs/{id}", queueHandlers.GetJob).Methods(http.MethodGet)
 	r.HandleFunc("/api/jobs/{id}", queueHandlers.CancelJob).Methods(http.MethodDelete)
 	r.HandleFunc("/api/jobs/enqueue_install_module", queueHandlers.EnqueueInstall).Methods(http.MethodPost)

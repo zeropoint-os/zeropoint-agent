@@ -93,6 +93,18 @@ export default function JobsView() {
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   };
 
+  const deleteAllJobs = async () => {
+    try {
+      // Use the generated API client to delete jobs based on current filter
+      const statusParam = filter === 'all' ? 'all' : filter;
+      await jobsApi.deleteJobs({ status: statusParam });
+      await fetchJobs();
+    } catch (err) {
+      console.error('Error deleting jobs:', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete jobs');
+    }
+  };
+
   return (
     <div className="view-container">
       {jobs.length > 0 && (
@@ -127,7 +139,7 @@ export default function JobsView() {
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.5rem' }}>
+          <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               className={`button ${filter === 'all' ? 'button-primary' : 'button-secondary'}`}
               onClick={() => setFilter('all')}
@@ -152,12 +164,26 @@ export default function JobsView() {
             >
               Failed ({jobs.filter(j => j.status === 'failed' || j.status === 'cancelled').length})
             </button>
+            {(filter === 'completed' || filter === 'failed') && sortedJobs.length > 0 && (
+              <button
+                className="button button-danger"
+                onClick={() => {
+                  if (window.confirm(`Delete all ${filter} jobs?`)) {
+                    deleteAllJobs();
+                  }
+                }}
+                style={{ marginLeft: 'auto' }}
+              >
+                Delete All
+              </button>
+            )}
           </div>
 
           {sortedJobs.length === 0 ? (
             <div className="empty-state">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"></path>
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
               </svg>
               <h2>No jobs found</h2>
               <p>Jobs will appear here as you perform actions.</p>
