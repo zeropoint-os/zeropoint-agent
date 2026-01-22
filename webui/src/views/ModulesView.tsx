@@ -153,12 +153,14 @@ export default function ModulesView() {
 
       <div className="view-header">
         <h1 className="section-title">Modules</h1>
-        <button
-          className="button button-primary"
-          onClick={() => setShowInstallDialog(true)}
-        >
-          <span>+</span> Install Module
-        </button>
+        {modules.length > 0 && (
+          <button
+            className="button button-primary"
+            onClick={() => setShowInstallDialog(true)}
+          >
+            <span>+</span> Install Module
+          </button>
+        )}
       </div>
 
       {error && (

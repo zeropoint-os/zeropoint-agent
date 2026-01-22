@@ -56,6 +56,12 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		return nil, fmt.Errorf("failed to initialize link store: %w", err)
 	}
 
+	// Initialize bundle store
+	bundleStore, err := NewBundleStore(logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize bundle store: %w", err)
+	}
+
 	// Initialize catalog
 	catalogStore := catalog.NewStore(logger)
 	catalogResolver := catalog.NewResolver(catalogStore)
@@ -72,9 +78,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
 	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
-	bundleHandlers := NewBundleHandlers(installer, uninstaller, exposureStore, linkHandlers, dockerClient, catalogStore, logger)
+	bundleHandlers := NewBundleHandlers(bundleStore, exposureStore, linkHandlers, logger)
 	bootHandlers := NewBootHandlers(bootMonitor)
-	queueHandlers := queue.NewHandlers(queueManager, catalogStore, logger)
+	queueHandlers := queue.NewHandlers(queueManager, catalogStore, bundleStore, logger)
 
 	env := &apiEnv{
 		docker:    dockerClient,
@@ -181,7 +187,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	routerWithMiddleware := bootCheckMiddleware(r)
 
 	// Initialize job executor with handlers for direct execution
-	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, catalogStore, logger)
+	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, catalogStore, bundleStore, logger)
 
 	// Create and start the job worker
 	worker := queue.NewWorker(queueManager, jobExecutor, logger)

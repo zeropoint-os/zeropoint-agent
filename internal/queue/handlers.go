@@ -14,14 +14,16 @@ import (
 type Handlers struct {
 	manager      *Manager
 	catalogStore *catalog.Store
+	bundleStore  interface{} // BundleStoreHandler interface - avoid circular imports
 	logger       *slog.Logger
 }
 
 // NewHandlers creates a new queue handlers instance
-func NewHandlers(manager *Manager, catalogStore *catalog.Store, logger *slog.Logger) *Handlers {
+func NewHandlers(manager *Manager, catalogStore *catalog.Store, bundleStore interface{}, logger *slog.Logger) *Handlers {
 	return &Handlers{
 		manager:      manager,
 		catalogStore: catalogStore,
+		bundleStore:  bundleStore,
 		logger:       logger,
 	}
 }
@@ -520,6 +522,7 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 				Args: map[string]interface{}{
 					"module_id": moduleName,
 					"source":    module.Source,
+					"bundle_id": req.BundleName, // Track which bundle this module is for
 				},
 			}, moduleDeps)
 			if err != nil {
@@ -548,8 +551,9 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 			linkJobID, err := h.manager.Enqueue(Command{
 				Type: CmdCreateLink,
 				Args: map[string]interface{}{
-					"link_id": linkID,
-					"modules": modules,
+					"link_id":   linkID,
+					"modules":   modules,
+					"bundle_id": req.BundleName, // Track which bundle this link is for
 				},
 			}, componentJobIDs)
 			if err != nil {
@@ -571,6 +575,7 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 					"container_port": uint32(exposureConfig.ModulePort),
 					"protocol":       exposureConfig.Protocol,
 					"hostname":       exposureID,
+					"bundle_id":      req.BundleName, // Track which bundle this exposure is for
 				},
 			}, componentJobIDs)
 			if err != nil {
@@ -585,6 +590,7 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 	jobID, err := h.manager.Enqueue(Command{
 		Type: CmdBundleInstall,
 		Args: map[string]interface{}{
+			"bundle_id":   req.BundleName,
 			"bundle_name": req.BundleName,
 		},
 	}, componentJobIDs)
@@ -593,6 +599,38 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 		h.logger.Debug("failed to enqueue bundle install job", "bundle_name", req.BundleName, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Create persistent bundle record with all component details
+	if h.bundleStore != nil {
+		// Type assert to get the actual BundleStore methods
+		if bs, ok := h.bundleStore.(interface {
+			CreateBundle(bundleID, bundleName, jobID string) interface{}
+			AddModuleComponent(bundleID, moduleID string, status, errMsg string) error
+			AddLinkComponent(bundleID, linkID string, status, errMsg string) error
+			AddExposureComponent(bundleID, exposureID string, status, errMsg string) error
+		}); ok {
+			bs.CreateBundle(req.BundleName, bundle.Name, jobID)
+
+			// Add all modules as components
+			for _, moduleName := range bundle.Modules {
+				_ = bs.AddModuleComponent(req.BundleName, moduleName, "queued", "")
+			}
+
+			// Add all links as components
+			if bundle.Links != nil {
+				for linkID := range bundle.Links {
+					_ = bs.AddLinkComponent(req.BundleName, linkID, "queued", "")
+				}
+			}
+
+			// Add all exposures as components
+			if bundle.Exposures != nil {
+				for exposureID := range bundle.Exposures {
+					_ = bs.AddExposureComponent(req.BundleName, exposureID, "queued", "")
+				}
+			}
+		}
 	}
 
 	job, err := h.manager.Get(jobID)

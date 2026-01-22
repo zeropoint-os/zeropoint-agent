@@ -155,7 +155,10 @@ export default function BundlesView() {
       {showInstallDialog && (
         <CatalogBrowser
           filterType="bundles"
-          onSelect={(item) => handleInstallBundle(item as CatalogBundleResponse)}
+          onSelect={(item) => {
+            setShowInstallDialog(false);
+            handleInstallBundle(item as CatalogBundleResponse);
+          }}
           onClose={() => setShowInstallDialog(false)}
         />
       )}
@@ -203,43 +206,50 @@ export default function BundlesView() {
       ) : (
         <div className="grid grid-2">
           {bundles.map((bundle) => (
-            <div key={bundle.id} className="card">
-              <div style={{ marginBottom: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: '600' }}>
-                  {bundle.name || bundle.id}
-                </h3>
-                {bundle.description && (
-                  <p style={{ margin: '0', fontSize: '0.875rem', color: '#6b7280' }}>
-                    {bundle.description}
-                  </p>
+            <div key={bundle.id} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600' }}>
+                      {bundle.name || bundle.id}
+                    </h3>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '600', padding: '0.25rem 0.75rem', borderRadius: '0.375rem', backgroundColor: bundle.status === 'completed' ? 'var(--color-success-light)' : bundle.status === 'failed' ? 'var(--color-danger-light)' : 'var(--color-border)', color: bundle.status === 'completed' ? 'var(--color-success-dark)' : bundle.status === 'failed' ? 'var(--color-danger-dark)' : 'var(--color-text-secondary)' }}>
+                      {bundle.status}
+                    </span>
+                  </div>
+                  {bundle.description && (
+                    <p style={{ margin: '0', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+                      {bundle.description}
+                    </p>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  <div style={{ padding: '0.5rem', backgroundColor: 'var(--color-surface-alt)', borderRadius: '0.375rem', textAlign: 'center' }}>
+                    <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{bundle.modules?.length || 0}</div>
+                    <div style={{ color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>Modules</div>
+                  </div>
+                  <div style={{ padding: '0.5rem', backgroundColor: 'var(--color-surface-alt)', borderRadius: '0.375rem', textAlign: 'center' }}>
+                    <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{Object.keys(bundle.links || {}).length}</div>
+                    <div style={{ color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>Links</div>
+                  </div>
+                  <div style={{ padding: '0.5rem', backgroundColor: 'var(--color-surface-alt)', borderRadius: '0.375rem', textAlign: 'center' }}>
+                    <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{Object.keys(bundle.exposures || {}).length}</div>
+                    <div style={{ color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>Exposures</div>
+                  </div>
+                </div>
+
+                {bundle.modules && bundle.modules.length > 0 && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>Modules:</p>
+                    <ul style={{ margin: '0', paddingLeft: '1.5rem', fontSize: '0.875rem' }}>
+                      {bundle.modules.map((mod) => (
+                        <li key={mod}>{mod}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
-                <div style={{ padding: '0.5rem', backgroundColor: '#f3f4f6', borderRadius: '0.375rem', textAlign: 'center' }}>
-                  <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{bundle.modules?.length || 0}</div>
-                  <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Modules</div>
-                </div>
-                <div style={{ padding: '0.5rem', backgroundColor: '#f3f4f6', borderRadius: '0.375rem', textAlign: 'center' }}>
-                  <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{Object.keys(bundle.links || {}).length}</div>
-                  <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Links</div>
-                </div>
-                <div style={{ padding: '0.5rem', backgroundColor: '#f3f4f6', borderRadius: '0.375rem', textAlign: 'center' }}>
-                  <div style={{ fontWeight: '600', fontSize: '1.25rem' }}>{Object.keys(bundle.exposures || {}).length}</div>
-                  <div style={{ color: '#6b7280', fontSize: '0.75rem' }}>Exposures</div>
-                </div>
-              </div>
-
-              {bundle.modules && bundle.modules.length > 0 && (
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>Modules:</p>
-                  <ul style={{ margin: '0', paddingLeft: '1.5rem', fontSize: '0.875rem' }}>
-                    {bundle.modules.map((mod) => (
-                      <li key={mod}>{mod}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
 
               <button
                 className="button button-danger"

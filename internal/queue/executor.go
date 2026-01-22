@@ -22,6 +22,19 @@ type LinkHandler interface {
 	DeleteLink(ctx context.Context, id string) error
 }
 
+// BundleStoreHandler interface for persisting bundle installations
+type BundleStoreHandler interface {
+	CreateBundle(bundleID, bundleName, jobID string) interface{}
+	AddModuleComponent(bundleID, moduleID string, status, errMsg string) error
+	AddLinkComponent(bundleID, linkID string, status, errMsg string) error
+	AddExposureComponent(bundleID, exposureID string, status, errMsg string) error
+	UpdateModuleComponentStatus(bundleID, moduleID, status, errMsg string) error
+	UpdateLinkComponentStatus(bundleID, linkID, status, errMsg string) error
+	UpdateExposureComponentStatus(bundleID, exposureID, status, errMsg string) error
+	GetBundle(bundleID string) (interface{}, error)
+	CompleteBundleInstallation(bundleID string, success bool) error
+}
+
 // JobExecutor executes queued commands by calling handlers and installers directly
 type JobExecutor struct {
 	installer       *modules.Installer
@@ -29,17 +42,19 @@ type JobExecutor struct {
 	exposureHandler ExposureHandler
 	linkHandler     LinkHandler
 	catalogStore    *catalog.Store
+	bundleStore     BundleStoreHandler
 	logger          *slog.Logger
 }
 
 // NewJobExecutor creates a new job executor with direct access to handlers
-func NewJobExecutor(installer *modules.Installer, uninstaller *modules.Uninstaller, exposureHandler ExposureHandler, linkHandler LinkHandler, catalogStore *catalog.Store, logger *slog.Logger) *JobExecutor {
+func NewJobExecutor(installer *modules.Installer, uninstaller *modules.Uninstaller, exposureHandler ExposureHandler, linkHandler LinkHandler, catalogStore *catalog.Store, bundleStore BundleStoreHandler, logger *slog.Logger) *JobExecutor {
 	return &JobExecutor{
 		installer:       installer,
 		uninstaller:     uninstaller,
 		exposureHandler: exposureHandler,
 		linkHandler:     linkHandler,
 		catalogStore:    catalogStore,
+		bundleStore:     bundleStore,
 		logger:          logger,
 	}
 }
@@ -343,18 +358,67 @@ func (e *JobExecutor) executeDeleteLink(ctx context.Context, jobID string, manag
 // The bundle_install is a meta-job that orchestrates installation of all bundle components.
 // All component jobs (modules, links, exposures) are created by the handler (EnqueueBundleInstall)
 // when the meta-job is first enqueued, and the meta-job's DependsOn field is set to all of them.
-// This executor just acknowledges the bundle installation has been orchestrated.
-// The job's final status will be determined by its dependencies.
+// When this executor runs, all component jobs are guaranteed to be complete, so we update their statuses.
 func (e *JobExecutor) executeBundleInstall(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error) {
 	bundleName, ok := cmd.Args["bundle_name"].(string)
 	if !ok || bundleName == "" {
 		return nil, fmt.Errorf("bundle_name is required")
 	}
 
+	bundleID, ok := cmd.Args["bundle_id"].(string)
+	if !ok || bundleID == "" {
+		return nil, fmt.Errorf("bundle_id is required")
+	}
+
+	// Get the current job to find all dependency jobs
+	job, err := manager.Get(jobID)
+	if err != nil {
+		e.logger.Error("failed to get job", "job_id", jobID, "error", err)
+		return nil, err
+	}
+
+	// Update component statuses based on their job results
+	if e.bundleStore != nil {
+		// Check each dependency job to see if it succeeded or failed
+		for _, depJobID := range job.DependsOn {
+			depJob, err := manager.Get(depJobID)
+			if err != nil {
+				e.logger.Warn("failed to get dependency job", "dep_job_id", depJobID, "error", err)
+				continue
+			}
+
+			if depJob.Command.Type == CmdInstallModule {
+				moduleID, _ := depJob.Command.Args["module_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateModuleComponentStatus(bundleID, moduleID, "completed", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateModuleComponentStatus(bundleID, moduleID, "failed", depJob.Error)
+				}
+			} else if depJob.Command.Type == CmdCreateLink {
+				linkID, _ := depJob.Command.Args["link_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateLinkComponentStatus(bundleID, linkID, "completed", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateLinkComponentStatus(bundleID, linkID, "failed", depJob.Error)
+				}
+			} else if depJob.Command.Type == CmdCreateExposure {
+				exposureID, _ := depJob.Command.Args["exposure_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateExposureComponentStatus(bundleID, exposureID, "completed", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateExposureComponentStatus(bundleID, exposureID, "failed", depJob.Error)
+				}
+			}
+		}
+
+		// Mark bundle installation complete
+		_ = e.bundleStore.CompleteBundleInstallation(bundleID, true)
+	}
+
 	event := Event{
 		Timestamp: time.Now().UTC(),
 		Type:      "info",
-		Message:   fmt.Sprintf("Bundle installation orchestrated: %s", bundleName),
+		Message:   fmt.Sprintf("Bundle installation completed: %s", bundleName),
 	}
 	if err := manager.AppendEvent(jobID, event); err != nil {
 		e.logger.Error("failed to append event", "job_id", jobID, "error", err)
@@ -362,7 +426,8 @@ func (e *JobExecutor) executeBundleInstall(ctx context.Context, jobID string, ma
 
 	result := map[string]interface{}{
 		"bundle_name": bundleName,
-		"status":      "orchestrated",
+		"bundle_id":   bundleID,
+		"status":      "completed",
 	}
 
 	return result, nil
