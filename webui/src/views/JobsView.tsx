@@ -189,174 +189,206 @@ export default function JobsView() {
               <p>Jobs will appear here as you perform actions.</p>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid var(--color-border)`, backgroundColor: 'var(--color-surface-alt)' }}>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>ID</th>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>Type</th>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>Status</th>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>Created</th>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>Duration</th>
-                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600' }}>Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedJobs.map((job) => (
-                    <React.Fragment key={job.id}>
-                      <tr
-                        style={{
-                          borderBottom: `1px solid var(--color-border)`,
-                          backgroundColor: expandedJobId === job.id ? 'var(--color-surface-hover)' : 'var(--color-surface)',
-                          cursor: 'pointer',
-                        }}
-                        onClick={() =>
-                          setExpandedJobId(expandedJobId === job.id ? null : job.id ?? null)
-                        }
-                      >
-                        <td style={{ padding: '1rem', fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                          {job.id?.substring(0, 8)}...
-                        </td>
-                        <td style={{ padding: '1rem' }}>
-                          <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
-                            {job.command?.type || '-'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem' }}>
-                          <span
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
+              {sortedJobs.map((job) => (
+                <div
+                  key={job.id}
+                  style={{
+                    backgroundColor: 'var(--color-surface)',
+                    border: `1px solid var(--color-border)`,
+                    borderRadius: '0.5rem',
+                    padding: '1.5rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    borderLeft: `4px solid ${getStatusColor(job.status || '')}`,
+                  }}
+                  onClick={() =>
+                    setExpandedJobId(expandedJobId === job.id ? null : job.id ?? null)
+                  }
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--color-surface-hover)';
+                    (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--color-surface)';
+                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                  }}
+                >
+                  {/* Card Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginBottom: '0.25rem', fontFamily: 'monospace' }}>
+                        {job.id?.substring(0, 12)}...
+                      </div>
+                      <div style={{ fontSize: '1rem', fontWeight: '600' }}>
+                        {job.command?.type || '-'}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: '1rem', color: 'var(--color-primary)' }}>
+                      {expandedJobId === job.id ? '▼' : '▶'}
+                    </span>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div style={{ marginBottom: '1rem' }}>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        padding: '0.25rem 0.75rem',
+                        borderRadius: '0.375rem',
+                        backgroundColor: `color-mix(in srgb, ${getStatusColor(job.status || '')} 15%, transparent)`,
+                        color: getStatusColor(job.status || ''),
+                        fontSize: '0.875rem',
+                        fontWeight: '500',
+                      }}
+                    >
+                      {job.status || '-'}
+                    </span>
+                  </div>
+
+                  {/* Card Meta */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                    <div>
+                      <div style={{ color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>Created</div>
+                      <div>{formatDate(job.createdAt)}</div>
+                      <div style={{ color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>
+                        {formatTime(job.createdAt)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>Duration</div>
+                      <div>{getDuration(job.startedAt, job.completedAt)}</div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Details */}
+                  {expandedJobId === job.id && (
+                    <div style={{ borderTop: `1px solid var(--color-border)`, paddingTop: '1rem', marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      {/* Command details */}
+                      <div>
+                        <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>Command</h4>
+                        <div
+                          style={{
+                            backgroundColor: 'var(--color-surface-alt)',
+                            padding: '0.75rem',
+                            borderRadius: '0.375rem',
+                            fontFamily: 'monospace',
+                            fontSize: '0.75rem',
+                            overflowX: 'auto',
+                            border: `1px solid var(--color-border)`,
+                          }}
+                        >
+                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {JSON.stringify(job.command, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+
+                      {/* Dependencies */}
+                      {job.dependsOn && job.dependsOn.length > 0 && (
+                        <div>
+                          <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>
+                            Depends On ({job.dependsOn.length})
+                          </h4>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {job.dependsOn.map((depId) => (
+                              <span
+                                key={depId}
+                                style={{
+                                  backgroundColor: 'var(--color-border)',
+                                  padding: '0.25rem 0.5rem',
+                                  borderRadius: '0.375rem',
+                                  fontSize: '0.75rem',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {depId.substring(0, 8)}...
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tags */}
+                      {job.tags && job.tags.length > 0 && (
+                        <div>
+                          <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>
+                            Tags
+                          </h4>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {job.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                style={{
+                                  backgroundColor: 'var(--color-primary-light)',
+                                  color: 'var(--color-primary)',
+                                  padding: '0.25rem 0.5rem',
+                                  borderRadius: '0.375rem',
+                                  fontSize: '0.75rem',
+                                  fontWeight: '500',
+                                }}
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error message */}
+                      {job.error && (
+                        <div>
+                          <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem', color: 'var(--color-danger)' }}>
+                            Error
+                          </h4>
+                          <div
                             style={{
-                              display: 'inline-block',
-                              padding: '0.25rem 0.75rem',
+                              backgroundColor: 'var(--color-danger-light)',
+                              color: 'var(--color-danger)',
+                              padding: '0.75rem',
                               borderRadius: '0.375rem',
-                              backgroundColor: `color-mix(in srgb, ${getStatusColor(job.status || '')} 15%, transparent)`,
-                              color: getStatusColor(job.status || ''),
                               fontSize: '0.875rem',
-                              fontWeight: '500',
+                              border: `1px solid var(--color-danger)`,
                             }}
                           >
-                            {job.status || '-'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
-                          {formatDate(job.createdAt)} {formatTime(job.createdAt)}
-                        </td>
-                        <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
-                          {getDuration(job.startedAt, job.completedAt)}
-                        </td>
-                        <td style={{ padding: '1rem', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.875rem', color: 'var(--color-primary)' }}>
-                            {expandedJobId === job.id ? '▼' : '▶'}
-                          </span>
-                        </td>
-                      </tr>
-
-                      {/* Expanded details */}
-                      {expandedJobId === job.id && (
-                        <tr style={{ backgroundColor: 'var(--color-surface-alt)' }}>
-                          <td colSpan={6} style={{ padding: '1.5rem' }}>
-                            <div style={{ display: 'grid', gap: '1rem' }}>
-                              {/* Command details */}
-                              <div>
-                                <h4 style={{ marginBottom: '0.5rem', fontWeight: '600' }}>Command</h4>
-                                <div
-                                  style={{
-                                    backgroundColor: 'var(--color-surface)',
-                                    padding: '1rem',
-                                    borderRadius: '0.375rem',
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.875rem',
-                                    overflowX: 'auto',
-                                    border: `1px solid var(--color-border)`,
-                                  }}
-                                >
-                                  <pre style={{ margin: 0 }}>
-                                    {JSON.stringify(job.command, null, 2)}
-                                  </pre>
-                                </div>
-                              </div>
-
-                              {/* Dependencies */}
-                              {job.dependsOn && job.dependsOn.length > 0 && (
-                                <div>
-                                  <h4 style={{ marginBottom: '0.5rem', fontWeight: '600' }}>
-                                    Depends On ({job.dependsOn.length})
-                                  </h4>
-                                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    {job.dependsOn.map((depId) => (
-                                      <span
-                                        key={depId}
-                                        style={{
-                                          backgroundColor: 'var(--color-border)',
-                                          padding: '0.25rem 0.75rem',
-                                          borderRadius: '0.375rem',
-                                          fontSize: '0.875rem',
-                                          fontFamily: 'monospace',
-                                        }}
-                                      >
-                                        {depId.substring(0, 8)}...
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Error message */}
-                              {job.error && (
-                                <div>
-                                  <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', color: 'var(--color-danger)' }}>
-                                    Error
-                                  </h4>
-                                  <div
-                                    style={{
-                                      backgroundColor: 'var(--color-danger-light)',
-                                      color: 'var(--color-danger)',
-                                      padding: '1rem',
-                                      borderRadius: '0.375rem',
-                                      fontSize: '0.875rem',
-                                    }}
-                                  >
-                                    {job.error}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Events */}
-                              {job.events && job.events.length > 0 && (
-                                <div>
-                                  <h4 style={{ marginBottom: '0.5rem', fontWeight: '600' }}>
-                                    Events ({job.events.length})
-                                  </h4>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                    {job.events.map((event, idx) => (
-                                      <div
-                                        key={idx}
-                                        style={{
-                                          backgroundColor: 'var(--color-surface)',
-                                          padding: '0.75rem',
-                                          borderRadius: '0.375rem',
-                                          borderLeft: `3px solid var(--color-primary)`,
-                                          fontSize: '0.875rem',
-                                          border: `1px solid var(--color-border)`,
-                                          borderLeftWidth: '3px',
-                                        }}
-                                      >
-                                        <div style={{ color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>
-                                          {formatTime(event.timestamp)}
-                                        </div>
-                                        <div>{event.message}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
+                            {job.error}
+                          </div>
+                        </div>
                       )}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
+
+                      {/* Events */}
+                      {job.events && job.events.length > 0 && (
+                        <div>
+                          <h4 style={{ marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.875rem' }}>
+                            Events ({job.events.length})
+                          </h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+                            {job.events.map((event, idx) => (
+                              <div
+                                key={idx}
+                                style={{
+                                  backgroundColor: 'var(--color-surface-alt)',
+                                  padding: '0.5rem',
+                                  borderRadius: '0.375rem',
+                                  borderLeft: `3px solid var(--color-primary)`,
+                                  fontSize: '0.75rem',
+                                  border: `1px solid var(--color-border)`,
+                                  borderLeftWidth: '3px',
+                                }}
+                              >
+                                <div style={{ color: 'var(--color-text-secondary)', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
+                                  {formatTime(event.timestamp)}
+                                </div>
+                                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{event.message}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </>
