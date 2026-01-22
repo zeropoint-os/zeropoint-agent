@@ -1,130 +1,114 @@
-import React, { useState, useEffect } from 'react';
-import { ExposuresApi, ModulesApi, Configuration, ApiModule, ApiExposureResponse } from 'artifacts/clients/typescript';
+import React, { useState, useEffect, useRef } from 'react';
+import { ExposuresApi, ModulesApi, JobsApi, Configuration, ApiModule, ApiExposureResponse } from 'artifacts/clients/typescript';
 import CreateExposureDialog from '../components/CreateExposureDialog';
+import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
-type Module = ApiModule;
 type Exposure = ApiExposureResponse;
 
 export default function ExposuresView() {
-  const [exposures, setExposures] = useState<ApiExposureResponse[]>([]);
+  const [exposures, setExposures] = useState<Exposure[]>([]);
   const [modules, setModules] = useState<ApiModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [deletingExposure, setDeletingExposure] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
+  const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
+  const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
-    fetchExposuresAndModules();
+    fetchExposures();
+    // Refresh every 5 seconds
+    const interval = setInterval(fetchExposures, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  const fetchExposuresAndModules = async () => {
-    try {
+  const fetchExposures = async () => {
+    loadingTimeoutRef.current = setTimeout(() => {
       setLoading(true);
-      
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
-      
-      // Fetch exposures
-      const exposuresResponse = await exposuresApi.exposuresGet();
-      const exposureList = exposuresResponse.exposures ?? [];
-      setExposures(exposureList);
+    }, LOADING_INDICATOR_DELAY);
 
-      // Fetch modules
-      const modulesResponse = await modulesApi.modulesGet();
-      const modulesList = modulesResponse.modules ?? [];
-      setModules(modulesList);
+    try {
+      const [exposuresRes, modulesRes] = await Promise.all([
+        exposuresApi.listExposures(),
+        modulesApi.listModules(),
+      ]);
 
+      setExposures(exposuresRes.exposures ?? []);
+      setModules(Array.isArray(modulesRes.modules) ? modulesRes.modules : []);
       setError(null);
     } catch (err) {
-      console.error('Error loading data:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
-      setExposures([]);
-      setModules([]);
     } finally {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
       setLoading(false);
     }
   };
 
-  const handleCreateExposure = () => {
-    setShowCreateDialog(true);
+  const getModuleName = (moduleId: string | undefined): string => {
+    if (!moduleId) return 'Unknown';
+    const module = modules.find(m => m.id === moduleId);
+    return module?.id || moduleId;
   };
 
-  const handleCreateExposureSubmit = async (data: {
-    module_id: string;
-    hostname: string;
-    protocol: string;
-    container_port: number;
-  }) => {
-    try {
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.exposuresExposureIdPost({
-        exposureId: data.module_id,
-        apiCreateExposureRequest: {
-          moduleId: data.module_id,
-          hostname: data.hostname,
-          protocol: data.protocol,
-          containerPort: data.container_port,
-        },
-      });
-
-      setSuccessMessage(`Exposure for "${data.module_id}" created successfully`);
-      setTimeout(() => setSuccessMessage(null), 4000);
-
-      // Refresh exposures list
-      await fetchExposuresAndModules();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create exposure');
-      throw err; // Re-throw to let dialog handle it
+  const getExposureUrl = (exposure: Exposure): string => {
+    if (!exposure.protocol || !exposure.id) {
+      return 'N/A';
     }
+    // All exposures go through Envoy on port 80, mDNS is configured for the exposure ID
+    return `${exposure.protocol}://${exposure.id}.local/`;
   };
 
   const handleDeleteExposure = async (exposureId: string) => {
-    if (!window.confirm(`Are you sure you want to delete exposure "${exposureId}"?`)) {
+    if (!window.confirm(`Delete exposure "${exposureId}"?`)) {
       return;
     }
 
     try {
-      setDeletingExposure(exposureId);
+      await jobsApi.enqueueDeleteExposure({
+        queueEnqueueDeleteExposureRequest: {
+          exposureId: exposureId,
+        }
+      });
       setError(null);
-
-      const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
-      await exposuresApi.exposuresExposureIdDelete({ exposureId });
-
-      setSuccessMessage(`Exposure "${exposureId}" deleted successfully`);
-      setTimeout(() => setSuccessMessage(null), 4000);
-      
-      // Refresh exposures list
-      await fetchExposuresAndModules();
+      setTimeout(() => fetchExposures(), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete exposure');
-    } finally {
-      setDeletingExposure(null);
     }
   };
 
   return (
     <div className="view-container">
-      <CreateExposureDialog
-        isOpen={showCreateDialog}
-        modules={modules}
-        onClose={() => setShowCreateDialog(false)}
-        onCreate={handleCreateExposureSubmit}
-      />
+      {showCreateDialog && (
+        <CreateExposureDialog
+          isOpen={showCreateDialog}
+          modules={modules}
+          onClose={() => setShowCreateDialog(false)}
+          onCreate={async () => {
+            setShowCreateDialog(false);
+            setTimeout(() => fetchExposures(), 1000);
+          }}
+        />
+      )}
 
-      {!loading && exposures.length > 0 && (
+      {exposures.length > 0 && (
         <div className="view-header">
           <h1 className="section-title">Exposures</h1>
-          <button className="button button-primary" onClick={handleCreateExposure}>
+          <button
+            className="button button-primary"
+            onClick={() => setShowCreateDialog(true)}
+          >
             <span>+</span> Create Exposure
           </button>
         </div>
       )}
-      {(loading || exposures.length === 0) && (
-        <div className="view-header">
-          <h1 className="section-title">Exposures</h1>
-        </div>
+
+      {exposures.length === 0 && (
+        <h1 className="section-title">Exposures</h1>
       )}
 
       {error && (
@@ -133,12 +117,6 @@ export default function ExposuresView() {
           <button className="button button-secondary" onClick={() => setError(null)}>
             Dismiss
           </button>
-        </div>
-      )}
-
-      {successMessage && (
-        <div className="success-state">
-          <p className="success-message">✓ {successMessage}</p>
         </div>
       )}
 
@@ -153,79 +131,69 @@ export default function ExposuresView() {
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
-          <h2>No exposures</h2>
-          <p>Expose modules to make them accessible from outside.</p>
-          <button className="button button-primary" onClick={handleCreateExposure}>
+          <h2>No exposures created</h2>
+          <p>Create exposures to access your modules.</p>
+          <button
+            className="button button-primary"
+            onClick={() => setShowCreateDialog(true)}
+          >
             Create Exposure
           </button>
         </div>
       ) : (
         <div className="grid grid-2">
           {exposures.map((exposure, idx) => {
-            const exposureId = exposure.id || `exposure-${idx}`;
-            const url = exposure.hostname && exposure.containerPort 
-              ? `${exposure.protocol || 'http'}://${exposure.hostname}.local:${exposure.containerPort}`
-              : 'N/A';
-            const createdDate = exposure.createdAt 
-              ? new Date(exposure.createdAt).toLocaleDateString()
-              : 'N/A';
+            const key = exposure.id || `exposure-${idx}`;
             return (
-              <div key={exposureId} className="card">
-                <div className="exposure-header">
-                  <div>
-                    <h3 className="exposure-module">{exposure.moduleId || 'Unknown'}</h3>
-                    <p className="exposure-id">{exposure.id}</p>
-                  </div>
-                  <span className={`status-badge status-${(exposure.status || 'unknown').toLowerCase()}`}>
-                    {exposure.status || 'unknown'}
-                  </span>
+              <div key={key} className="card">
+                <div style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: '600' }}>
+                    {exposure.id || 'Unnamed'}
+                  </h3>
+                  <p style={{ margin: '0', fontSize: '0.875rem', color: '#6b7280' }}>
+                    Module: {getModuleName(exposure.moduleId)}
+                  </p>
                 </div>
-                
-                <div className="exposure-detail">
-                  <span className="detail-label">URL:</span>
-                  {url !== 'N/A' ? (
-                    <a href={url} target="_blank" rel="noopener noreferrer" className="detail-link">
-                      {url}
-                    </a>
-                  ) : (
-                    <span className="detail-value">{url}</span>
+
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#f0fdf4', borderRadius: '0.375rem' }}>
+                  <p style={{ fontSize: '0.875rem', fontWeight: '500', color: '#15803d', marginBottom: '0.5rem' }}>
+                    Access URL
+                  </p>
+                  <a
+                    href={getExposureUrl(exposure)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      fontSize: '0.875rem',
+                      color: '#0369a1',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {getExposureUrl(exposure)} ↗
+                  </a>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', marginBottom: '1rem', color: '#6b7280' }}>
+                  <div>
+                    <strong>Protocol:</strong> {exposure.protocol}
+                  </div>
+                  <div>
+                    <strong>Port:</strong> {exposure.containerPort}
+                  </div>
+                  {exposure.hostname && (
+                    <div>
+                      <strong>Host:</strong> {exposure.hostname}
+                    </div>
                   )}
                 </div>
 
-                <div className="exposure-detail">
-                  <span className="detail-label">Protocol:</span>
-                  <span className="detail-value">{exposure.protocol || 'N/A'}</span>
-                </div>
-
-                <div className="exposure-detail">
-                  <span className="detail-label">Port:</span>
-                  <span className="detail-value">{exposure.containerPort || 'N/A'}</span>
-                </div>
-
-                <div className="exposure-detail">
-                  <span className="detail-label">Created:</span>
-                  <span className="detail-value">{createdDate}</span>
-                </div>
-
-                {exposure.tags && exposure.tags.length > 0 && (
-                  <div className="exposure-tags">
-                    {exposure.tags.map((tag) => (
-                      <span key={tag} className="tag">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                
-                <div className="exposure-actions">
-                  <button
-                    className="button button-danger"
-                    onClick={() => handleDeleteExposure(exposureId)}
-                    disabled={deletingExposure === exposureId}
-                  >
-                    {deletingExposure === exposureId ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
+                <button
+                  className="button button-danger"
+                  onClick={() => handleDeleteExposure(exposure.id || '')}
+                  style={{ width: '100%' }}
+                >
+                  Delete
+                </button>
               </div>
             );
           })}

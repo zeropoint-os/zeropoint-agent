@@ -11,17 +11,21 @@ import (
 // handling multiple writers opening and closing the FIFO
 func (m *BootMonitor) StreamBootLog(logFile string) error {
 	for {
+		// Before attempting to open FIFO, reload persistent markers.
+		// This ensures we pick up markers from any boot services that
+		// completed before we started listening (handles mid-boot connections).
+		m.loadPersistentMarkers()
+
 		// Check if boot is already complete via persistent markers.
-		// If so, don't bother trying to open the FIFO (it may not exist).
+		// If so, stop monitoring entirely - no need to keep refreshing.
 		m.mu.RLock()
 		isComplete := m.isComplete
 		m.mu.RUnlock()
 
 		if isComplete {
-			// Boot already marked as complete via persistent markers.
-			// Just listen for changes to marker files and wait for potential reboot.
-			time.Sleep(5 * time.Second)
-			continue
+			// Boot is marked as complete. No need to continue monitoring.
+			m.logger.Info("boot complete, monitor loop exiting")
+			return nil
 		}
 
 		// Open FIFO in blocking mode (without O_NONBLOCK).
@@ -29,10 +33,10 @@ func (m *BootMonitor) StreamBootLog(logFile string) error {
 		file, err := os.OpenFile(logFile, os.O_RDONLY, 0)
 		if err != nil {
 			// If the file doesn't exist, this can indicate the system has
-			// rebooted and the FIFO/marker files were removed. Clear in-
-			// memory state so we don't keep stale markers.
+			// rebooted and the FIFO/marker files were removed. Check if markers
+			// exist first - if they do, reload them. If not, clear state.
 			if os.IsNotExist(err) {
-				m.logger.Info("log file missing; clearing in-memory state")
+				m.logger.Info("log file missing; checking for persistent markers")
 				m.ResetState()
 			} else {
 				m.logger.Debug("error opening FIFO, retrying", "error", err)

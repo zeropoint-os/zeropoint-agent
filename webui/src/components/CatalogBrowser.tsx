@@ -28,7 +28,7 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
   const updateCatalog = async () => {
     try {
       setUpdating(true);
-      await catalogApi.catalogsUpdatePost();
+      await catalogApi.updateCatalog();
     } catch (err) {
       console.error('Error updating catalog:', err);
       // Don't fail - continue with fetch anyway
@@ -48,11 +48,11 @@ export default function CatalogBrowser({ filterType, onSelect, onClose }: Catalo
       let catalogItems: CatalogItem[] = [];
 
       if (filterType === 'bundles') {
-        const bundles = await catalogApi.catalogsBundlesGet({});
+        const bundles = await catalogApi.listCatalogBundles({});
         catalogItems = bundles || [];
       } else {
         // Default to modules
-        const modules = await catalogApi.catalogsModulesGet({});
+        const modules = await catalogApi.listCatalogModules({});
         catalogItems = modules || [];
       }
 

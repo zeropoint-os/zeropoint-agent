@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"zeropoint-agent/internal/boot"
 	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
+	"zeropoint-agent/internal/queue"
 	"zeropoint-agent/internal/xds"
 
 	"github.com/gorilla/mux"
@@ -26,6 +28,7 @@ type apiEnv struct {
 	inspect   *InspectHandlers
 	catalog   *catalog.Handlers
 	boot      *BootHandlers
+	queue     *queue.Handlers
 	logger    *slog.Logger
 }
 
@@ -53,16 +56,31 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		return nil, fmt.Errorf("failed to initialize link store: %w", err)
 	}
 
+	// Initialize bundle store
+	bundleStore, err := NewBundleStore(logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize bundle store: %w", err)
+	}
+
 	// Initialize catalog
 	catalogStore := catalog.NewStore(logger)
 	catalogResolver := catalog.NewResolver(catalogStore)
 	catalogHandlers := catalog.NewHandlers(catalogStore, catalogResolver, logger)
 
+	// Initialize job queue manager
+	jobsDir := filepath.Join(internalPaths.GetStorageRoot(), "jobs")
+	queueManager, err := queue.NewManager(jobsDir, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize job queue: %w", err)
+	}
+
 	moduleHandlers := NewModuleHandlers(installer, uninstaller, dockerClient, logger)
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
 	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
+	bundleHandlers := NewBundleHandlers(bundleStore, exposureStore, exposureHandlers, linkHandlers, uninstaller, logger)
 	bootHandlers := NewBootHandlers(bootMonitor)
+	queueHandlers := queue.NewHandlers(queueManager, catalogStore, bundleStore, logger)
 
 	env := &apiEnv{
 		docker:    dockerClient,
@@ -71,6 +89,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		inspect:   inspectHandlers,
 		catalog:   catalogHandlers,
 		boot:      bootHandlers,
+		queue:     queueHandlers,
 		logger:    logger,
 	}
 
@@ -127,13 +146,18 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/links", linkHandlers.ListLinks).Methods(http.MethodGet)
 	r.HandleFunc("/api/links/{id}", linkHandlers.GetLink).Methods(http.MethodGet)
 	r.HandleFunc("/api/links/{id}", linkHandlers.CreateOrUpdateLink).Methods(http.MethodPost)
-	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLink).Methods(http.MethodDelete)
+	r.HandleFunc("/api/links/{id}", linkHandlers.DeleteLinkHTTP).Methods(http.MethodDelete)
 
 	// Exposure endpoints
 	r.HandleFunc("/api/exposures", exposureHandlers.ListExposures).Methods(http.MethodGet)
-	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.CreateExposureHTTP).Methods(http.MethodPost)
 	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
-	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposure).Methods(http.MethodDelete)
+	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposureHTTP).Methods(http.MethodDelete)
+
+	// Bundle endpoints
+	r.HandleFunc("/api/bundles", bundleHandlers.ListBundles).Methods(http.MethodGet)
+	r.HandleFunc("/api/bundles/{bundle-id}", bundleHandlers.GetBundle).Methods(http.MethodGet)
+	r.HandleFunc("/api/bundles/{bundle-id}", bundleHandlers.DeleteBundle).Methods(http.MethodDelete)
 
 	// Catalog endpoints
 	r.HandleFunc("/api/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
@@ -142,17 +166,43 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/catalogs/bundles", catalogHandlers.HandleListBundles).Methods(http.MethodGet)
 	r.HandleFunc("/api/catalogs/bundles/{bundle_name}", catalogHandlers.HandleGetBundle).Methods(http.MethodGet)
 
+	// Job Queue endpoints
+	r.HandleFunc("/api/jobs", queueHandlers.ListJobs).Methods(http.MethodGet)
+	r.HandleFunc("/api/jobs", queueHandlers.DeleteJobs).Methods(http.MethodDelete)
+	r.HandleFunc("/api/jobs/{id}", queueHandlers.GetJob).Methods(http.MethodGet)
+	r.HandleFunc("/api/jobs/{id}", queueHandlers.CancelJob).Methods(http.MethodDelete)
+	r.HandleFunc("/api/jobs/enqueue_install_module", queueHandlers.EnqueueInstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_uninstall_module", queueHandlers.EnqueueUninstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_create_exposure", queueHandlers.EnqueueCreateExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_delete_exposure", queueHandlers.EnqueueDeleteExposure).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_create_link", queueHandlers.EnqueueCreateLink).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_delete_link", queueHandlers.EnqueueDeleteLink).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_install_bundle", queueHandlers.EnqueueBundleInstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_uninstall_bundle", queueHandlers.EnqueueBundleUninstall).Methods(http.MethodPost)
+
 	// Web UI - serve static files as fallback after API routes
 	webDir := getWebDir()
 	if webDir != "" {
 		r.PathPrefix("/").Handler(http.FileServer(http.Dir(webDir)))
 	}
 
-	// Wrap router with boot check middleware
-	return bootCheckMiddleware(r), nil
+	// Create router with middleware for boot checking
+	routerWithMiddleware := bootCheckMiddleware(r)
+
+	// Initialize job executor with handlers for direct execution
+	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, catalogStore, bundleStore, logger)
+
+	// Create and start the job worker
+	worker := queue.NewWorker(queueManager, jobExecutor, logger)
+	worker.Start(context.Background())
+	logger.Info("job worker started")
+
+	// Return router with middleware
+	return routerWithMiddleware, nil
 }
 
 // HealthHandler handles GET /health requests
+// @ID getHealth
 // @Summary Health check endpoint
 // @Description Returns the health status of the API server
 // @Tags system

@@ -31,7 +31,7 @@ export default function BootStatus() {
 
     const checkAndPoll = async () => {
       try {
-        const data = await bootApi.apiBootStatusGet();
+        const data = await bootApi.getBootStatus();
         // data is now BootServiceMarkers[] - array of {service, markers}
         setMarkersList(data || []);
         setError(null);
@@ -79,7 +79,7 @@ export default function BootStatus() {
   // fetchStatus/polling handled in effect above; helper to manually refresh if needed
   const refreshStatusOnce = async () => {
     try {
-      const data = await bootApi.apiBootStatusGet();
+      const data = await bootApi.getBootStatus();
       setMarkersList(data);
       setError(null);
     } catch (err) {

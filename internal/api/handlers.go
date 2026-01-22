@@ -72,7 +72,8 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 	}
 }
 
-// CreateExposure handles POST /exposures/{exposure_id}
+// CreateExposureHTTP handles POST /exposures/{exposure_id}
+// @ID createExposure
 // @Summary Create an exposure for an application
 // @Description Exposes an application externally via Envoy reverse proxy
 // @Tags exposures
@@ -82,7 +83,7 @@ func NewExposureHandlers(store *ExposureStore, logger *slog.Logger) *ExposureHan
 // @Success 200 {object} ExposureResponse "Exposure already exists"
 // @Failure 400 {string} string "Bad request"
 // @Router /exposures/{exposure_id} [post]
-func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request) {
+func (h *ExposureHandlers) CreateExposureHTTP(w http.ResponseWriter, r *http.Request) {
 	// Get exposure_id from URL path
 	vars := mux.Vars(r)
 	exposureID := vars["exposure_id"]
@@ -131,6 +132,7 @@ func (h *ExposureHandlers) CreateExposure(w http.ResponseWriter, r *http.Request
 }
 
 // ListExposures handles GET /exposures
+// @ID listExposures
 // @Summary List all exposures
 // @Description Returns all active exposures
 // @Tags exposures
@@ -152,6 +154,7 @@ func (h *ExposureHandlers) ListExposures(w http.ResponseWriter, r *http.Request)
 }
 
 // GetExposure handles GET /exposures/{exposure_id}
+// @ID getExposure
 // @Summary Get exposure for an application
 // @Description Returns the exposure details for a specific exposure
 // @Tags exposures
@@ -175,7 +178,19 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// DeleteExposure handles DELETE /exposures/{exposure_id}
+// CreateExposure creates an exposure (for job queue)
+func (h *ExposureHandlers) CreateExposure(ctx context.Context, exposureID, moduleID, protocol, hostname string, containerPort uint32, tags []string) error {
+	_, _, err := h.store.CreateExposure(ctx, exposureID, moduleID, protocol, hostname, containerPort, tags)
+	return err
+}
+
+// DeleteExposure removes an exposure (for job queue)
+func (h *ExposureHandlers) DeleteExposure(ctx context.Context, exposureID string) error {
+	return h.store.DeleteExposure(ctx, exposureID)
+}
+
+// DeleteExposureHTTP handles DELETE /exposures/{exposure_id}
+// @ID deleteExposure
 // @Summary Delete an exposure
 // @Description Removes external access for an exposure
 // @Tags exposures
@@ -183,7 +198,7 @@ func (h *ExposureHandlers) GetExposure(w http.ResponseWriter, r *http.Request) {
 // @Success 204 "No content"
 // @Failure 404 {string} string "Exposure not found"
 // @Router /exposures/{exposure_id} [delete]
-func (h *ExposureHandlers) DeleteExposure(w http.ResponseWriter, r *http.Request) {
+func (h *ExposureHandlers) DeleteExposureHTTP(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	exposureID := vars["exposure_id"]
 
@@ -283,10 +298,11 @@ func (h *LinkHandlers) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/links", h.ListLinks).Methods("GET")
 	router.HandleFunc("/links/{id}", h.GetLink).Methods("GET")
 	router.HandleFunc("/links/{id}", h.CreateOrUpdateLink).Methods("POST")
-	router.HandleFunc("/links/{id}", h.DeleteLink).Methods("DELETE")
+	router.HandleFunc("/links/{id}", h.DeleteLinkHTTP).Methods("DELETE")
 }
 
 // ListLinks handles GET /links
+// @ID listLinks
 // @Summary List all links
 // @Description Returns all active app links
 // @Tags links
@@ -303,6 +319,7 @@ func (h *LinkHandlers) ListLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetLink handles GET /links/{id}
+// @ID getLink
 // @Summary Get link details
 // @Description Returns details for a specific link
 // @Tags links
@@ -326,6 +343,7 @@ func (h *LinkHandlers) GetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateOrUpdateLink handles POST /links/{id}
+// @ID createOrUpdateLink
 // @Summary Create or update a link
 // @Description Create or update a link between multiple modules
 // @Tags links
@@ -362,7 +380,22 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(response)
 }
 
+// CreateLink creates a link between multiple modules (for job queue)
+func (h *LinkHandlers) CreateLink(ctx context.Context, linkID string, modules map[string]map[string]interface{}, tags []string) error {
+	response := h.linkApps(linkID, modules, tags)
+	if !response.Success {
+		return fmt.Errorf(response.Message)
+	}
+	return nil
+}
+
+// DeleteLink removes a link and cleans up associated resources
+func (h *LinkHandlers) DeleteLink(ctx context.Context, id string) error {
+	return h.linkStore.DeleteLink(ctx, id)
+}
+
 // DeleteLink handles DELETE /links/{id}
+// @ID deleteLink
 // @Summary Delete a link
 // @Description Remove a link and clean up associated resources
 // @Tags links
@@ -371,7 +404,7 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 // @Failure 404 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /links/{id} [delete]
-func (h *LinkHandlers) DeleteLink(w http.ResponseWriter, r *http.Request) {
+func (h *LinkHandlers) DeleteLinkHTTP(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	linkID := vars["id"]
 
@@ -794,6 +827,7 @@ func NewModuleHandlers(installer *Installer, uninstaller *Uninstaller, docker *c
 }
 
 // InstallModule handles POST /modules/{name} with streaming progress updates
+// @ID installModule
 // @Summary Install a module
 // @Description Installs a module by name with optional configuration
 // @Tags modules
@@ -877,6 +911,7 @@ func (h *ModuleHandlers) InstallModule(w http.ResponseWriter, r *http.Request) {
 }
 
 // UninstallModule handles DELETE /modules/{name} with streaming progress updates
+// @ID uninstallModule
 // @Summary Uninstall a module
 // @Description Uninstalls a module by name with streaming progress updates
 // @Tags modules
@@ -935,6 +970,7 @@ func (h *ModuleHandlers) UninstallModule(w http.ResponseWriter, r *http.Request)
 }
 
 // ListModules handles GET /modules
+// @ID listModules
 // @Summary List installed modules
 // @Description Returns installed modules metadata
 // @Tags modules

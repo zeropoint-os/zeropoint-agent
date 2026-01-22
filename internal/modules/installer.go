@@ -19,7 +19,6 @@ import (
 	"zeropoint-agent/internal/terraform"
 	"zeropoint-agent/internal/validator"
 
-	"github.com/google/uuid"
 	"github.com/moby/moby/client"
 )
 
@@ -83,20 +82,27 @@ func (i *Installer) Install(req InstallRequest, progress ProgressCallback) error
 		logger.Info("cloning from git", "url", gitURL, "ref", ref)
 		progress(ProgressUpdate{Status: "cloning", Message: "Cloning repository"})
 
-		// Clone to temporary location
-		tmpDir, err := i.cloneFromGit(gitURL, ref)
-		if err != nil {
+		// Prepare target path
+		targetPath := filepath.Join(i.appsDir, req.ModuleID)
+
+		// Remove existing directory if it exists (from previous failed install)
+		if err := os.RemoveAll(targetPath); err != nil {
+			logger.Warn("failed to remove existing module directory", "path", targetPath, "error", err)
+		}
+
+		// Clone directly to target location
+		if err := i.cloneFromGit(gitURL, ref, targetPath); err != nil {
 			logger.Error("git clone failed", "error", err)
+			// Clean up on failure
+			os.RemoveAll(targetPath)
 			return fmt.Errorf("git clone failed: %w", err)
 		}
-		defer os.RemoveAll(tmpDir)
 
-		// Copy to modules directory (without .git)
-		targetPath := filepath.Join(i.appsDir, req.ModuleID)
-		logger.Info("copying module to modules directory", "target", targetPath)
-		if err := copyDirWithoutGit(tmpDir, targetPath); err != nil {
-			logger.Error("failed to copy module", "error", err)
-			return fmt.Errorf("failed to copy module: %w", err)
+		// Remove .git directory to save space
+		gitDir := filepath.Join(targetPath, ".git")
+		if err := os.RemoveAll(gitDir); err != nil {
+			logger.Warn("failed to remove .git directory", "error", err)
+			// Don't fail installation if .git removal fails
 		}
 
 		// Save metadata
@@ -277,34 +283,30 @@ func parseGitURL(source string) (gitURL, ref string, err error) {
 }
 
 // cloneFromGit clones a git repository to a temporary directory
-func (i *Installer) cloneFromGit(gitURL, ref string) (string, error) {
-	tmpDir := filepath.Join(i.workingDir, "zeropoint-clone-"+uuid.New().String())
-
-	// First, clone the repository (can't use --depth=1 with commit SHAs)
-	cloneArgs := []string{"clone", gitURL, tmpDir}
+func (i *Installer) cloneFromGit(gitURL, ref, targetPath string) error {
+	// Clone the repository directly to target location
+	cloneArgs := []string{"clone", gitURL, targetPath}
 
 	cloneCmd := exec.Command("git", cloneArgs...)
 	cloneCmd.Stdout = os.Stdout
 	cloneCmd.Stderr = os.Stderr
 
 	if err := cloneCmd.Run(); err != nil {
-		return "", fmt.Errorf("git clone failed: %w", err)
+		return fmt.Errorf("git clone failed: %w", err)
 	}
 
 	// Then checkout the specific commit SHA
 	checkoutArgs := []string{"checkout", ref}
 	checkoutCmd := exec.Command("git", checkoutArgs...)
-	checkoutCmd.Dir = tmpDir
+	checkoutCmd.Dir = targetPath
 	checkoutCmd.Stdout = os.Stdout
 	checkoutCmd.Stderr = os.Stderr
 
 	if err := checkoutCmd.Run(); err != nil {
-		// Clean up the directory on checkout failure
-		os.RemoveAll(tmpDir)
-		return "", fmt.Errorf("git checkout %s failed: %w", ref, err)
+		return fmt.Errorf("git checkout %s failed: %w", ref, err)
 	}
 
-	return tmpDir, nil
+	return nil
 }
 
 // copyDirWithoutGit copies a directory tree excluding .git folders

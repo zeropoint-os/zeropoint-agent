@@ -34,7 +34,7 @@ export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrows
     try {
       setUpdating(true);
       const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
-      await catalogApi.catalogsUpdatePost();
+      await catalogApi.updateCatalog();
     } catch (err) {
       console.error('Error updating catalog:', err);
       // Don't fail - continue with fetch anyway
@@ -52,7 +52,7 @@ export default function BundleBrowser({ isOpen, onClose, onSelect }: BundleBrows
     try {
       setLoading(true);
       const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
-      const bundleList = await catalogApi.catalogsBundlesGet();
+      const bundleList = await catalogApi.listCatalogBundles({});
       setBundles(bundleList || []);
       setError(null);
     } catch (err) {

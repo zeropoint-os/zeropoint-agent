@@ -54,6 +54,7 @@ type OutputSchema struct {
 }
 
 // InspectModule handles GET /modules/{module_id}/inspect?source_url=...
+// @ID inspectModule
 // @Summary Inspect a module's inputs and outputs
 // @Description Fetch and parse a Terraform module to extract inputs, outputs, and current values
 // @Tags modules
