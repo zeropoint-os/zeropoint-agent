@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { LinksApi, JobsApi, Configuration, ApiLink, QueueJobResponse } from 'artifacts/clients/typescript';
+import React, { useState, useEffect, useRef } from 'react';
+import { LinksApi, JobsApi, Configuration, ApiLink } from 'artifacts/clients/typescript';
 import CreateLinkDialog from '../components/CreateLinkDialog';
-import JobProgressCard from '../components/JobProgressCard';
+import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
 type Link = ApiLink;
@@ -10,139 +10,52 @@ export default function LinksView() {
   const [links, setLinks] = useState<ApiLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [createJobs, setCreateJobs] = useState<Map<string, QueueJobResponse>>(new Map());
-  const [deleteJobs, setDeleteJobs] = useState<Map<string, QueueJobResponse>>(new Map());
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+  const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
     fetchLinks();
+    // Refresh every 5 seconds
+    const interval = setInterval(fetchLinks, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
-
-    const pollCreateJobs = async () => {
-      const updatedJobs = new Map(createJobs);
-
-      for (const [linkName, job] of createJobs.entries()) {
-        if (job.id && job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
-          try {
-            const updatedJob = await jobsApi.getJob({ id: job.id });
-            
-            if (updatedJob.status === 'completed' || updatedJob.status === 'failed' || updatedJob.status === 'cancelled') {
-              // Remove completed/failed/cancelled jobs from the map
-              updatedJobs.delete(linkName);
-              // Refresh links list when job completes
-              if (updatedJob.status === 'completed') {
-                await fetchLinks();
-              }
-            } else {
-              updatedJobs.set(linkName, updatedJob);
-            }
-          } catch (err) {
-            console.error('Error polling create job:', err);
-          }
-        }
-      }
-
-      setCreateJobs(updatedJobs);
-    };
-
-    const pollDeleteJobs = async () => {
-      const updatedJobs = new Map(deleteJobs);
-
-      for (const [linkName, job] of deleteJobs.entries()) {
-        if (job.id && job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
-          try {
-            const updatedJob = await jobsApi.getJob({ id: job.id });
-            
-            if (updatedJob.status === 'completed' || updatedJob.status === 'failed' || updatedJob.status === 'cancelled') {
-              // Remove completed/failed/cancelled jobs from the map
-              updatedJobs.delete(linkName);
-              // Refresh links list when job completes
-              if (updatedJob.status === 'completed') {
-                await fetchLinks();
-              }
-            } else {
-              updatedJobs.set(linkName, updatedJob);
-            }
-          } catch (err) {
-            console.error('Error polling delete job:', err);
-          }
-        }
-      }
-
-      setDeleteJobs(updatedJobs);
-    };
-
-    if (createJobs.size > 0 || deleteJobs.size > 0) {
-      const interval = setInterval(() => {
-        pollCreateJobs();
-        pollDeleteJobs();
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [createJobs, deleteJobs]);
-
   const fetchLinks = async () => {
-    try {
+    loadingTimeoutRef.current = setTimeout(() => {
       setLoading(true);
-      const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+    }, LOADING_INDICATOR_DELAY);
+
+    try {
       const response = await linksApi.listLinks();
-      const linkList = response.links ?? [];
-      setLinks(linkList);
+      setLinks(response.links ?? []);
       setError(null);
     } catch (err) {
-      console.error('Error loading links:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
       setLinks([]);
     } finally {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
       setLoading(false);
     }
   };
 
-  const handleCreateLink = () => {
-    setShowCreateDialog(true);
-  };
-
-  const handleCreateLinkSubmit = async (data: {
-    id: string;
-    modules: { [moduleId: string]: { [key: string]: string } };
-  }) => {
-    try {
-      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
-      
-      const jobResponse = await jobsApi.enqueueCreateLink({
-        queueEnqueueCreateLinkRequest: {
-          linkId: data.id,
-          modules: data.modules,
-        },
-      });
-
-      setCreateJobs(prev => new Map(prev).set(data.id, jobResponse));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create link');
-      throw err;
-    }
-  };
-
   const handleDeleteLink = async (linkId: string) => {
-    if (!window.confirm(`Are you sure you want to delete link "${linkId}"?`)) {
+    if (!window.confirm(`Delete link "${linkId}"?`)) {
       return;
     }
 
     try {
-      setError(null);
-
-      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
-      const jobResponse = await jobsApi.enqueueDeleteLink({
+      await jobsApi.enqueueDeleteLink({
         queueEnqueueDeleteLinkRequest: {
           linkId: linkId,
-        },
+        }
       });
-
-      setDeleteJobs(prev => new Map(prev).set(linkId, jobResponse));
+      setError(null);
+      setTimeout(() => fetchLinks(), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete link');
     }
@@ -150,22 +63,34 @@ export default function LinksView() {
 
   return (
     <div className="view-container">
-      <CreateLinkDialog
-        isOpen={showCreateDialog}
-        onClose={() => setShowCreateDialog(false)}
-        onCreate={handleCreateLinkSubmit}
-      />
+      {showCreateDialog && (
+        <CreateLinkDialog
+          isOpen={showCreateDialog}
+          onClose={() => setShowCreateDialog(false)}
+          onCreate={async () => {
+            setShowCreateDialog(false);
+            setTimeout(() => fetchLinks(), 1000);
+          }}
+        />
+      )}
 
-      {(links.length > 0 || createJobs.size > 0) && (
+      {links.length > 0 && (
         <div className="view-header">
           <h1 className="section-title">Links</h1>
-          <button className="button button-primary" onClick={handleCreateLink}>
+          <button
+            className="button button-primary"
+            onClick={() => setShowCreateDialog(true)}
+          >
             <span>+</span> Create Link
           </button>
         </div>
       )}
 
-      {error && !loading && (
+      {links.length === 0 && (
+        <h1 className="section-title">Links</h1>
+      )}
+
+      {error && (
         <div className="error-state">
           <p className="error-message">{error}</p>
           <button className="button button-secondary" onClick={() => setError(null)}>
@@ -179,140 +104,162 @@ export default function LinksView() {
           <div className="spinner"></div>
           <p>Loading links...</p>
         </div>
-      ) : links.length === 0 && createJobs.size === 0 ? (
+      ) : links.length === 0 ? (
         <div className="empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
           </svg>
           <h2>No links created</h2>
-          <p>Create links between modules to establish connections.</p>
-          <button className="button button-primary" onClick={handleCreateLink}>
+          <p>Create links to connect modules together.</p>
+          <button
+            className="button button-primary"
+            onClick={() => setShowCreateDialog(true)}
+          >
             Create Link
           </button>
         </div>
       ) : (
-        <div className="grid grid-1">
-          {Array.from(createJobs.entries()).map(([linkId, job]) => (
-            <div key={`create-${linkId}`} className="card">
-              <JobProgressCard 
-                itemName={linkId} 
-                job={job}
-                operationType="create_link"
-                onCancel={job.status === 'queued' ? () => {
-                  if (job.id) {
-                    const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
-                    jobsApi.cancelJob({ id: job.id }).catch(err => 
-                      console.error('Failed to cancel create link job:', err)
-                    );
-                  }
-                } : undefined}
-              />
-            </div>
-          ))}
-          {links.map((link) => {
-            const linkId = link.id || 'unknown';
-            const moduleIds = Object.keys(link.modules || {});
-            const createdDate = link.createdAt 
-              ? new Date(link.createdAt).toLocaleDateString()
-              : 'N/A';
-            const deleteJob = deleteJobs.get(linkId);
-            const isDeleting = !!deleteJob;
+        <div className="grid grid-2">
+          {links.map((link, idx) => {
+            const key = link.id || `link-${idx}`;
+            const moduleCount = link.modules ? Object.keys(link.modules).length : 0;
 
             return (
-              <div key={linkId} className="card">
-                <div className="link-header">
-                  <div>
-                    <h3 className="link-title">{linkId}</h3>
-                    <p className="link-created">Created: {createdDate}</p>
-                  </div>
+              <div key={key} className="card">
+                <div style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.125rem', fontWeight: '600' }}>
+                    {link.id || 'Unnamed'}
+                  </h3>
+                  {link.createdAt && (
+                    <p style={{ margin: '0', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+                      Created: {new Date(link.createdAt).toLocaleDateString()}
+                    </p>
+                  )}
                 </div>
 
-                {deleteJob && (
-                  <JobProgressCard 
-                    itemName={linkId} 
-                    job={deleteJob}
-                    operationType="delete_link"
-                    onCancel={deleteJob.status === 'queued' ? () => {
-                      if (deleteJob.id) {
-                        const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
-                        jobsApi.cancelJob({ id: deleteJob.id }).catch(err => 
-                          console.error('Failed to cancel delete link job:', err)
-                        );
-                      }
-                    } : undefined}
-                  />
+                {link.modules && Object.keys(link.modules).length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                      Connected Modules ({moduleCount}):
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {Object.keys(link.modules).map((moduleId) => (
+                        <span
+                          key={moduleId}
+                          style={{
+                            fontSize: '0.875rem',
+                            backgroundColor: 'var(--color-info-light)',
+                            color: 'var(--color-info)',
+                            padding: '0.5rem',
+                            borderRadius: '0.375rem',
+                          }}
+                        >
+                          {moduleId}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
-                {!isDeleting && (
-                  <>
-                    <div className="link-modules-section">
-                      <h4 className="section-label">Modules</h4>
-                      <div className="modules-list">
-                        {moduleIds.map((moduleId, idx) => (
-                          <div key={moduleId} className="module-item">
-                            <span className="module-name">{moduleId}</span>
-                            {link.references?.[moduleId] && (
-                              <div className="module-references">
-                                {Object.entries(link.references[moduleId]).map(([refKey, refValue]) => (
-                                  <div key={refKey} className="reference-item">
-                                    <span className="ref-label">{refKey}:</span>
-                                    <code className="ref-value">{refValue as string}</code>
-                                  </div>
-                                ))}
+                {link.dependencyOrder && link.dependencyOrder.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                      Dependency Order:
+                    </p>
+                    <div style={{ fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {link.dependencyOrder.map((moduleName, idx) => (
+                        <React.Fragment key={moduleName}>
+                          <span style={{ backgroundColor: 'var(--color-surface-alt)', padding: '0.25rem 0.5rem', borderRadius: '0.25rem' }}>
+                            {moduleName}
+                          </span>
+                          {idx < link.dependencyOrder!.length - 1 && (
+                            <span style={{ color: 'var(--color-text-secondary)' }}>→</span>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {link.references && Object.keys(link.references).length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                      References:
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {Object.entries(link.references).map(([moduleName, refs]) => (
+                        <div key={moduleName} style={{ fontSize: '0.75rem' }}>
+                          <div style={{ fontWeight: '500', marginBottom: '0.25rem' }}>{moduleName}:</div>
+                          <div style={{ marginLeft: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            {Object.entries(refs).map(([key, value]) => (
+                              <div key={key} style={{ color: 'var(--color-text-secondary)' }}>
+                                <span style={{ fontFamily: 'monospace' }}>{key}</span>: <span style={{ color: 'var(--color-info)' }}>{value as string}</span>
                               </div>
-                            )}
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {link.dependencyOrder && link.dependencyOrder.length > 0 && (
-                      <div className="link-dependencies-section">
-                        <h4 className="section-label">Dependency Order</h4>
-                        <div className="dependency-flow">
-                          {link.dependencyOrder.map((dep, idx) => (
-                            <React.Fragment key={dep}>
-                              <span className="dependency-item">{dep}</span>
-                              {idx < link.dependencyOrder!.length - 1 && (
-                                <span className="dependency-arrow">→</span>
-                              )}
-                            </React.Fragment>
-                          ))}
                         </div>
-                      </div>
-                    )}
-
-                    {link.sharedNetworks && link.sharedNetworks.length > 0 && (
-                      <div className="link-networks-section">
-                        <h4 className="section-label">Networks</h4>
-                        <div className="networks-list">
-                          {link.sharedNetworks.map((network) => (
-                            <span key={network} className="tag">{network}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {link.tags && link.tags.length > 0 && (
-                      <div className="link-tags">
-                        {link.tags.map((tag) => (
-                          <span key={tag} className="tag">{tag}</span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="link-actions">
-                      <button
-                        className="button button-danger"
-                        onClick={() => handleDeleteLink(linkId)}
-                        disabled={isDeleting}
-                      >
-                        Delete
-                      </button>
+                      ))}
                     </div>
-                  </>
+                  </div>
                 )}
+
+                {link.sharedNetworks && link.sharedNetworks.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                      Shared Networks:
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {link.sharedNetworks.map((network) => (
+                        <span
+                          key={network}
+                          style={{
+                            fontSize: '0.875rem',
+                            backgroundColor: 'var(--color-surface-alt)',
+                            color: 'var(--color-text)',
+                            padding: '0.5rem',
+                            borderRadius: '0.375rem',
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {network}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {link.tags && link.tags.length > 0 && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.25rem' }}>
+                      Tags:
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {link.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          style={{
+                            fontSize: '0.75rem',
+                            backgroundColor: 'var(--color-border)',
+                            color: 'var(--color-text)',
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '0.25rem',
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  className="button button-danger"
+                  onClick={() => handleDeleteLink(link.id || '')}
+                  style={{ width: '100%' }}
+                >
+                  Delete
+                </button>
               </div>
             );
           })}

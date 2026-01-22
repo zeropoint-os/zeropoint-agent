@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"zeropoint-agent/internal/catalog"
 	"zeropoint-agent/internal/modules"
 )
 
@@ -27,16 +28,18 @@ type JobExecutor struct {
 	uninstaller     *modules.Uninstaller
 	exposureHandler ExposureHandler
 	linkHandler     LinkHandler
+	catalogStore    *catalog.Store
 	logger          *slog.Logger
 }
 
 // NewJobExecutor creates a new job executor with direct access to handlers
-func NewJobExecutor(installer *modules.Installer, uninstaller *modules.Uninstaller, exposureHandler ExposureHandler, linkHandler LinkHandler, logger *slog.Logger) *JobExecutor {
+func NewJobExecutor(installer *modules.Installer, uninstaller *modules.Uninstaller, exposureHandler ExposureHandler, linkHandler LinkHandler, catalogStore *catalog.Store, logger *slog.Logger) *JobExecutor {
 	return &JobExecutor{
 		installer:       installer,
 		uninstaller:     uninstaller,
 		exposureHandler: exposureHandler,
 		linkHandler:     linkHandler,
+		catalogStore:    catalogStore,
 		logger:          logger,
 	}
 }
@@ -56,6 +59,8 @@ func (e *JobExecutor) ExecuteWithJob(ctx context.Context, jobID string, manager 
 		return e.executeCreateLink(ctx, jobID, manager, cmd)
 	case CmdDeleteLink:
 		return e.executeDeleteLink(ctx, jobID, manager, cmd)
+	case CmdBundleInstall:
+		return e.executeBundleInstall(ctx, jobID, manager, cmd)
 	default:
 		return nil, fmt.Errorf("unknown command type: %s", cmd.Type)
 	}
@@ -329,6 +334,35 @@ func (e *JobExecutor) executeDeleteLink(ctx context.Context, jobID string, manag
 	result := map[string]interface{}{
 		"link_id": linkID,
 		"status":  "deleted",
+	}
+
+	return result, nil
+}
+
+// executeBundleInstall runs a bundle_install command
+// The bundle_install is a meta-job that orchestrates installation of all bundle components.
+// All component jobs (modules, links, exposures) are created by the handler (EnqueueBundleInstall)
+// when the meta-job is first enqueued, and the meta-job's DependsOn field is set to all of them.
+// This executor just acknowledges the bundle installation has been orchestrated.
+// The job's final status will be determined by its dependencies.
+func (e *JobExecutor) executeBundleInstall(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error) {
+	bundleName, ok := cmd.Args["bundle_name"].(string)
+	if !ok || bundleName == "" {
+		return nil, fmt.Errorf("bundle_name is required")
+	}
+
+	event := Event{
+		Timestamp: time.Now().UTC(),
+		Type:      "info",
+		Message:   fmt.Sprintf("Bundle installation orchestrated: %s", bundleName),
+	}
+	if err := manager.AppendEvent(jobID, event); err != nil {
+		e.logger.Error("failed to append event", "job_id", jobID, "error", err)
+	}
+
+	result := map[string]interface{}{
+		"bundle_name": bundleName,
+		"status":      "orchestrated",
 	}
 
 	return result, nil

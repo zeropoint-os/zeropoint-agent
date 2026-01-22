@@ -17,16 +17,15 @@ func (m *BootMonitor) StreamBootLog(logFile string) error {
 		m.loadPersistentMarkers()
 
 		// Check if boot is already complete via persistent markers.
-		// If so, don't bother trying to open the FIFO (it may not exist).
+		// If so, stop monitoring entirely - no need to keep refreshing.
 		m.mu.RLock()
 		isComplete := m.isComplete
 		m.mu.RUnlock()
 
 		if isComplete {
-			// Boot already marked as complete via persistent markers.
-			// Just listen for changes to marker files and wait for potential reboot.
-			time.Sleep(5 * time.Second)
-			continue
+			// Boot is marked as complete. No need to continue monitoring.
+			m.logger.Info("boot complete, monitor loop exiting")
+			return nil
 		}
 
 		// Open FIFO in blocking mode (without O_NONBLOCK).

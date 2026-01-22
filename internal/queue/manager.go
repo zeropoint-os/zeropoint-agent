@@ -67,12 +67,25 @@ func (m *Manager) Enqueue(cmd Command, dependsOn []string) (string, error) {
 		return "", fmt.Errorf("failed to create job directory: %w", err)
 	}
 
+	// Extract tags from command args if present
+	var tags []string
+	if tagsInterface, ok := cmd.Args["tags"]; ok {
+		if tagsList, ok := tagsInterface.([]interface{}); ok {
+			for _, t := range tagsList {
+				if tagStr, ok := t.(string); ok {
+					tags = append(tags, tagStr)
+				}
+			}
+		}
+	}
+
 	// Create job metadata
 	job := &Job{
 		ID:        jobID,
 		Status:    StatusQueued,
 		Command:   cmd,
 		DependsOn: dependsOn,
+		Tags:      tags,
 		CreatedAt: time.Now().UTC(),
 	}
 
@@ -161,6 +174,7 @@ func (m *Manager) Get(jobID string) (*JobResponse, error) {
 		Status:      job.Status,
 		Command:     job.Command,
 		DependsOn:   job.DependsOn,
+		Tags:        job.Tags,
 		CreatedAt:   job.CreatedAt,
 		StartedAt:   job.StartedAt,
 		CompletedAt: job.CompletedAt,
@@ -249,6 +263,7 @@ func (m *Manager) ListAll() ([]JobResponse, error) {
 			Status:      job.Status,
 			Command:     job.Command,
 			DependsOn:   job.DependsOn,
+			Tags:        job.Tags,
 			CreatedAt:   job.CreatedAt,
 			StartedAt:   job.StartedAt,
 			CompletedAt: job.CompletedAt,
@@ -312,6 +327,7 @@ func (m *Manager) ListAllTopoSorted() ([]JobResponse, error) {
 			Status:      job.Status,
 			Command:     job.Command,
 			DependsOn:   job.DependsOn,
+			Tags:        job.Tags,
 			CreatedAt:   job.CreatedAt,
 			StartedAt:   job.StartedAt,
 			CompletedAt: job.CompletedAt,
@@ -538,6 +554,20 @@ func (m *Manager) UpdateStatus(jobID string, status JobStatus, startedAt, comple
 	job.Result = result
 	job.Error = errMsg
 
+	return m.writeJobMetadata(job)
+}
+
+// UpdateDependencies updates a job's DependsOn field
+func (m *Manager) UpdateDependencies(jobID string, dependsOn []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, err := m.getJob(jobID)
+	if err != nil {
+		return err
+	}
+
+	job.DependsOn = dependsOn
 	return m.writeJobMetadata(job)
 }
 

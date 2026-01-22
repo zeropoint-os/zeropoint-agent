@@ -6,12 +6,13 @@ import Header from './Header';
 import Navigation from './Navigation';
 import BootView from '../views/BootView';
 import ModulesView from '../views/ModulesView';
+import JobsView from '../views/JobsView';
 import LinksView from '../views/LinksView';
 import ExposuresView from '../views/ExposuresView';
 import BundlesView from '../views/BundlesView';
 import { BootApi, Configuration } from 'artifacts/clients/typescript';
 
-type ViewType = 'boot' | 'modules' | 'links' | 'exposures' | 'bundles';
+type ViewType = 'boot' | 'modules' | 'jobs' | 'links' | 'exposures' | 'bundles';
 
 export default function App() {
   const navigate = useNavigate();
@@ -61,7 +62,7 @@ export default function App() {
       return bootComplete ? 'bundles' : 'boot';
     }
     const view = path.substring(1) as ViewType;
-    const validViews: ViewType[] = ['boot', 'modules', 'links', 'exposures', 'bundles'];
+    const validViews: ViewType[] = ['boot', 'modules', 'jobs', 'links', 'exposures', 'bundles'];
     return validViews.includes(view) ? view : 'boot';
   };
 
@@ -124,6 +125,7 @@ export default function App() {
         <Routes>
           <Route path="/boot" element={<BootView />} />
           <Route path="/modules" element={<ModulesView />} />
+          <Route path="/jobs" element={<JobsView />} />
           <Route path="/links" element={<LinksView />} />
           <Route path="/exposures" element={<ExposuresView />} />
           <Route path="/bundles" element={<BundlesView />} />

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ModulesApi, ExposuresApi, LinksApi, CatalogApi, JobsApi, Configuration, ApiModule, ApiExposureResponse, ApiLink } from 'artifacts/clients/typescript';
-import type { CatalogModuleResponse, QueueJobResponse } from 'artifacts/clients/typescript';
+import type { CatalogModuleResponse } from 'artifacts/clients/typescript';
 import CatalogBrowser from '../components/CatalogBrowser';
-import JobProgressCard from '../components/JobProgressCard';
+import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
 type Module = ApiModule;
@@ -15,150 +15,44 @@ export default function ModulesView() {
   const [links, setLinks] = useState<Link[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [uninstallingModule, setUninstallingModule] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showInstallDialog, setShowInstallDialog] = useState(false);
-  
-  // Job queue state
-  const [installJobs, setInstallJobs] = useState<Map<string, QueueJobResponse>>(new Map());
-  const [uninstallJobs, setUninstallJobs] = useState<Map<string, QueueJobResponse>>(new Map());
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize API clients
   const modulesApi = new ModulesApi(new Configuration({ basePath: '/api' }));
   const exposuresApi = new ExposuresApi(new Configuration({ basePath: '/api' }));
   const linksApi = new LinksApi(new Configuration({ basePath: '/api' }));
+  const catalogApi = new CatalogApi(new Configuration({ basePath: '/api' }));
   const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
 
   useEffect(() => {
     fetchModulesAndExposures();
+    // Refresh every 5 seconds
+    const interval = setInterval(fetchModulesAndExposures, 5000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Poll for job status updates
-  useEffect(() => {
-    const pollInstallJobs = async () => {
-      const updatedJobs = new Map(installJobs);
-      let jobsChanged = false;
-
-      for (const [moduleName, job] of installJobs.entries()) {
-        if (job.id && (job.status === 'queued' || job.status === 'running')) {
-          try {
-            const updatedJob = await jobsApi.getJob({ id: job.id });
-            if (updatedJob.id) {
-              updatedJobs.set(moduleName, updatedJob);
-              jobsChanged = true;
-
-              // If job completed, refresh modules and remove from polling
-              if (updatedJob.status === 'completed') {
-                await fetchModulesAndExposures();
-                setSuccessMessage(`${moduleName} installed successfully`);
-                setTimeout(() => setSuccessMessage(null), 4000);
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-              // If job failed or cancelled, remove from polling
-              else if (updatedJob.status === 'failed') {
-                setError(`Failed to install ${moduleName}: ${updatedJob.error || 'Unknown error'}`);
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-              else if (updatedJob.status === 'cancelled') {
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-            }
-          } catch (err) {
-            console.error(`Error polling job for ${moduleName}:`, err);
-          }
-        }
-      }
-
-      if (jobsChanged) {
-        setInstallJobs(updatedJobs);
-      }
-    };
-
-    const pollUninstallJobs = async () => {
-      const updatedJobs = new Map(uninstallJobs);
-      let jobsChanged = false;
-
-      for (const [moduleName, job] of uninstallJobs.entries()) {
-        if (job.id && (job.status === 'queued' || job.status === 'running')) {
-          try {
-            const updatedJob = await jobsApi.getJob({ id: job.id });
-            if (updatedJob.id) {
-              updatedJobs.set(moduleName, updatedJob);
-              jobsChanged = true;
-
-              // If job completed, refresh modules and remove from polling
-              if (updatedJob.status === 'completed') {
-                await fetchModulesAndExposures();
-                setSuccessMessage(`${moduleName} uninstalled successfully`);
-                setTimeout(() => setSuccessMessage(null), 4000);
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-              // If job failed or cancelled, remove from polling
-              else if (updatedJob.status === 'failed') {
-                setError(`Failed to uninstall ${moduleName}: ${updatedJob.error || 'Unknown error'}`);
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-              else if (updatedJob.status === 'cancelled') {
-                updatedJobs.delete(moduleName);
-                jobsChanged = true;
-              }
-            }
-          } catch (err) {
-            console.error(`Error polling job for ${moduleName}:`, err);
-          }
-        }
-      }
-
-      if (jobsChanged) {
-        setUninstallJobs(updatedJobs);
-      }
-    };
-
-    // Only poll if there are active jobs
-    if (installJobs.size > 0 || uninstallJobs.size > 0) {
-      pollInstallJobs();
-      pollUninstallJobs();
-
-      const interval = setInterval(() => {
-        pollInstallJobs();
-        pollUninstallJobs();
-      }, 1500); // Poll every 1.5 seconds
-
-      return () => clearInterval(interval);
-    }
-  }, [installJobs, uninstallJobs]);
-
   const fetchModulesAndExposures = async () => {
-    try {
+    loadingTimeoutRef.current = setTimeout(() => {
       setLoading(true);
-      
-      // Fetch modules
-      const modulesResponse = await modulesApi.listModules();
-      const modulesList = Array.isArray(modulesResponse.modules) ? modulesResponse.modules : [];
-      setModules(modulesList);
-      
-      // Fetch exposures
-      const exposuresResponse = await exposuresApi.listExposures();
-      const exposuresList = exposuresResponse.exposures ?? [];
-      setExposures(exposuresList);
+    }, LOADING_INDICATOR_DELAY);
 
-      // Fetch links
-      const linksResponse = await linksApi.listLinks();
-      const linksList = linksResponse.links ?? [];
-      setLinks(linksList);
-      
+    try {
+      const [modulesRes, exposuresRes, linksRes] = await Promise.all([
+        modulesApi.listModules(),
+        exposuresApi.listExposures(),
+        linksApi.listLinks(),
+      ]);
+
+      setModules(Array.isArray(modulesRes.modules) ? modulesRes.modules : []);
+      setExposures(exposuresRes.exposures ?? []);
+      setLinks(linksRes.links ?? []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
-      setModules([]);
-      setExposures([]);
-      setLinks([]);
     } finally {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
       setLoading(false);
     }
   };
@@ -171,11 +65,9 @@ export default function ModulesView() {
   const getLinkedModules = (moduleId: string | undefined): string[] => {
     if (!moduleId) return [];
     const linkedModules: string[] = [];
-    
     links.forEach(link => {
       if (link.modules && typeof link.modules === 'object') {
         if (moduleId in link.modules) {
-          // This module is part of this link, find other modules in it
           Object.keys(link.modules).forEach(modId => {
             if (modId !== moduleId && !linkedModules.includes(modId)) {
               linkedModules.push(modId);
@@ -184,8 +76,7 @@ export default function ModulesView() {
         }
       }
     });
-    
-    return linkedModules; // Already deduplicated
+    return linkedModules;
   };
 
   const hasModuleDependencies = (moduleId: string | undefined): boolean => {
@@ -196,145 +87,79 @@ export default function ModulesView() {
   };
 
   const getExposureUrl = (exposure: Exposure): string => {
-    if (!exposure.protocol || !exposure.hostname || !exposure.containerPort) {
+    if (!exposure.protocol || !exposure.id) {
       return 'N/A';
     }
-    return `${exposure.protocol}://${exposure.hostname}:${exposure.containerPort}`;
+    // All exposures go through Envoy on port 80, mDNS is configured for the exposure ID
+    return `${exposure.protocol}://${exposure.id}.local/`;
   };
 
-  const getModulePorts = (module: Module): Array<{name: string; port: number; protocol: string}> => {
-    const ports: Array<{name: string; port: number; protocol: string}> = [];
-    if (module.containers && typeof module.containers === 'object') {
-      Object.values(module.containers).forEach((container: any) => {
-        if (container.ports && typeof container.ports === 'object') {
-          Object.entries(container.ports).forEach(([portName, portInfo]: [string, any]) => {
-            if (portInfo.port && portInfo.protocol) {
-              ports.push({
-                name: portName,
-                port: portInfo.port,
-                protocol: portInfo.protocol
-              });
-            }
-          });
-        }
-      });
-    }
-    return ports;
-  };
-
-  const handleInstall = () => {
-    setShowInstallDialog(true);
-  };
-
-  const handleSelectCatalogItem = async (item: CatalogModuleResponse) => {
-    const moduleName = item.name || '';
-    
-    if (!moduleName) {
-      setError('Invalid module: name is missing');
-      setShowInstallDialog(true);
+  const handleInstallModule = async (moduleName: string) => {
+    if (!window.confirm(`Install module "${moduleName}"?`)) {
       return;
     }
 
     try {
-      setShowInstallDialog(false);
-      setError(null);
-
-      // Enqueue the install job
-      const jobResponse = await jobsApi.enqueueInstall({
+      const moduleInfo = await catalogApi.getCatalogModule({ moduleName });
+      await jobsApi.enqueueInstall({
         queueEnqueueInstallRequest: {
           moduleId: moduleName,
-          source: item.source || undefined,
+          source: moduleInfo.source || '',
         }
       });
-
-      if (jobResponse.id) {
-        // Store the job in our install jobs map
-        setInstallJobs(prev => new Map(prev).set(moduleName, jobResponse));
-      } else {
-        throw new Error('No job ID returned from server');
-      }
-      
+      setError(null);
+      setShowInstallDialog(false);
+      // Refresh after a short delay
+      setTimeout(() => fetchModulesAndExposures(), 1000);
     } catch (err) {
-      console.error('Install error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to enqueue install job');
+      setError(err instanceof Error ? err.message : 'Failed to install module');
     }
   };
 
-  const handleUninstall = async (moduleName: string) => {
-    if (!moduleName) {
-      setError('Cannot uninstall: module name is missing');
+  const handleUninstallModule = async (moduleId: string) => {
+    if (hasModuleDependencies(moduleId)) {
+      setError(`Cannot uninstall "${moduleId}" - it has active exposures or links. Remove those first.`);
       return;
     }
 
-    // Check for exposures and links
-    const moduleExposures = exposures.filter(e => e.moduleId === moduleName);
-    const moduleLinks = links.filter(link => link.modules && moduleName in link.modules);
-
-    if (moduleExposures.length > 0 || moduleLinks.length > 0) {
-      const reasons: string[] = [];
-      if (moduleExposures.length > 0) {
-        reasons.push(`${moduleExposures.length} exposure${moduleExposures.length > 1 ? 's' : ''}`);
-      }
-      if (moduleLinks.length > 0) {
-        reasons.push(`${moduleLinks.length} link${moduleLinks.length > 1 ? 's' : ''}`);
-      }
-      setError(`Cannot uninstall ${moduleName}: it has ${reasons.join(' and ')}. Please remove them first.`);
-      return;
-    }
-
-    if (!window.confirm(`Are you sure you want to uninstall ${moduleName}?`)) {
+    if (!window.confirm(`Uninstall module "${moduleId}"?`)) {
       return;
     }
 
     try {
-      setError(null);
-
-      // Enqueue the uninstall job
-      const jobResponse = await jobsApi.enqueueUninstall({
+      await jobsApi.enqueueUninstall({
         queueEnqueueUninstallRequest: {
-          moduleId: moduleName,
+          moduleId: moduleId,
         }
       });
-
-      if (jobResponse.id) {
-        // Store the job in our uninstall jobs map
-        setUninstallJobs(prev => new Map(prev).set(moduleName, jobResponse));
-      } else {
-        throw new Error('No job ID returned from server');
-      }
-      
+      setError(null);
+      setTimeout(() => fetchModulesAndExposures(), 1000);
     } catch (err) {
-      console.error('Uninstall error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to enqueue uninstall job');
+      setError(err instanceof Error ? err.message : 'Failed to uninstall module');
     }
   };
 
   return (
     <div className="view-container">
+      {showInstallDialog && (
+        <CatalogBrowser
+          filterType="modules"
+          onClose={() => setShowInstallDialog(false)}
+          onSelect={(module: CatalogModuleResponse) => {
+            if (module.name) handleInstallModule(module.name);
+          }}
+        />
+      )}
+
       <div className="view-header">
         <h1 className="section-title">Modules</h1>
-        {modules.length > 0 && (
-          <button className="button button-primary" onClick={handleInstall}>
-            <span>+</span> Install Module
-          </button>
-        )}
+        <button
+          className="button button-primary"
+          onClick={() => setShowInstallDialog(true)}
+        >
+          <span>+</span> Install Module
+        </button>
       </div>
-
-      {loading && (
-        <div className="loading-state">
-          <div className="spinner"></div>
-          <p>Loading modules...</p>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-state">
-          <p className="error-message">{error}</p>
-          <button className="button button-secondary" onClick={fetchModulesAndExposures}>
-            Retry
-          </button>
-        </div>
-      )}
 
       {error && (
         <div className="error-state">
@@ -345,171 +170,149 @@ export default function ModulesView() {
         </div>
       )}
 
-      {successMessage && (
-        <div className="success-state">
-          <p className="success-message">✓ {successMessage}</p>
+      {loading ? (
+        <div className="loading-state">
+          <div className="spinner"></div>
+          <p>Loading modules...</p>
         </div>
-      )}
-
-      {!loading && !error && modules.length === 0 && installJobs.size === 0 && (
+      ) : modules.length === 0 ? (
         <div className="empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="7" height="7"></rect>
-            <rect x="14" y="3" width="7" height="7"></rect>
-            <rect x="14" y="14" width="7" height="7"></rect>
-            <rect x="3" y="14" width="7" height="7"></rect>
+            <path d="M12 2v20M2 12h20"></path>
           </svg>
           <h2>No modules installed</h2>
-          <p>Get started by installing your first module.</p>
-          <button className="button button-primary" onClick={handleInstall}>
-            Install Module
+          <p>Install modules to add functionality to your system.</p>
+          <button
+            className="button button-primary"
+            onClick={() => setShowInstallDialog(true)}
+          >
+            Browse Modules
           </button>
         </div>
-      )}
-
-      {!loading && !error && (installJobs.size > 0 || modules.length > 0) && (
+      ) : (
         <div className="grid grid-2">
-          {/* Show installing modules first */}
-          {Array.from(installJobs.entries()).map(([moduleName, job]) => (
-            <div key={`installing-${moduleName}`} className="card">
-              <div className="module-header">
-                <h3 className="module-name">{moduleName}</h3>
-              </div>
-              <JobProgressCard 
-                itemName={moduleName} 
-                job={job}
-                operationType="install"
-                onCancel={job.status === 'queued' ? () => {
-                  if (job.id) {
-                    jobsApi.cancelJob({ id: job.id }).catch(err => 
-                      console.error('Failed to cancel install job:', err)
-                    );
-                  }
-                } : undefined}
-              />
-            </div>
-          ))}
-
-          {/* Show installed modules */}
           {modules.map((module, idx) => {
-            const key = module.id || `module-${idx}`;
-            const state = module.state || 'unknown';
-            const ports = getModulePorts(module);
             const exposure = getModuleExposure(module.id);
-            const isExposed = exposure ? 'Yes' : 'No';
             const linkedModules = getLinkedModules(module.id);
-            const installJob = module.id ? installJobs.get(module.id) : undefined;
-            const uninstallJob = module.id ? uninstallJobs.get(module.id) : undefined;
-            const isUninstalling = !!uninstallJob;
-            
+            const key = module.id || `module-${idx}`;
+
             return (
-              <div key={key} className="card">
-                <div className="module-header">
-                  <div>
-                    <h3 className="module-name">{module.id || 'Unnamed Module'}</h3>
-                    <p className="module-version">Exposed: {isExposed}</p>
-                    {linkedModules.length > 0 && (
-                      <p className="module-links">Linked to: {linkedModules.join(', ')}</p>
+              <div key={key} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div style={{ flex: 1 }}>
+                  <div className="module-header">
+                    <h3 className="module-name">{module.id || 'Unnamed'}</h3>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '600', padding: '0.25rem 0.75rem', borderRadius: '0.375rem', backgroundColor: module.state === 'running' ? 'var(--color-success-light)' : 'var(--color-border)', color: module.state === 'running' ? 'var(--color-success-dark)' : 'var(--color-text-secondary)' }}>
+                      {module.state || 'unknown'}
+                    </span>
+                    {exposure && (
+                      <a
+                        href={getExposureUrl(exposure)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="link"
+                        style={{ fontSize: '0.875rem', marginLeft: '0.5rem' }}
+                      >
+                        ↗ Open
+                      </a>
                     )}
                   </div>
-                  <div className={`status-badge status-${state.toLowerCase()}`}>
-                    {state}
-                  </div>
-                </div>
 
-                {uninstallJob && (
-                  <JobProgressCard 
-                    itemName={module.id || 'Module'} 
-                    job={uninstallJob}
-                    operationType="uninstall"
-                    onCancel={uninstallJob.status === 'queued' ? () => {
-                      if (uninstallJob.id) {
-                        jobsApi.cancelJob({ id: uninstallJob.id }).catch(err => 
-                          console.error('Failed to cancel uninstall job:', err)
-                        );
-                      }
-                    } : undefined}
-                  />
-                )}
-
-                {!uninstallJob && (
-                  <>
-                    {module.containerName && (
-                      <div className="module-detail">
-                        <span className="detail-label">Container:</span>
-                        <span className="detail-value">{module.containerName}</span>
-                      </div>
-                    )}
-
-                    {module.ipAddress && (
-                      <div className="module-detail">
-                        <span className="detail-label">IP Address:</span>
-                        <span className="detail-value">{module.ipAddress}</span>
-                      </div>
-                    )}
-
-                    {module.gpuVendor && (
-                      <div className="module-detail">
-                        <span className="detail-label">GPU Vendor:</span>
-                        <span className="detail-value">{module.gpuVendor}</span>
-                      </div>
-                    )}
-
-                    {module.usingGpu && (
-                      <div className="module-detail">
-                        <span className="detail-label">GPU Usage:</span>
-                        <span className="detail-value">Enabled</span>
-                      </div>
-                    )}
-
-                    {ports.length > 0 && (
-                      <div className="module-ports">
-                        <span className="detail-label">Ports:</span>
-                        <div className="ports-list">
-                          {ports.map((p, idx) => (
-                            <div key={idx} className="port-item">
-                              <span className="port-name">{p.name}</span>
-                              <span className="port-value">{p.port}/{p.protocol}</span>
-                            </div>
-                          ))}
+                  {/* Container and Network Info */}
+                  {(module.containerName || module.ipAddress) && (
+                    <div style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+                      {module.containerName && (
+                        <div style={{ marginBottom: '0.25rem' }}>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>Container:</span> <span style={{ fontFamily: 'monospace' }}>{module.containerName}</span>
                         </div>
-                      </div>
-                    )}
+                      )}
+                      {module.ipAddress && (
+                        <div>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>IP Address:</span> <span style={{ fontFamily: 'monospace' }}>{module.ipAddress}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                    {module.tags && module.tags.length > 0 && (
-                      <div className="module-tags">
-                        {module.tags.map((tag) => (
-                          <span key={tag} className="tag">
-                            {tag}
+                  {/* GPU Info */}
+                  {module.gpuVendor && (
+                    <div style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+                      <div style={{ marginBottom: '0.25rem' }}>
+                        <span style={{ color: 'var(--color-text-secondary)' }}>GPU Vendor:</span> <span>{module.gpuVendor}</span>
+                      </div>
+                      {module.usingGpu !== undefined && (
+                        <div>
+                          <span style={{ color: 'var(--color-text-secondary)' }}>GPU Usage:</span> <span>{module.usingGpu ? 'Enabled' : 'Disabled'}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Ports */}
+                  {module.containers && Object.keys(module.containers).length > 0 && (
+                    <div style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+                      <p style={{ margin: '0 0 0.5rem 0', fontWeight: '500', color: 'var(--color-text-secondary)' }}>Ports:</p>
+                      {Object.entries(module.containers).map(([containerName, container]) =>
+                        container.ports && Object.entries(container.ports).length > 0 ? (
+                          Object.entries(container.ports).map(([portName, portInfo]) => (
+                            <div key={`${containerName}-${portName}`} style={{ marginLeft: '0.5rem', marginBottom: '0.25rem' }}>
+                              <span>{portName}</span> <span style={{ fontFamily: 'monospace', color: 'var(--color-text-secondary)' }}>{portInfo.port}/{portInfo.protocol || 'tcp'}</span>
+                            </div>
+                          ))
+                        ) : null
+                      )}
+                    </div>
+                  )}
+
+                  {linkedModules.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <p style={{ fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                        Linked to:
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        {linkedModules.map(mod => (
+                          <span
+                            key={mod}
+                            style={{
+                              fontSize: '0.75rem',
+                              backgroundColor: 'var(--color-info-light)',
+                              color: 'var(--color-info)',
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '0.25rem',
+                            }}
+                          >
+                            {mod}
                           </span>
                         ))}
                       </div>
-                    )}
-
-                    <div className="module-actions">
-                      <button
-                        className="button button-danger"
-                        onClick={() => handleUninstall(module.id || '')}
-                        disabled={isUninstalling || hasModuleDependencies(module.id)}
-                        title={hasModuleDependencies(module.id) ? 'Module has exposures or links - remove them first' : ''}
-                      >
-                        {isUninstalling ? 'Uninstalling...' : 'Uninstall'}
-                      </button>
                     </div>
-                  </>
-                )}
+                  )}
+
+                  {exposure && (
+                    <div style={{ marginBottom: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--color-success-light)', borderRadius: '0.375rem' }}>
+                      <p style={{ fontSize: '0.875rem', fontWeight: '500', color: 'var(--color-success-dark)', marginBottom: '0.25rem' }}>
+                        Exposed: {exposure.id}
+                      </p>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--color-success-dark)', margin: 0 }}>
+                        {getExposureUrl(exposure)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    className="button button-danger"
+                    onClick={() => handleUninstallModule(module.id || '')}
+                    disabled={hasModuleDependencies(module.id)}
+                    style={{ flex: 1 }}
+                  >
+                    Uninstall
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
-      )}
-
-      {showInstallDialog && (
-        <CatalogBrowser 
-          filterType="modules"
-          onSelect={handleSelectCatalogItem}
-          onClose={() => setShowInstallDialog(false)}
-        />
       )}
     </div>
   );

@@ -72,8 +72,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	exposureHandlers := NewExposureHandlers(exposureStore, logger)
 	inspectHandlers := NewInspectHandlers(modulesDir, logger)
 	linkHandlers := NewLinkHandlers(modulesDir, linkStore, logger)
+	bundleHandlers := NewBundleHandlers(installer, uninstaller, exposureStore, linkHandlers, dockerClient, catalogStore, logger)
 	bootHandlers := NewBootHandlers(bootMonitor)
-	queueHandlers := queue.NewHandlers(queueManager, logger)
+	queueHandlers := queue.NewHandlers(queueManager, catalogStore, logger)
 
 	env := &apiEnv{
 		docker:    dockerClient,
@@ -147,6 +148,10 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.GetExposure).Methods(http.MethodGet)
 	r.HandleFunc("/api/exposures/{exposure_id}", exposureHandlers.DeleteExposureHTTP).Methods(http.MethodDelete)
 
+	// Bundle endpoints
+	r.HandleFunc("/api/bundles", bundleHandlers.ListBundles).Methods(http.MethodGet)
+	r.HandleFunc("/api/bundles/{bundle-id}", bundleHandlers.GetBundle).Methods(http.MethodGet)
+
 	// Catalog endpoints
 	r.HandleFunc("/api/catalogs/update", catalogHandlers.HandleUpdateCatalog).Methods(http.MethodPost)
 	r.HandleFunc("/api/catalogs/modules", catalogHandlers.HandleListModules).Methods(http.MethodGet)
@@ -158,12 +163,13 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/jobs", queueHandlers.ListJobs).Methods(http.MethodGet)
 	r.HandleFunc("/api/jobs/{id}", queueHandlers.GetJob).Methods(http.MethodGet)
 	r.HandleFunc("/api/jobs/{id}", queueHandlers.CancelJob).Methods(http.MethodDelete)
-	r.HandleFunc("/api/jobs/enqueue_install", queueHandlers.EnqueueInstall).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_uninstall", queueHandlers.EnqueueUninstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_install_module", queueHandlers.EnqueueInstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_uninstall_module", queueHandlers.EnqueueUninstall).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_create_exposure", queueHandlers.EnqueueCreateExposure).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_delete_exposure", queueHandlers.EnqueueDeleteExposure).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_create_link", queueHandlers.EnqueueCreateLink).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_delete_link", queueHandlers.EnqueueDeleteLink).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_install_bundle", queueHandlers.EnqueueBundleInstall).Methods(http.MethodPost)
 
 	// Web UI - serve static files as fallback after API routes
 	webDir := getWebDir()
@@ -175,7 +181,7 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	routerWithMiddleware := bootCheckMiddleware(r)
 
 	// Initialize job executor with handlers for direct execution
-	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, logger)
+	jobExecutor := queue.NewJobExecutor(installer, uninstaller, exposureHandlers, linkHandlers, catalogStore, logger)
 
 	// Create and start the job worker
 	worker := queue.NewWorker(queueManager, jobExecutor, logger)

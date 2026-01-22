@@ -5,20 +5,24 @@ import (
 	"log/slog"
 	"net/http"
 
+	"zeropoint-agent/internal/catalog"
+
 	"github.com/gorilla/mux"
 )
 
 // Handlers handles HTTP requests for the job queue API
 type Handlers struct {
-	manager *Manager
-	logger  *slog.Logger
+	manager      *Manager
+	catalogStore *catalog.Store
+	logger       *slog.Logger
 }
 
 // NewHandlers creates a new queue handlers instance
-func NewHandlers(manager *Manager, logger *slog.Logger) *Handlers {
+func NewHandlers(manager *Manager, catalogStore *catalog.Store, logger *slog.Logger) *Handlers {
 	return &Handlers{
-		manager: manager,
-		logger:  logger,
+		manager:      manager,
+		catalogStore: catalogStore,
+		logger:       logger,
 	}
 }
 
@@ -34,7 +38,8 @@ type EnqueueInstallRequest struct {
 // EnqueueUninstallRequest is the request for enqueueing an uninstall job
 type EnqueueUninstallRequest struct {
 	ModuleID  string   `json:"module_id"`
-	DependsOn []string `json:"depends_on,omitempty"`
+	Tags      []string `json:"tags,omitempty" example:"local-ai-chat"`
+	DependsOn []string `json:"depends_on,omitempty" example:"job-1,job-2"`
 }
 
 // EnqueueCreateExposureRequest is the request for enqueueing a create exposure job
@@ -51,7 +56,8 @@ type EnqueueCreateExposureRequest struct {
 // EnqueueDeleteExposureRequest is the request for enqueueing a delete exposure job
 type EnqueueDeleteExposureRequest struct {
 	ExposureID string   `json:"exposure_id"`
-	DependsOn  []string `json:"depends_on,omitempty"`
+	Tags       []string `json:"tags,omitempty" example:"local-ai-chat"`
+	DependsOn  []string `json:"depends_on,omitempty" example:"job-1,job-2"`
 }
 
 // EnqueueCreateLinkRequest is the request for enqueueing a create link job
@@ -65,7 +71,17 @@ type EnqueueCreateLinkRequest struct {
 // EnqueueDeleteLinkRequest is the request for enqueueing a delete link job
 type EnqueueDeleteLinkRequest struct {
 	LinkID    string   `json:"link_id"`
-	DependsOn []string `json:"depends_on,omitempty"`
+	Tags      []string `json:"tags,omitempty" example:"local-ai-chat"`
+	DependsOn []string `json:"depends_on,omitempty" example:"job-1,job-2"`
+}
+
+// EnqueueBundleInstallRequest is the request for creating a bundle installation meta-job.
+// The frontend sends only the bundle name; the backend will be extended to automatically
+// fetch the bundle definition and enqueue all component jobs. The DependsOn field allows
+// chaining multiple bundle installations (e.g., for specialized sequential installs).
+type EnqueueBundleInstallRequest struct {
+	BundleName string   `json:"bundle_name"`
+	DependsOn  []string `json:"depends_on,omitempty"` // For chaining multiple bundle installations
 }
 
 // EnqueueInstall handles POST /api/jobs/enqueue_install
@@ -78,7 +94,7 @@ type EnqueueDeleteLinkRequest struct {
 // @Param body body EnqueueInstallRequest true "Installation request"
 // @Success 201 {object} JobResponse "Job enqueued successfully"
 // @Failure 400 {string} string "Bad request"
-// @Router /jobs/enqueue_install [post]
+// @Router /jobs/enqueue_install_module [post]
 func (h *Handlers) EnqueueInstall(w http.ResponseWriter, r *http.Request) {
 	var req EnqueueInstallRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -135,7 +151,7 @@ func (h *Handlers) EnqueueInstall(w http.ResponseWriter, r *http.Request) {
 // @Param body body EnqueueUninstallRequest true "Uninstallation request"
 // @Success 201 {object} JobResponse "Job enqueued successfully"
 // @Failure 400 {string} string "Bad request"
-// @Router /jobs/enqueue_uninstall [post]
+// @Router /jobs/enqueue_uninstall_module [post]
 func (h *Handlers) EnqueueUninstall(w http.ResponseWriter, r *http.Request) {
 	var req EnqueueUninstallRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -152,6 +168,7 @@ func (h *Handlers) EnqueueUninstall(w http.ResponseWriter, r *http.Request) {
 		Type: CmdUninstallModule,
 		Args: map[string]interface{}{
 			"module_id": req.ModuleID,
+			"tags":      req.Tags,
 		},
 	}
 
@@ -255,6 +272,7 @@ func (h *Handlers) EnqueueDeleteExposure(w http.ResponseWriter, r *http.Request)
 		Type: CmdDeleteExposure,
 		Args: map[string]interface{}{
 			"exposure_id": req.ExposureID,
+			"tags":        req.Tags,
 		},
 	}
 
@@ -361,6 +379,7 @@ func (h *Handlers) EnqueueDeleteLink(w http.ResponseWriter, r *http.Request) {
 		Type: CmdDeleteLink,
 		Args: map[string]interface{}{
 			"link_id": req.LinkID,
+			"tags":    req.Tags,
 		},
 	}
 
@@ -444,6 +463,150 @@ func (h *Handlers) ListJobs(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {string} string "Cannot cancel job (already running or completed)"
 // @Failure 404 {string} string "Job not found"
 // @Router /jobs/{id} [delete]
+
+// EnqueueBundleInstall handles POST /api/jobs/enqueue_install_bundle
+// @ID enqueueBundleInstall
+// @Summary Enqueue a bundle installation meta-job
+// @Description Create a meta-job for bundle installation that orchestrates installation of all bundle components
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueBundleInstallRequest true "Bundle installation request"
+// @Success 201 {object} JobResponse "Bundle job created successfully"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_install_bundle [post]
+func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueBundleInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.BundleName == "" {
+		http.Error(w, "bundle_name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch bundle from catalog
+	bundle, err := h.catalogStore.GetBundle(req.BundleName)
+	if err != nil {
+		http.Error(w, "failed to fetch bundle: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bundle == nil {
+		http.Error(w, "bundle not found", http.StatusNotFound)
+		return
+	}
+
+	var componentJobIDs []string
+
+	// Enqueue install_module jobs for each module in the bundle
+	if len(bundle.Modules) > 0 {
+		var moduleDeps []string
+		for _, moduleName := range bundle.Modules {
+			// Fetch module from catalog to get source
+			module, err := h.catalogStore.GetModule(moduleName)
+			if err != nil {
+				http.Error(w, "failed to fetch module: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if module == nil {
+				http.Error(w, "module not found in catalog: "+moduleName, http.StatusNotFound)
+				return
+			}
+
+			moduleJobID, err := h.manager.Enqueue(Command{
+				Type: CmdInstallModule,
+				Args: map[string]interface{}{
+					"module_id": moduleName,
+					"source":    module.Source,
+				},
+			}, moduleDeps)
+			if err != nil {
+				http.Error(w, "failed to enqueue module: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, moduleJobID)
+			// Each subsequent module depends on all previous ones (sequential installation)
+			moduleDeps = append(moduleDeps, moduleJobID)
+		}
+	}
+
+	// Enqueue create_link jobs for each link in the bundle
+	if bundle.Links != nil && len(bundle.Links) > 0 {
+		for linkID, linkConfig := range bundle.Links {
+			// Convert bundle link format to module format expected by create_link
+			modules := make(map[string]map[string]interface{})
+			for _, link := range linkConfig {
+				bindMap := make(map[string]interface{})
+				for k, v := range link.Bind {
+					bindMap[k] = v
+				}
+				modules[link.Module] = bindMap
+			}
+
+			linkJobID, err := h.manager.Enqueue(Command{
+				Type: CmdCreateLink,
+				Args: map[string]interface{}{
+					"link_id": linkID,
+					"modules": modules,
+				},
+			}, componentJobIDs)
+			if err != nil {
+				http.Error(w, "failed to enqueue link: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, linkJobID)
+		}
+	}
+
+	// Enqueue create_exposure jobs for each exposure in the bundle
+	if bundle.Exposures != nil && len(bundle.Exposures) > 0 {
+		for exposureID, exposureConfig := range bundle.Exposures {
+			exposureJobID, err := h.manager.Enqueue(Command{
+				Type: CmdCreateExposure,
+				Args: map[string]interface{}{
+					"exposure_id":    exposureID,
+					"module_id":      exposureConfig.Module,
+					"container_port": uint32(exposureConfig.ModulePort),
+					"protocol":       exposureConfig.Protocol,
+					"hostname":       exposureID,
+				},
+			}, componentJobIDs)
+			if err != nil {
+				http.Error(w, "failed to enqueue exposure: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, exposureJobID)
+		}
+	}
+
+	// Create the bundle_install meta-job that depends on all component jobs
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdBundleInstall,
+		Args: map[string]interface{}{
+			"bundle_name": req.BundleName,
+		},
+	}, componentJobIDs)
+
+	if err != nil {
+		h.logger.Debug("failed to enqueue bundle install job", "bundle_name", req.BundleName, "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued bundle job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
 func (h *Handlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	jobID := vars["id"]

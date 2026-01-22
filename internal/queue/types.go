@@ -25,6 +25,7 @@ const (
 	CmdDeleteExposure  CommandType = "delete_exposure"
 	CmdCreateLink      CommandType = "create_link"
 	CmdDeleteLink      CommandType = "delete_link"
+	CmdBundleInstall   CommandType = "bundle_install" // Meta-job that orchestrates bundle installation
 )
 
 // Command represents a queued command to execute
@@ -38,7 +39,8 @@ type Job struct {
 	ID          string      `json:"id"`
 	Status      JobStatus   `json:"status"`
 	Command     Command     `json:"command"`
-	DependsOn   []string    `json:"depends_on"` // IDs of jobs this depends on
+	DependsOn   []string    `json:"depends_on"`     // IDs of jobs this depends on
+	Tags        []string    `json:"tags,omitempty"` // Tags associated with this job (e.g., bundle name)
 	CreatedAt   time.Time   `json:"created_at"`
 	StartedAt   *time.Time  `json:"started_at,omitempty"`
 	CompletedAt *time.Time  `json:"completed_at,omitempty"`
@@ -60,6 +62,7 @@ type JobResponse struct {
 	Status      JobStatus   `json:"status"`
 	Command     Command     `json:"command"`
 	DependsOn   []string    `json:"depends_on"`
+	Tags        []string    `json:"tags,omitempty"` // Tags associated with this job (e.g., bundle name)
 	CreatedAt   time.Time   `json:"created_at"`
 	StartedAt   *time.Time  `json:"started_at,omitempty"`
 	CompletedAt *time.Time  `json:"completed_at,omitempty"`
