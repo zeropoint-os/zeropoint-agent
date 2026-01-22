@@ -1,28 +1,36 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+
+	"zeropoint-agent/internal/modules"
 
 	"github.com/gorilla/mux"
 )
 
 // BundleHandlers handles HTTP requests for bundle operations
 type BundleHandlers struct {
-	bundleStore   *BundleStore
-	exposureStore *ExposureStore
-	linkHandlers  *LinkHandlers
-	logger        *slog.Logger
+	bundleStore      *BundleStore
+	exposureStore    *ExposureStore
+	exposureHandlers *ExposureHandlers
+	linkHandlers     *LinkHandlers
+	uninstaller      *modules.Uninstaller
+	logger           *slog.Logger
 }
 
 // NewBundleHandlers creates a new bundle handlers instance
-func NewBundleHandlers(bundleStore *BundleStore, exposureStore *ExposureStore, linkHandlers *LinkHandlers, logger *slog.Logger) *BundleHandlers {
+func NewBundleHandlers(bundleStore *BundleStore, exposureStore *ExposureStore, exposureHandlers *ExposureHandlers, linkHandlers *LinkHandlers, uninstaller *modules.Uninstaller, logger *slog.Logger) *BundleHandlers {
 	return &BundleHandlers{
-		bundleStore:   bundleStore,
-		exposureStore: exposureStore,
-		linkHandlers:  linkHandlers,
-		logger:        logger,
+		bundleStore:      bundleStore,
+		exposureStore:    exposureStore,
+		exposureHandlers: exposureHandlers,
+		linkHandlers:     linkHandlers,
+		uninstaller:      uninstaller,
+		logger:           logger,
 	}
 }
 
@@ -162,4 +170,89 @@ func (h *BundleHandlers) GetBundle(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bundle)
+}
+
+// DeleteBundle handles DELETE /api/bundles/{bundle-id} - uninstalls all bundle components immediately with streaming updates
+// @ID deleteBundle
+// @Summary Delete a bundle (immediate uninstall with streaming updates)
+// @Description Uninstall all bundle components immediately and remove the bundle. Streams SSE updates for each component.
+// @Tags bundles
+// @Produce text/event-stream
+// @Param bundle-id path string true "Bundle ID"
+// @Success 200 "Uninstallation complete, stream of events sent"
+// @Failure 404 {string} string "Bundle not found"
+// @Router /bundles/{bundle-id} [delete]
+func (h *BundleHandlers) DeleteBundle(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bundleID := vars["bundle-id"]
+
+	// Get bundle from persistent store
+	bundleIface, err := h.bundleStore.GetBundle(bundleID)
+	if err != nil {
+		http.Error(w, "bundle not found", http.StatusNotFound)
+		return
+	}
+
+	record, ok := bundleIface.(*BundleRecord)
+	if !ok {
+		http.Error(w, "invalid bundle record", http.StatusInternalServerError)
+		return
+	}
+
+	// Set up Server-Sent Events
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := context.Background()
+
+	// Uninstall exposures first (they have no dependencies)
+	for _, expComp := range record.Components.Exposures {
+		if err := h.exposureHandlers.DeleteExposure(ctx, expComp.ID); err != nil {
+			h.logger.Error("failed to delete exposure", "exposure_id", expComp.ID, "error", err)
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"exposure\",\"status\":\"failed\",\"error\":\"%s\"}\n\n", expComp.ID, err.Error())
+		} else {
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"exposure\",\"status\":\"completed\"}\n\n", expComp.ID)
+		}
+		flusher.Flush()
+	}
+
+	// Delete links second (modules still exist)
+	for _, linkComp := range record.Components.Links {
+		if err := h.linkHandlers.DeleteLink(ctx, linkComp.ID); err != nil {
+			h.logger.Error("failed to delete link", "link_id", linkComp.ID, "error", err)
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"link\",\"status\":\"failed\",\"error\":\"%s\"}\n\n", linkComp.ID, err.Error())
+		} else {
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"link\",\"status\":\"completed\"}\n\n", linkComp.ID)
+		}
+		flusher.Flush()
+	}
+
+	// Uninstall modules last (they're the foundation)
+	for _, modComp := range record.Components.Modules {
+		// Create a no-op progress callback
+		noOpCallback := func(update modules.ProgressUpdate) {}
+		if err := h.uninstaller.Uninstall(modules.UninstallRequest{ModuleID: modComp.ID}, noOpCallback); err != nil {
+			h.logger.Error("failed to uninstall module", "module_id", modComp.ID, "error", err)
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"module\",\"status\":\"failed\",\"error\":\"%s\"}\n\n", modComp.ID, err.Error())
+		} else {
+			fmt.Fprintf(w, "data: {\"component\":\"%s\",\"type\":\"module\",\"status\":\"completed\"}\n\n", modComp.ID)
+		}
+		flusher.Flush()
+	}
+
+	// Delete the bundle record
+	if err := h.bundleStore.DeleteBundle(bundleID); err != nil {
+		h.logger.Error("failed to delete bundle record", "bundle_id", bundleID, "error", err)
+		fmt.Fprintf(w, "data: {\"status\":\"error\",\"message\":\"Failed to delete bundle record: %s\"}\n\n", err.Error())
+	} else {
+		fmt.Fprintf(w, "data: {\"status\":\"bundle_deleted\",\"message\":\"Bundle %s removed successfully\"}\n\n", bundleID)
+	}
+	flusher.Flush()
 }

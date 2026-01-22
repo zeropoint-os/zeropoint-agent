@@ -33,6 +33,7 @@ type BundleStoreHandler interface {
 	UpdateExposureComponentStatus(bundleID, exposureID, status, errMsg string) error
 	GetBundle(bundleID string) (interface{}, error)
 	CompleteBundleInstallation(bundleID string, success bool) error
+	DeleteBundle(bundleID string) error
 }
 
 // JobExecutor executes queued commands by calling handlers and installers directly
@@ -76,6 +77,8 @@ func (e *JobExecutor) ExecuteWithJob(ctx context.Context, jobID string, manager 
 		return e.executeDeleteLink(ctx, jobID, manager, cmd)
 	case CmdBundleInstall:
 		return e.executeBundleInstall(ctx, jobID, manager, cmd)
+	case CmdBundleUninstall:
+		return e.executeBundleUninstall(ctx, jobID, manager, cmd)
 	default:
 		return nil, fmt.Errorf("unknown command type: %s", cmd.Type)
 	}
@@ -428,6 +431,81 @@ func (e *JobExecutor) executeBundleInstall(ctx context.Context, jobID string, ma
 		"bundle_name": bundleName,
 		"bundle_id":   bundleID,
 		"status":      "completed",
+	}
+
+	return result, nil
+}
+
+// executeBundleUninstall runs a bundle_uninstall command
+// The bundle_uninstall is a meta-job that orchestrates uninstallation of all bundle components.
+// All component jobs (exposures, links, modules) are created by the handler (EnqueueBundleUninstall)
+// when the meta-job is first enqueued, and the meta-job's DependsOn field is set to all of them.
+// When this executor runs, all component jobs are guaranteed to be complete, so we delete the bundle.
+func (e *JobExecutor) executeBundleUninstall(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error) {
+	bundleID, ok := cmd.Args["bundle_id"].(string)
+	if !ok || bundleID == "" {
+		return nil, fmt.Errorf("bundle_id is required")
+	}
+
+	// Get the current job to find all dependency jobs
+	job, err := manager.Get(jobID)
+	if err != nil {
+		e.logger.Error("failed to get job", "job_id", jobID, "error", err)
+		return nil, err
+	}
+
+	// Update component statuses based on their job results
+	if e.bundleStore != nil {
+		// Check each dependency job to see if it succeeded or failed
+		for _, depJobID := range job.DependsOn {
+			depJob, err := manager.Get(depJobID)
+			if err != nil {
+				e.logger.Warn("failed to get dependency job", "dep_job_id", depJobID, "error", err)
+				continue
+			}
+
+			if depJob.Command.Type == CmdUninstallModule {
+				moduleID, _ := depJob.Command.Args["module_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateModuleComponentStatus(bundleID, moduleID, "deleted", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateModuleComponentStatus(bundleID, moduleID, "failed", depJob.Error)
+				}
+			} else if depJob.Command.Type == CmdDeleteLink {
+				linkID, _ := depJob.Command.Args["link_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateLinkComponentStatus(bundleID, linkID, "deleted", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateLinkComponentStatus(bundleID, linkID, "failed", depJob.Error)
+				}
+			} else if depJob.Command.Type == CmdDeleteExposure {
+				exposureID, _ := depJob.Command.Args["exposure_id"].(string)
+				if depJob.Status == StatusCompleted {
+					_ = e.bundleStore.UpdateExposureComponentStatus(bundleID, exposureID, "deleted", "")
+				} else if depJob.Status == StatusFailed {
+					_ = e.bundleStore.UpdateExposureComponentStatus(bundleID, exposureID, "failed", depJob.Error)
+				}
+			}
+		}
+
+		// Delete the bundle record from the store
+		if err := e.bundleStore.DeleteBundle(bundleID); err != nil {
+			e.logger.Warn("failed to delete bundle record", "bundle_id", bundleID, "error", err)
+		}
+	}
+
+	event := Event{
+		Timestamp: time.Now().UTC(),
+		Type:      "info",
+		Message:   fmt.Sprintf("Bundle uninstallation completed: %s", bundleID),
+	}
+	if err := manager.AppendEvent(jobID, event); err != nil {
+		e.logger.Error("failed to append event", "job_id", jobID, "error", err)
+	}
+
+	result := map[string]interface{}{
+		"bundle_id": bundleID,
+		"status":    "completed",
 	}
 
 	return result, nil

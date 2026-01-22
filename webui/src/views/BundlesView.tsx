@@ -111,11 +111,12 @@ export default function BundlesView() {
 
     try {
       setError(null);
+      setUninstalling(bundleId);
 
-      // Enqueue the bundle uninstall job
-      const job = await jobsApi.enqueueUninstall({
-        queueEnqueueUninstallRequest: {
-          moduleId: bundleId,
+      // Enqueue the bundle uninstallation job
+      const job = await jobsApi.enqueueBundleUninstall({
+        queueEnqueueBundleUninstallRequest: {
+          bundleId: bundleId,
         },
       });
 
@@ -128,13 +129,16 @@ export default function BundlesView() {
         
         if (jobStatus.status === 'completed') {
           completed = true;
+          setUninstalling(null);
           await fetchBundles();
         } else if (jobStatus.status === 'failed') {
           failed = true;
+          setUninstalling(null);
           setError(jobStatus.error || 'Uninstallation failed');
         }
       }
     } catch (err) {
+      setUninstalling(null);
       setError(err instanceof Error ? err.message : 'Failed to uninstall bundle');
     }
   };

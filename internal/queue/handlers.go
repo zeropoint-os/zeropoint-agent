@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"reflect"
 
 	"zeropoint-agent/internal/catalog"
 
@@ -84,6 +85,11 @@ type EnqueueDeleteLinkRequest struct {
 type EnqueueBundleInstallRequest struct {
 	BundleName string   `json:"bundle_name"`
 	DependsOn  []string `json:"depends_on,omitempty"` // For chaining multiple bundle installations
+}
+
+// EnqueueBundleUninstallRequest is the request for creating a bundle uninstallation meta-job.
+type EnqueueBundleUninstallRequest struct {
+	BundleID string `json:"bundle_id"`
 }
 
 // EnqueueInstall handles POST /api/jobs/enqueue_install
@@ -636,6 +642,154 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 	job, err := h.manager.Get(jobID)
 	if err != nil {
 		h.logger.Error("failed to fetch enqueued bundle job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueBundleUninstall handles POST /api/jobs/enqueue_uninstall_bundle
+// @ID enqueueBundleUninstall
+// @Summary Enqueue a bundle uninstallation meta-job
+// @Description Create a meta-job for bundle uninstallation that orchestrates removal of all bundle components
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueBundleUninstallRequest true "Bundle uninstallation request"
+// @Success 201 {object} JobResponse "Bundle uninstall job created successfully"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_uninstall_bundle [post]
+func (h *Handlers) EnqueueBundleUninstall(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueBundleUninstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.BundleID == "" {
+		http.Error(w, "bundle_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get bundle from bundleStore to find all components
+	bundleIface := h.bundleStore.(interface {
+		GetBundle(bundleID string) (interface{}, error)
+	})
+
+	bundleData, err := bundleIface.GetBundle(req.BundleID)
+	if err != nil {
+		http.Error(w, "bundle not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Use reflection to extract components from bundle data
+	// The bundleData is a *BundleRecord from the API package
+	bundleVal := reflect.ValueOf(bundleData)
+	if bundleVal.Kind() == reflect.Ptr {
+		bundleVal = bundleVal.Elem()
+	}
+
+	if bundleVal.Kind() != reflect.Struct {
+		http.Error(w, "invalid bundle data", http.StatusInternalServerError)
+		return
+	}
+
+	componentsField := bundleVal.FieldByName("Components")
+	if !componentsField.IsValid() {
+		http.Error(w, "unable to get bundle components", http.StatusInternalServerError)
+		return
+	}
+
+	var componentJobIDs []string
+
+	// Components is a struct with Exposures, Links, Modules slices
+	exposuresField := componentsField.FieldByName("Exposures")
+	linksField := componentsField.FieldByName("Links")
+	modulesField := componentsField.FieldByName("Modules")
+
+	// Enqueue delete_exposure jobs first (no dependencies)
+	if exposuresField.IsValid() && exposuresField.Kind() == reflect.Slice {
+		for i := 0; i < exposuresField.Len(); i++ {
+			exp := exposuresField.Index(i)
+			expID := exp.FieldByName("ID").String()
+
+			exposureJobID, err := h.manager.Enqueue(Command{
+				Type: CmdDeleteExposure,
+				Args: map[string]interface{}{
+					"exposure_id": expID,
+					"bundle_id":   req.BundleID,
+				},
+			}, []string{}) // No dependencies
+			if err != nil {
+				http.Error(w, "failed to enqueue exposure deletion: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, exposureJobID)
+		}
+	}
+
+	// Enqueue delete_link jobs (depend on all exposures being deleted)
+	if linksField.IsValid() && linksField.Kind() == reflect.Slice {
+		for i := 0; i < linksField.Len(); i++ {
+			link := linksField.Index(i)
+			linkID := link.FieldByName("ID").String()
+
+			linkJobID, err := h.manager.Enqueue(Command{
+				Type: CmdDeleteLink,
+				Args: map[string]interface{}{
+					"link_id":   linkID,
+					"bundle_id": req.BundleID,
+				},
+			}, componentJobIDs)
+			if err != nil {
+				http.Error(w, "failed to enqueue link deletion: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, linkJobID)
+		}
+	}
+
+	// Enqueue uninstall_module jobs (depend on all links being deleted)
+	if modulesField.IsValid() && modulesField.Kind() == reflect.Slice {
+		for i := 0; i < modulesField.Len(); i++ {
+			mod := modulesField.Index(i)
+			modID := mod.FieldByName("ID").String()
+
+			moduleJobID, err := h.manager.Enqueue(Command{
+				Type: CmdUninstallModule,
+				Args: map[string]interface{}{
+					"module_id": modID,
+					"bundle_id": req.BundleID,
+				},
+			}, componentJobIDs)
+			if err != nil {
+				http.Error(w, "failed to enqueue module uninstall: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			componentJobIDs = append(componentJobIDs, moduleJobID)
+		}
+	}
+
+	// Create the bundle_uninstall meta-job that depends on all component jobs
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdBundleUninstall,
+		Args: map[string]interface{}{
+			"bundle_id": req.BundleID,
+		},
+	}, componentJobIDs)
+
+	if err != nil {
+		h.logger.Debug("failed to enqueue bundle uninstall job", "bundle_id", req.BundleID, "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued bundle uninstall job", "job_id", jobID, "error", err)
 		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
 		return
 	}
