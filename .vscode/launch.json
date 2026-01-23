@@ -1,0 +1,42 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "zeropoint-agent",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/zeropoint-agent",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "buildFlags": "",
+            "preLaunchTask": "go: build"
+        },
+        {           
+            "name": "webui: debug",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:2370",
+            "webRoot": "${workspaceFolder}",
+            "preLaunchTask": "waitForServer",
+            "browserLaunchLocation": "ui",
+            "runtimeExecutable": "stable",
+            "userDataDir": "${workspaceFolder}/.vscode/cache",
+            "sourceMaps": true,
+            "outFiles": [
+                "${workspaceFolder}/web/**/*.js"
+            ],
+            "presentation": {
+                "hidden": true
+            }
+        }        
+    ],
+    "compounds": 
+    [
+        {
+            "name": "zeropoint-agent/webui",
+            "configurations": ["zeropoint-agent", "webui: debug"],
+            "stopAll": true
+        }
+    ]
+}

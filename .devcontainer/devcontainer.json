@@ -1,0 +1,47 @@
+{
+	"name": "zeropoint-agent",
+	"build": {
+		"dockerfile": "../Dockerfile",
+		"context": ".."
+	},
+	"overrideCommand": true,
+	"postCreateCommand": "touch /etc/zeropoint/.zeropoint-boot-complete",
+	"postAttachCommand": "go mod download && npm install",
+	"forwardPorts": [80, 443, 2370],
+	"portsAttributes": {
+		"80": {
+			"label": "Envoy HTTP",
+			"onAutoForward": "notify"
+		},
+		"443": {
+			"label": "Envoy HTTPS",
+			"onAutoForward": "notify"
+		},
+		"2370": {
+			"label": "ZeroPoint Agent API",
+			"onAutoForward": "notify"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.Go",
+				"augustocdias.tasks-shell-input",
+				"zaaack.markdown-editor",
+				"msjsdiag.debugger-for-chrome",
+				"idered.npm"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
+			}
+		}
+	},
+	"runArgs": [ 
+		"--privileged",
+		"--gpus", "all",
+		"--runtime", "nvidia"
+ 	],
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+	}
+}
