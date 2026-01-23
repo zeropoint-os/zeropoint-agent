@@ -63,6 +63,29 @@ export default function ExposuresView() {
     return `${exposure.protocol}://${exposure.id}.local/`;
   };
 
+  const handleCreateExposure = async (data: {
+    module_id: string;
+    hostname: string;
+    protocol: string;
+    container_port: number;
+  }) => {
+    try {
+      await jobsApi.enqueueCreateExposure({
+        queueEnqueueCreateExposureRequest: {
+          exposureId: data.hostname,
+          moduleId: data.module_id,
+          hostname: data.hostname,
+          protocol: data.protocol,
+          containerPort: data.container_port,
+        }
+      });
+      setError(null);
+      setTimeout(() => fetchExposures(), 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create exposure');
+    }
+  };
+
   const handleDeleteExposure = async (exposureId: string) => {
     if (!window.confirm(`Delete exposure "${exposureId}"?`)) {
       return;
@@ -88,10 +111,7 @@ export default function ExposuresView() {
           isOpen={showCreateDialog}
           modules={modules}
           onClose={() => setShowCreateDialog(false)}
-          onCreate={async () => {
-            setShowCreateDialog(false);
-            setTimeout(() => fetchExposures(), 1000);
-          }}
+          onCreate={handleCreateExposure}
         />
       )}
 
