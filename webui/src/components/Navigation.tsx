@@ -86,6 +86,17 @@ const allNavItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    id: 'storage',
+    label: 'Storage',
+    path: '/storage',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="4" width="18" height="6" rx="2"></rect>
+        <rect x="3" y="14" width="18" height="6" rx="2"></rect>
+      </svg>
+    ),
+  },
 ];
 
 const getNavItems = (bootComplete: boolean): NavItem[] => {

@@ -10,9 +10,10 @@ import JobsView from '../views/JobsView';
 import LinksView from '../views/LinksView';
 import ExposuresView from '../views/ExposuresView';
 import BundlesView from '../views/BundlesView';
+import StorageView from '../views/StorageView';
 import { BootApi, Configuration } from 'artifacts/clients/typescript';
 
-type ViewType = 'boot' | 'modules' | 'jobs' | 'links' | 'exposures' | 'bundles';
+type ViewType = 'boot' | 'modules' | 'jobs' | 'links' | 'exposures' | 'bundles' | 'storage';
 
 export default function App() {
   const navigate = useNavigate();
@@ -62,7 +63,7 @@ export default function App() {
       return bootComplete ? 'bundles' : 'boot';
     }
     const view = path.substring(1) as ViewType;
-    const validViews: ViewType[] = ['boot', 'modules', 'jobs', 'links', 'exposures', 'bundles'];
+    const validViews: ViewType[] = ['boot', 'modules', 'jobs', 'links', 'exposures', 'bundles', 'storage'];
     return validViews.includes(view) ? view : 'boot';
   };
 
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="/links" element={<LinksView />} />
           <Route path="/exposures" element={<ExposuresView />} />
           <Route path="/bundles" element={<BundlesView />} />
+          <Route path="/storage" element={<StorageView />} />
         </Routes>
       </main>
     </div>
