@@ -116,7 +116,19 @@ export default function StorageView() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                       <div>
                         <div style={{ fontSize: '0.95rem', fontWeight: 700 }}>{d.model || d.kname || d.diskId}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>{d.vendor || ''} {d.transport ? `• ${d.transport}` : ''}</div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.25rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>{d.vendor || ''}</div>
+                          {/* transport tag */}
+                          {d.transport && (
+                            <div className={`tag ${d.transport === 'usb' ? 'tag-transport-usb' : 'tag-transport-nonusb'}`}>
+                              {d.transport}
+                            </div>
+                          )}
+                          {/* boot tag (backend best-effort) */}
+                          {(d as any).boot && (
+                            <div className="tag tag-boot">boot</div>
+                          )}
+                        </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontWeight: 700 }}>{formatBytes(d.sizeBytes)}</div>

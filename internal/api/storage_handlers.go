@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -25,6 +28,8 @@ type Disk struct {
 	Transport  string      `json:"transport,omitempty"`
 	Vendor     string      `json:"vendor,omitempty"`
 	Partitions []Partition `json:"partitions,omitempty"`
+	// Boot indicates this disk contains the current root filesystem (best-effort)
+	Boot bool `json:"boot,omitempty"`
 }
 
 // Partition contains basic partition info
@@ -98,6 +103,8 @@ func (e *apiEnv) GetDisk(w http.ResponseWriter, r *http.Request) {
 
 // enumerateDisks calls lsblk and parses minimal device info
 func enumerateDisks(ctx context.Context) ([]Disk, error) {
+	// best-effort detect boot disk parent (kname)
+	bootDisk := detectBootDisk(ctx)
 	cmd := exec.CommandContext(ctx, "lsblk", "-J", "-b", "-o", "NAME,KNAME,PATH,SIZE,MODEL,SERIAL,WWN,UUID,TYPE,ROTA,TRAN,VENDOR")
 	out, err := cmd.Output()
 	if err != nil {
@@ -167,8 +174,56 @@ func enumerateDisks(ctx context.Context) ([]Disk, error) {
 					}
 				}
 			}
+			if bootDisk != "" && d.KName == bootDisk {
+				d.Boot = true
+			}
 			disks = append(disks, d)
 		}
 	}
 	return disks, nil
+}
+
+// detectBootDisk attempts to find the parent disk kname that contains '/'
+// Returns the kernel name (e.g., sda or nvme0n1) or empty string if unknown.
+func detectBootDisk(ctx context.Context) string {
+	// find source for root mount
+	cmd := exec.CommandContext(ctx, "findmnt", "-n", "-o", "SOURCE", "/")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	src := strings.TrimSpace(string(out))
+	if src == "" {
+		return ""
+	}
+
+	// Only consider /dev/* sources; otherwise best-effort fail
+	if !strings.HasPrefix(src, "/dev/") {
+		return ""
+	}
+
+	// Try lsblk to get parent pkname (works for partitions)
+	if pkCmd := exec.CommandContext(ctx, "lsblk", "-no", "pkname", src); pkCmd != nil {
+		if pkOut, err := pkCmd.Output(); err == nil {
+			pk := strings.TrimSpace(string(pkOut))
+			if pk != "" {
+				return pk
+			}
+		}
+	}
+
+	// Fallback: derive parent from device name (handles nvme and sd patterns)
+	base := filepath.Base(src)
+	// nvme pattern: nvme0n1p2 -> nvme0n1
+	nvmeRe := regexp.MustCompile(`^(nvme\d+n\d+)(p\d+)$`)
+	if m := nvmeRe.FindStringSubmatch(base); len(m) == 3 {
+		return m[1]
+	}
+	// sd/hd/vd pattern: sda1 -> sda
+	stdRe := regexp.MustCompile(`^([a-z]+)\d+$`)
+	if m := stdRe.FindStringSubmatch(base); len(m) == 2 {
+		return m[1]
+	}
+
+	return ""
 }

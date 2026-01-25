@@ -534,6 +534,21 @@ h2.section-title:hover {
   border-radius: var(--border-radius-full);
   font-size: 0.85rem;
 }
+/* Transport tag variants */
+.tag-transport-usb {
+  background-color: var(--color-success);
+  color: white;
+}
+.tag-transport-nonusb {
+  background-color: var(--color-danger);
+  color: white;
+}
+
+/* Boot tag */
+.tag-boot {
+  background-color: var(--color-danger);
+  color: white;
+}
 /* Link Card Styles */
 .link-header {
   margin-bottom: var(--spacing-md);
