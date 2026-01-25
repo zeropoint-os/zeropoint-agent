@@ -179,6 +179,14 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/jobs/enqueue_delete_link", queueHandlers.EnqueueDeleteLink).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_install_bundle", queueHandlers.EnqueueBundleInstall).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_uninstall_bundle", queueHandlers.EnqueueBundleUninstall).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_format", queueHandlers.EnqueueFormat).Methods(http.MethodPost)
+
+	// Storage discovery endpoints
+	r.HandleFunc("/api/storage/disks", env.ListDisks).Methods(http.MethodGet)
+	r.HandleFunc("/api/storage/disks/{disk}", env.GetDisk).Methods(http.MethodGet)
+
+	// Storage modification endpoints
+	r.HandleFunc("/api/storage/disks/format", queueHandlers.FormatNow).Methods(http.MethodPost)
 
 	// Web UI - serve static files as fallback after API routes
 	webDir := getWebDir()

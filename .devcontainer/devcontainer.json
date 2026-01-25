@@ -41,6 +41,9 @@
 		"--gpus", "all",
 		"--runtime", "nvidia"
  	],
+	"mounts": [
+		"source=/dev,target=/dev,type=bind,consistency=consistent"
+	],
 	"features": {
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	}

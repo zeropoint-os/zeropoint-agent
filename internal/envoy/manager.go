@@ -75,9 +75,28 @@ func (m *Manager) EnsureRunning(ctx context.Context) error {
 			return nil
 		}
 
-		// Container exists but not running, start it
+		// Container exists but not running. Ensure bootstrap file is present and valid
+		m.logger.Info("envoy container exists but not running, validating bootstrap file", "id", containerID[:12])
+		// Attempt to detect xDS host and write bootstrap (best-effort)
+		xdsHost, err := m.getNetworkGateway(ctx, "zeropoint-network")
+		if err != nil {
+			m.logger.Warn("failed to get network gateway while validating bootstrap", "error", err)
+		} else {
+			if _, err := GetBootstrapPath(xdsHost, m.xdsPort); err != nil {
+				m.logger.Warn("bootstrap path validation failed", "error", err)
+				// If the bootstrap file cannot be written (e.g. a directory exists at the path),
+				// remove the old container and recreate it so the bind mount is created correctly.
+				m.logger.Info("removing stale envoy container and recreating to ensure correct bootstrap bind", "id", containerID[:12])
+				// Attempt to remove container (best-effort)
+				_, _ = m.docker.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+				// Create a new container with correct bootstrap file
+				return m.createAndStart(ctx)
+			}
+		}
+
+		// Start existing container
 		m.logger.Info("starting existing envoy container", "id", containerID[:12])
-		_, err := m.docker.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
+		_, err = m.docker.ContainerStart(ctx, containerID, client.ContainerStartOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to start envoy container: %w", err)
 		}

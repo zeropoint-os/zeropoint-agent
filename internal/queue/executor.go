@@ -1,9 +1,13 @@
 package queue
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os/exec"
+	"strings"
 	"time"
 
 	"zeropoint-agent/internal/catalog"
@@ -79,9 +83,200 @@ func (e *JobExecutor) ExecuteWithJob(ctx context.Context, jobID string, manager 
 		return e.executeBundleInstall(ctx, jobID, manager, cmd)
 	case CmdBundleUninstall:
 		return e.executeBundleUninstall(ctx, jobID, manager, cmd)
+	case CmdFormatDisk:
+		return e.executeFormatDisk(ctx, jobID, manager, cmd)
 	default:
 		return nil, fmt.Errorf("unknown command type: %s", cmd.Type)
 	}
+}
+
+// runCmdJobStream runs a command and appends stdout/stderr lines as job events
+func runCmdJobStream(ctx context.Context, manager *Manager, jobID string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "error", Message: "failed to start command: " + err.Error()})
+		return err
+	}
+
+	stream := func(r io.Reader, streamName string) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "log", Message: streamName + ": " + scanner.Text()})
+		}
+	}
+	go stream(stdout, "stdout")
+	go stream(stderr, "stderr")
+
+	if err := cmd.Wait(); err != nil {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "error", Message: "command failed: " + err.Error()})
+		return err
+	}
+	return nil
+}
+
+// executeFormatDisk executes a format_disk command and records progress to job events
+func (e *JobExecutor) executeFormatDisk(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error) {
+	// Extract args
+	sysPath, _ := cmd.Args["sys_path"].(string)
+	if sysPath == "" {
+		return nil, fmt.Errorf("sys_path is required")
+	}
+
+	filesystem, _ := cmd.Args["filesystem"].(string)
+	label, _ := cmd.Args["label"].(string)
+
+	wipefs := false
+	if v, ok := cmd.Args["wipefs"].(bool); ok {
+		wipefs = v
+	}
+
+	confirm := false
+	if v, ok := cmd.Args["confirm"].(bool); ok {
+		confirm = v
+	}
+
+	confirmFixed := false
+	if v, ok := cmd.Args["confirm_fixed_disk_operation"].(bool); ok {
+		confirmFixed = v
+	}
+
+	autoPartition := false
+	if v, ok := cmd.Args["auto_partition"].(bool); ok {
+		autoPartition = v
+	}
+
+	if !confirm {
+		return nil, fmt.Errorf("confirm must be true for destructive operation")
+	}
+
+	// Check transport for fixed-disk confirmation
+	transport := ""
+	if sysPath != "" {
+		ctxT, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TRAN", sysPath).Output()
+		if err == nil {
+			transport = strings.TrimSpace(string(out))
+		}
+	}
+	if transport != "usb" && transport != "" && !confirmFixed {
+		return nil, fmt.Errorf("confirm_fixed_disk_operation must be true for non-USB devices")
+	}
+
+	// Determine device type
+	devType := ""
+	{
+		ctxT, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TYPE", sysPath).Output()
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine device type or device not found")
+		}
+		devType = strings.TrimSpace(string(out))
+		if devType == "" {
+			return nil, fmt.Errorf("unable to determine device type for path: %s", sysPath)
+		}
+	}
+
+	if devType == "disk" && !autoPartition {
+		return nil, fmt.Errorf("refusing to format whole-disk without explicit partition intent (auto_partition)")
+	}
+
+	// Step: dry-run wipefs
+	_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "dry-run: wipefs -n"})
+	if err := runCmdJobStream(ctx, manager, jobID, "wipefs", "-n", sysPath); err != nil {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "failed dry-run: " + err.Error()})
+		return nil, err
+	}
+
+	if wipefs {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "running: wipefs -a"})
+		if err := runCmdJobStream(ctx, manager, jobID, "wipefs", "-a", sysPath); err != nil {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "wipefs failed: " + err.Error()})
+			return nil, err
+		}
+	}
+
+	targetPath := sysPath
+	if autoPartition && devType == "disk" {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "creating GPT partition table (zap)"})
+		if err := runCmdJobStream(ctx, manager, jobID, "sgdisk", "--zap-all", sysPath); err != nil {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "sgdisk zap failed: " + err.Error()})
+			return nil, err
+		}
+
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "creating single partition to fill disk"})
+		if err := runCmdJobStream(ctx, manager, jobID, "sgdisk", "--new=1:1MiB:0", "--typecode=1:8300", sysPath); err != nil {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "sgdisk create failed: " + err.Error()})
+			return nil, err
+		}
+
+		_ = runCmdJobStream(ctx, manager, jobID, "partprobe", sysPath)
+		_ = runCmdJobStream(ctx, manager, jobID, "udevadm", "settle")
+
+		var partPath string
+		found := false
+		for i := 0; i < 10; i++ {
+			ctxT, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			out, _ := exec.CommandContext(ctxT, "lsblk", "-ln", "-o", "KNAME,TYPE", sysPath).Output()
+			cancel()
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, ln := range lines {
+				f := strings.Fields(ln)
+				if len(f) >= 2 && f[1] == "part" {
+					partPath = "/dev/" + f[0]
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if !found {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "failed to detect created partition device"})
+			return nil, fmt.Errorf("failed to detect created partition device")
+		}
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "detected partition: " + partPath})
+		targetPath = partPath
+	}
+
+	// mkfs
+	fs := filesystem
+	if fs == "" {
+		fs = "ext4"
+	}
+	_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "mkfs: " + fs + " on " + targetPath})
+	if fs == "ext4" {
+		if err := runCmdJobStream(ctx, manager, jobID, "mkfs.ext4", "-F", "-L", label, targetPath); err != nil {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "mkfs failed: " + err.Error()})
+			return nil, err
+		}
+	} else if fs == "xfs" {
+		if err := runCmdJobStream(ctx, manager, jobID, "mkfs.xfs", "-f", "-L", label, targetPath); err != nil {
+			_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "mkfs failed: " + err.Error()})
+			return nil, err
+		}
+	} else {
+		_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: "unsupported filesystem: " + fs})
+		return nil, fmt.Errorf("unsupported filesystem: %s", fs)
+	}
+
+	// blkid
+	_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "step", Message: "reading blkid on " + targetPath})
+	blkidOut := ""
+	if out, err := exec.CommandContext(ctx, "blkid", "-s", "UUID", "-o", "value", targetPath).Output(); err == nil {
+		blkidOut = strings.TrimSpace(string(out))
+	}
+
+	finalMsg := fmt.Sprintf("{\"device\": \"%s\", \"uuid\": \"%s\"}", targetPath, blkidOut)
+	_ = manager.AppendEvent(jobID, Event{Timestamp: time.Now().UTC(), Type: "final", Message: finalMsg})
+
+	result := map[string]interface{}{"device": targetPath, "uuid": blkidOut}
+	return result, nil
 }
 
 // executeInstallModule runs an install_module command with direct installer call

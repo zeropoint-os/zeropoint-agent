@@ -1,11 +1,17 @@
 package queue
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"reflect"
 	"strings"
+	"time"
 
 	"zeropoint-agent/internal/catalog"
 
@@ -91,6 +97,317 @@ type EnqueueBundleInstallRequest struct {
 // EnqueueBundleUninstallRequest is the request for creating a bundle uninstallation meta-job.
 type EnqueueBundleUninstallRequest struct {
 	BundleID string `json:"bundle_id"`
+}
+
+// EnqueueFormatRequest is the request to format a disk immediately (streams events)
+//
+// swagger:model EnqueueFormatRequest
+type EnqueueFormatRequest struct {
+	DiskID    string   `json:"disk_id"`
+	SysPath   string   `json:"sys_path"`
+	ByID      string   `json:"by_id,omitempty"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	// PartitionLayout was reserved for future explicit layouts; not implemented currently.
+	Filesystem                string                 `json:"filesystem" example:"ext4"`
+	Label                     string                 `json:"label,omitempty"`
+	Wipefs                    bool                   `json:"wipefs"`
+	Luks                      map[string]interface{} `json:"luks,omitempty"`
+	Lvm                       map[string]interface{} `json:"lvm,omitempty"`
+	Confirm                   bool                   `json:"confirm"`
+	ConfirmFixedDiskOperation bool                   `json:"confirm_fixed_disk_operation,omitempty"`
+	AutoPartition             bool                   `json:"auto_partition,omitempty"`
+}
+
+// EnqueueFormat handles POST /jobs/enqueue_format
+// @ID enqueueFormat
+// @Summary Enqueue a disk format job
+// @Description Enqueue a disk format operation to be executed by the job worker. Progress will be recorded to job events. Requires `confirm:true` and the same safety rules as the immediate formatter.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueFormatRequest true "Format request"
+// @Success 201 {object} JobResponse "Job enqueued successfully"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_format [post]
+func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueFormatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SysPath == "" {
+		http.Error(w, "sys_path is required", http.StatusBadRequest)
+		return
+	}
+
+	// Require explicit confirmation
+	if !req.Confirm {
+		http.Error(w, "confirm must be true for destructive operation", http.StatusBadRequest)
+		return
+	}
+
+	// Build command args map
+	args := map[string]interface{}{
+		"disk_id":                      req.DiskID,
+		"sys_path":                     req.SysPath,
+		"by_id":                        req.ByID,
+		"filesystem":                   req.Filesystem,
+		"label":                        req.Label,
+		"wipefs":                       req.Wipefs,
+		"luks":                         req.Luks,
+		"lvm":                          req.Lvm,
+		"confirm":                      req.Confirm,
+		"confirm_fixed_disk_operation": req.ConfirmFixedDiskOperation,
+		"auto_partition":               req.AutoPartition,
+	}
+
+	cmd := Command{
+		Type: CmdFormatDisk,
+		Args: args,
+	}
+
+	jobID, err := h.manager.Enqueue(cmd, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue format job", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// helper to stream SSE event
+func sseEvent(w http.ResponseWriter, kind, msg string) error {
+	_, err := io.WriteString(w, "event: job:event\n")
+	if err != nil {
+		return err
+	}
+	payload := map[string]string{"kind": kind, "msg": msg}
+	b, _ := json.Marshal(payload)
+	_, err = io.WriteString(w, "data: "+string(b)+"\n\n")
+	if err != nil {
+		return err
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
+// runCmdStream runs a command and streams stdout/stderr as SSE logs
+func runCmdStream(ctx context.Context, w http.ResponseWriter, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		sseEvent(w, "error", "failed to start command: "+err.Error())
+		return err
+	}
+
+	stream := func(r io.Reader, streamName string) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			sseEvent(w, "log", streamName+": "+scanner.Text())
+		}
+	}
+	go stream(stdout, "stdout")
+	go stream(stderr, "stderr")
+
+	if err := cmd.Wait(); err != nil {
+		sseEvent(w, "error", "command failed: "+err.Error())
+		return err
+	}
+	return nil
+}
+
+// FormatNow handles POST /api/storage/disks/format (immediate formatting with streaming)
+// @ID formatDiskNow
+// @Summary Format disk or partition now (streams events)
+// @Description Immediately run destructive formatting operations on a disk or partition. Streams progress as server-sent events (text/event-stream). Requires `confirm:true`. If targeting a whole-disk, include `auto_partition:true` to create a single GPT partition.
+// @Tags storage
+// @Accept json
+// @Produce text/event-stream
+// @Param body body EnqueueFormatRequest true "Format request"
+// @Success 200 {string} string "Event stream"
+// @Failure 400 {object} map[string]string
+// @Router /api/storage/disks/format [post]
+// Note: This endpoint performs destructive operations. Use carefully.
+func (h *Handlers) FormatNow(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueFormatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SysPath == "" {
+		http.Error(w, "sys_path is required", http.StatusBadRequest)
+		return
+	}
+
+	// Require explicit confirmation for destructive ops
+	if !req.Confirm {
+		http.Error(w, "confirm must be true for destructive operation", http.StatusBadRequest)
+		return
+	}
+
+	// If device transport is not USB, require an additional explicit confirmation
+	// to avoid accidental formatting of fixed/internal drives.
+	// Query lsblk for transport of the device
+	transport := ""
+	if req.SysPath != "" {
+		ctxT, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TRAN", req.SysPath)
+		out, err := cmd.Output()
+		if err == nil {
+			transport = strings.TrimSpace(string(out))
+		}
+	}
+
+	if transport != "usb" && transport != "" && !req.ConfirmFixedDiskOperation {
+		http.Error(w, "confirm_fixed_disk_operation must be true for non-USB devices", http.StatusBadRequest)
+		return
+	}
+
+	// Determine device type (disk vs partition). If the path is a whole disk and
+	// neither auto-partition nor explicit partition_layout are provided, refuse.
+	devType := ""
+	{
+		ctxT, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TYPE", req.SysPath)
+		out, err := cmd.Output()
+		if err != nil {
+			http.Error(w, "unable to determine device type or device not found", http.StatusBadRequest)
+			return
+		}
+		devType = strings.TrimSpace(string(out))
+		if devType == "" {
+			http.Error(w, "unable to determine device type for path: "+req.SysPath, http.StatusBadRequest)
+			return
+		}
+	}
+
+	if devType == "disk" && !req.AutoPartition {
+		http.Error(w, "refusing to format whole-disk without explicit partition intent (auto_partition)", http.StatusBadRequest)
+		return
+	}
+
+	// Setup SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	ctx := r.Context()
+
+	// Step 1: dry-run wipefs
+	sseEvent(w, "step", "dry-run: wipefs -n")
+	if err := runCmdStream(ctx, w, "wipefs", "-n", req.SysPath); err != nil {
+		sseEvent(w, "final", "failed dry-run: "+err.Error())
+		return
+	}
+
+	// Step 2: perform wipefs
+	if req.Wipefs {
+		sseEvent(w, "step", "running: wipefs -a")
+		if err := runCmdStream(ctx, w, "wipefs", "-a", req.SysPath); err != nil {
+			sseEvent(w, "final", "wipefs failed: "+err.Error())
+			return
+		}
+	}
+	// If auto-partition requested and we're operating on a whole disk, create a single GPT partition
+	targetPath := req.SysPath
+	if req.AutoPartition && devType == "disk" {
+		sseEvent(w, "step", "creating GPT partition table (zap)")
+		if err := runCmdStream(ctx, w, "sgdisk", "--zap-all", req.SysPath); err != nil {
+			sseEvent(w, "final", "sgdisk zap failed: "+err.Error())
+			return
+		}
+
+		sseEvent(w, "step", "creating single partition to fill disk")
+		if err := runCmdStream(ctx, w, "sgdisk", "--new=1:1MiB:0", "--typecode=1:8300", req.SysPath); err != nil {
+			sseEvent(w, "final", "sgdisk create failed: "+err.Error())
+			return
+		}
+
+		// Inform kernel and udev
+		_ = runCmdStream(ctx, w, "partprobe", req.SysPath)
+		_ = runCmdStream(ctx, w, "udevadm", "settle")
+
+		// Detect first partition device
+		var partPath string
+		found := false
+		for i := 0; i < 10; i++ {
+			ctxT, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			cmd := exec.CommandContext(ctxT, "lsblk", "-ln", "-o", "KNAME,TYPE", req.SysPath)
+			out, _ := cmd.Output()
+			cancel()
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			for _, ln := range lines {
+				f := strings.Fields(ln)
+				if len(f) >= 2 && f[1] == "part" {
+					partPath = "/dev/" + f[0]
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if !found {
+			sseEvent(w, "final", "failed to detect created partition device")
+			return
+		}
+		sseEvent(w, "step", "detected partition: "+partPath)
+		targetPath = partPath
+	}
+
+	// Step 3: mkfs on targetPath
+	fs := req.Filesystem
+	if fs == "" {
+		fs = "ext4"
+	}
+	sseEvent(w, "step", "mkfs: "+fs+" on "+targetPath)
+	if fs == "ext4" {
+		if err := runCmdStream(ctx, w, "mkfs.ext4", "-F", "-L", req.Label, targetPath); err != nil {
+			sseEvent(w, "final", "mkfs failed: "+err.Error())
+			return
+		}
+	} else if fs == "xfs" {
+		if err := runCmdStream(ctx, w, "mkfs.xfs", "-f", "-L", req.Label, targetPath); err != nil {
+			sseEvent(w, "final", "mkfs failed: "+err.Error())
+			return
+		}
+	} else {
+		sseEvent(w, "final", "unsupported filesystem: "+fs)
+		return
+	}
+
+	// Step 4: report blkid on the target path and include device + UUID in final event
+	sseEvent(w, "step", "reading blkid on "+targetPath)
+	// Attempt to read UUID
+	blkidOut := ""
+	if out, err := exec.CommandContext(ctx, "blkid", "-s", "UUID", "-o", "value", targetPath).Output(); err == nil {
+		blkidOut = strings.TrimSpace(string(out))
+	}
+
+	finalMsg := fmt.Sprintf("{\"device\": \"%s\", \"uuid\": \"%s\"}", targetPath, blkidOut)
+	sseEvent(w, "final", finalMsg)
 }
 
 // EnqueueInstall handles POST /api/jobs/enqueue_install

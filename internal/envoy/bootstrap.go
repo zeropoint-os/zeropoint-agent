@@ -64,6 +64,17 @@ func GetBootstrapPath(xdsHost string, xdsPort int) (string, error) {
 	// Generate bootstrap config with xDS host and port
 	config := fmt.Sprintf(bootstrapTemplate, xdsHost, xdsPort)
 
+	// If a directory exists at the bootstrap path (possible if Docker created it when the
+	// file was missing), try to remove it. If it's non-empty, fail and require manual cleanup.
+	if info, err := os.Stat(bootstrapPath); err == nil {
+		if info.IsDir() {
+			// attempt to remove empty dir
+			if err := os.Remove(bootstrapPath); err != nil {
+				return "", fmt.Errorf("bootstrap path exists as a non-empty directory; please remove %s and retry: %w", bootstrapPath, err)
+			}
+		}
+	}
+
 	// Write bootstrap config
 	if err := os.WriteFile(bootstrapPath, []byte(config), 0644); err != nil {
 		return "", fmt.Errorf("failed to write bootstrap config: %w", err)

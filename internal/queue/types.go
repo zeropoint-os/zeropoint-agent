@@ -27,6 +27,7 @@ const (
 	CmdDeleteLink      CommandType = "delete_link"
 	CmdBundleInstall   CommandType = "bundle_install"   // Meta-job that orchestrates bundle installation
 	CmdBundleUninstall CommandType = "bundle_uninstall" // Meta-job that orchestrates bundle uninstallation
+	CmdFormatDisk      CommandType = "format_disk"
 )
 
 // Command represents a queued command to execute

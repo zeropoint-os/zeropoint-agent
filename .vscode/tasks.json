@@ -42,6 +42,15 @@
 			"detail": "Build all"
 		},
 		{
+			"type": "shell",
+			"label": "build: openapi",
+			"command": "./scripts/generate-swagger.sh && ./scripts/generate-clients.sh",
+			"group": "build",
+			"problemMatcher": [],
+			"isBackground": false,
+			"detail": "Generate OpenAPI spec and client libraries"
+		},
+		{
 			"label": "waitForServer",
 			"type": "shell",
 			"command": "while ! nc -z localhost 2370; do sleep 1; done",
