@@ -18,8 +18,10 @@ import (
 
 // Storage configuration file paths
 const (
-	DisksPendingConfigFile = "/etc/zeropoint/disks.pending.ini"
-	DisksConfigFile        = "/etc/zeropoint/disks.ini"
+	DisksPendingConfigFile  = "/etc/zeropoint/disks.pending.ini"
+	DisksConfigFile         = "/etc/zeropoint/disks.ini"
+	MountsPendingConfigFile = "/etc/zeropoint/mounts.pending.ini"
+	MountsConfigFile        = "/etc/zeropoint/mounts.ini"
 )
 
 // Handlers handles HTTP requests for the job queue API
@@ -212,6 +214,140 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 			Message:   "Staged in " + DisksPendingConfigFile + " - will execute on reboot",
 		})
 	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueCreateMountRequest is the request to create/update a mount
+//
+// swagger:model EnqueueCreateMountRequest
+type EnqueueCreateMountRequest struct {
+	MountPoint string   `json:"mount_point"` // Where filesystem is mounted
+	Filesystem string   `json:"filesystem"`  // Device or virtual filesystem identifier
+	Type       string   `json:"type"`        // Filesystem type
+	DependsOn  []string `json:"depends_on,omitempty"`
+}
+
+// EnqueueDeleteMountRequest is the request to delete a mount
+//
+// swagger:model EnqueueDeleteMountRequest
+type EnqueueDeleteMountRequest struct {
+	MountPoint string   `json:"mount_point"` // Mount point to delete
+	DependsOn  []string `json:"depends_on,omitempty"`
+}
+
+// EnqueueCreateMount handles POST /jobs/enqueue_create_mount
+// @ID enqueueCreateMount
+// @Summary Enqueue a mount creation job
+// @Description Enqueue a mount operation to be executed at boot time. The mount will be staged in /etc/zeropoint/mounts.pending.ini and executed by the systemd boot service.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueCreateMountRequest true "Mount creation request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_create_mount [post]
+func (h *Handlers) EnqueueCreateMount(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueCreateMountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.MountPoint == "" || req.Filesystem == "" || req.Type == "" {
+		http.Error(w, "mount_point, filesystem, and type are required", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent root mount modification
+	if req.MountPoint == "/" {
+		http.Error(w, "cannot create or modify root mount point", http.StatusBadRequest)
+		return
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdCreateMount,
+		Args: map[string]interface{}{
+			"mount_point": req.MountPoint,
+			"filesystem":  req.Filesystem,
+			"type":        req.Type,
+		},
+	}, req.DependsOn)
+
+	if err != nil {
+		h.logger.Error("failed to enqueue mount creation", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("mount creation job enqueued", "job_id", jobID)
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueDeleteMount handles POST /jobs/enqueue_delete_mount
+// @ID enqueueDeleteMount
+// @Summary Enqueue a mount deletion job
+// @Description Enqueue a mount deletion to be executed at boot time. The mount removal will be staged in /etc/zeropoint/mounts.pending.ini and executed by the systemd boot service.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueDeleteMountRequest true "Mount deletion request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_delete_mount [post]
+func (h *Handlers) EnqueueDeleteMount(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueDeleteMountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required field
+	if req.MountPoint == "" {
+		http.Error(w, "mount_point is required", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent root mount deletion
+	if req.MountPoint == "/" {
+		http.Error(w, "cannot delete root mount point", http.StatusBadRequest)
+		return
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdDeleteMount,
+		Args: map[string]interface{}{
+			"mount_point": req.MountPoint,
+		},
+	}, req.DependsOn)
+
+	if err != nil {
+		h.logger.Error("failed to enqueue mount deletion", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("mount deletion job enqueued", "job_id", jobID)
 
 	job, err := h.manager.Get(jobID)
 	if err != nil {
