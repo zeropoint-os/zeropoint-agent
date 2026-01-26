@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 
 	"github.com/gorilla/mux"
 	"gopkg.in/ini.v1"
@@ -148,6 +149,11 @@ func (e *apiEnv) ListMounts(w http.ResponseWriter, r *http.Request) {
 	for _, m := range mountMap {
 		allMounts = append(allMounts, m)
 	}
+
+	// Sort by mount point for stable ordering
+	sort.Slice(allMounts, func(i, j int) bool {
+		return allMounts[i].MountPoint < allMounts[j].MountPoint
+	})
 
 	response := MountsResponse{Mounts: allMounts}
 	w.Header().Set("Content-Type", "application/json")

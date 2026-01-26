@@ -213,6 +213,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 		logger.Error("failed to process boot-time format results", "error", err)
 	}
 
+	// Process any boot-time mount operations that may have completed
+	if err := queueHandlers.ProcessMountsResults(); err != nil {
+		logger.Error("failed to process boot-time mount results", "error", err)
+	}
+
 	// Return router with middleware
 	return routerWithMiddleware, nil
 }

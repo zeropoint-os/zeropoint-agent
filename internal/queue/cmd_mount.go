@@ -60,12 +60,12 @@ func (e *CreateMountExecutor) Execute(ctx context.Context, callback ProgressCall
 	}
 
 	callback(ProgressUpdate{
-		Status:  "completed",
+		Status:  "pending",
 		Message: fmt.Sprintf("Mount %s staged in %s for boot-time execution", mountPoint, MountsPendingConfigFile),
 	})
 
 	return ExecutionResult{
-		Status: StatusCompleted,
+		Status: StatusPending,
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Mount %s created in pending file, will be executed at boot", mountPoint),
 		},
@@ -113,12 +113,12 @@ func (e *DeleteMountExecutor) Execute(ctx context.Context, callback ProgressCall
 	}
 
 	callback(ProgressUpdate{
-		Status:  "completed",
+		Status:  "pending",
 		Message: fmt.Sprintf("Mount %s marked for deletion in %s, will be executed at boot", mountPoint, MountsPendingConfigFile),
 	})
 
 	return ExecutionResult{
-		Status: StatusCompleted,
+		Status: StatusPending,
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Mount %s marked for deletion, will be executed at boot", mountPoint),
 		},

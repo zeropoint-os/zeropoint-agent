@@ -1,16 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { StorageApi, Configuration, ApiDisk, JobsApi, QueueEnqueueFormatRequest } from 'artifacts/clients/typescript';
+import { StorageApi, Configuration, ApiDisk, ApiMount, JobsApi, QueueEnqueueFormatRequest } from 'artifacts/clients/typescript';
 import FormatView from './FormatView';
+import CreateMountDialog from '../components/CreateMountDialog';
 import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
 export default function StorageView() {
   const navigate = useNavigate();
   const [disks, setDisks] = useState<ApiDisk[]>([]);
+  const [mounts, setMounts] = useState<ApiMount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedSections, setExpandedSections] = useState<{ [k: string]: boolean }>({ disks: true, mounts: false, paths: false });
+  const [expandedSections, setExpandedSections] = useState<{ [k: string]: boolean }>({ disks: true, mounts: true, paths: false });
   const loadingTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // StorageApi paths include /api prefix in generated client, use empty basePath to avoid double /api
@@ -34,10 +36,21 @@ export default function StorageView() {
     }
   };
 
+  const fetchMounts = async () => {
+    try {
+      const resp = await storageApi.apiStorageMountsGet();
+      setMounts(resp?.mounts || []);
+    } catch (err) {
+      console.error('Failed to load mounts', err);
+      setMounts([]);
+    }
+  };
+
   const jobsApi = new JobsApi(new Configuration({ basePath: '' }));
 
   const [formatTarget, setFormatTarget] = useState<ApiDisk | null>(null);
   const [formatting, setFormatting] = useState(false);
+  const [showCreateMountDialog, setShowCreateMountDialog] = useState(false);
 
   const confirmFormat = async (disk: ApiDisk) => {
     setFormatTarget(disk);
@@ -69,7 +82,11 @@ export default function StorageView() {
 
   useEffect(() => {
     fetchDisks();
-    const interval = setInterval(fetchDisks, 5000);
+    fetchMounts();
+    const interval = setInterval(() => {
+      fetchDisks();
+      fetchMounts();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -214,8 +231,68 @@ export default function StorageView() {
           <div style={{ width: 36, height: 36, display: 'grid', placeItems: 'center', borderRadius: 6, background: 'var(--color-surface-alt)' }}>{expandedSections.mounts ? '▼' : '▶'}</div>
         </div>
         {expandedSections.mounts && (
-          <div className="section-content" style={{ minHeight: '120px', border: '1px dashed var(--color-border)', borderRadius: '0.5rem', padding: '1rem', color: 'var(--color-text-secondary)' }}>
-            Mounts UI will go here.
+          <div className="section-content">
+            {mounts.length === 0 ? (
+              <div className="empty-state">
+                <h3>No mounts configured</h3>
+                <p>Add a mount to configure additional filesystems.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {mounts.map((m) => (
+                  <div
+                    key={m.id}
+                    style={{
+                      backgroundColor: 'var(--color-surface)',
+                      border: `1px solid var(--color-border)`,
+                      borderRadius: '0.5rem',
+                      padding: '1rem',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{m.mountPoint}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                        {m.filesystem} • {m.type}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span
+                        style={{
+                          padding: '0.25rem 0.75rem',
+                          borderRadius: '0.25rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: m.status === 'active' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(251, 146, 60, 0.1)',
+                          color: m.status === 'active' ? '#22c55e' : '#fb923c',
+                        }}
+                      >
+                        {m.status}
+                      </span>
+                      {m.mountPoint !== '/' && (
+                        <button
+                          className="button button-danger"
+                          style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                          onClick={() => {
+                            // TODO: Handle mount deletion
+                            alert('Delete mount not yet implemented in UI');
+                          }}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: '1rem' }}>
+              <button className="button button-primary" onClick={() => setShowCreateMountDialog(true)}>
+                Add Mount
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -247,6 +324,20 @@ export default function StorageView() {
             fetchDisks();
             setFormatTarget(null);
             navigate('/jobs');
+          }}
+        />
+      )}
+
+      {/* Create mount modal */}
+      {showCreateMountDialog && (
+        <CreateMountDialog
+          onClose={() => setShowCreateMountDialog(false)}
+          onMountCreated={(jobId?: string) => {
+            fetchMounts();
+            setShowCreateMountDialog(false);
+            if (jobId) {
+              navigate('/jobs');
+            }
           }}
         />
       )}
