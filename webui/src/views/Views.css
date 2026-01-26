@@ -548,6 +548,9 @@ h2.section-title:hover {
 .tag-boot {
   background-color: var(--color-danger);
   color: white;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18);
 }
 /* Link Card Styles */
 .link-header {

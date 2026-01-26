@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"context"
+	"log/slog"
 	"time"
 )
 
@@ -13,7 +15,26 @@ const (
 	StatusCompleted JobStatus = "completed"
 	StatusFailed    JobStatus = "failed"
 	StatusCancelled JobStatus = "cancelled"
+	StatusPending   JobStatus = "pending" // Job is pending (e.g., awaiting reboot for format_disk)
 )
+
+// ProgressUpdate represents a status update from a command executor
+type ProgressUpdate struct {
+	Status  string      // "pending", "in_progress", "completed", "failed"
+	Message string      // Human-readable status message
+	Data    interface{} // Command-specific data
+	Error   string      // Error details if status is failed
+}
+
+// ProgressCallback is called by command executors to report status updates
+type ProgressCallback func(ProgressUpdate)
+
+// ExecutionResult is returned by command executors to specify the result of execution
+type ExecutionResult struct {
+	Status   JobStatus   // Status to set on the job (completed, failed, pending, cancelled, etc.)
+	Result   interface{} // Command-specific result data
+	ErrorMsg string      // Error message if status is failed
+}
 
 // CommandType represents the type of command to execute
 type CommandType string
@@ -30,10 +51,78 @@ const (
 	CmdFormatDisk      CommandType = "format_disk"
 )
 
+// CommandExecutor is the interface all command types must implement
+type CommandExecutor interface {
+	Execute(ctx context.Context, callback ProgressCallback) ExecutionResult
+}
+
 // Command represents a queued command to execute
 type Command struct {
 	Type CommandType            `json:"type"`
 	Args map[string]interface{} `json:"args"` // Command-specific arguments
+}
+
+// ToExecutor creates an executor for this command
+// This allows polymorphic dispatch based on command type
+func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, exposureHandler interface{}, linkHandler interface{}, catalogStore interface{}, bundleStore interface{}, logger *slog.Logger) CommandExecutor {
+	switch c.Type {
+	case CmdInstallModule:
+		return &InstallModuleExecutor{
+			cmd:       c,
+			installer: installer,
+			logger:    logger,
+		}
+	case CmdUninstallModule:
+		return &UninstallModuleExecutor{
+			cmd:         c,
+			uninstaller: uninstaller,
+			logger:      logger,
+		}
+	case CmdCreateExposure:
+		return &CreateExposureExecutor{
+			cmd:     c,
+			handler: exposureHandler,
+			logger:  logger,
+		}
+	case CmdDeleteExposure:
+		return &DeleteExposureExecutor{
+			cmd:     c,
+			handler: exposureHandler,
+			logger:  logger,
+		}
+	case CmdCreateLink:
+		return &CreateLinkExecutor{
+			cmd:     c,
+			handler: linkHandler,
+			logger:  logger,
+		}
+	case CmdDeleteLink:
+		return &DeleteLinkExecutor{
+			cmd:     c,
+			handler: linkHandler,
+			logger:  logger,
+		}
+	case CmdBundleInstall:
+		return &BundleInstallExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	case CmdBundleUninstall:
+		return &BundleUninstallExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	case CmdFormatDisk:
+		return &FormatDiskExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	default:
+		return &UnknownCommandExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	}
 }
 
 // Job represents a job in the queue

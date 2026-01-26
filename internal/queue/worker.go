@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// Executor is responsible for executing a command and returning a result
+// Executor is responsible for executing a command and returning a result with status
 type Executor interface {
-	ExecuteWithJob(ctx context.Context, jobID string, manager *Manager, cmd Command) (interface{}, error)
+	ExecuteWithJob(ctx context.Context, jobID string, manager *Manager, cmd Command) ExecutionResult
 }
 
 // Worker processes queued jobs in topological order
@@ -153,31 +153,29 @@ func (w *Worker) executeJob(ctx context.Context, job *Job) {
 		w.logger.Error("failed to append event", "job_id", job.ID, "error", err)
 	}
 
-	// Execute the command
-	result, execErr := w.executor.ExecuteWithJob(ctx, job.ID, w.manager, job.Command)
+	// Execute the command - it returns its own status
+	result := w.executor.ExecuteWithJob(ctx, job.ID, w.manager, job.Command)
 
-	// Mark job as completed or failed
+	// Mark job with the status returned by the executor
 	completedTime := time.Now().UTC()
-	var status JobStatus
 	var errMsg string
 
-	if execErr != nil {
-		status = StatusFailed
-		errMsg = execErr.Error()
-		w.logger.Error("job execution failed", "job_id", job.ID, "error", execErr)
+	// If the command failed, log it
+	if result.Status == StatusFailed {
+		errMsg = result.ErrorMsg
+		w.logger.Error("job execution failed", "job_id", job.ID, "error", errMsg)
 
 		if err := w.manager.AppendEvent(job.ID, Event{
 			Timestamp: time.Now().UTC(),
 			Type:      "error",
-			Message:   fmt.Sprintf("Job failed: %v", execErr),
+			Message:   fmt.Sprintf("Job failed: %s", errMsg),
 		}); err != nil {
 			w.logger.Error("failed to append event", "job_id", job.ID, "error", err)
 		}
 
-		// Cascade cancellation to dependents
+		// Cascade cancellation to dependents on failure
 		w.manager.cascadeCancelDependents(job.ID)
-	} else {
-		status = StatusCompleted
+	} else if result.Status == StatusCompleted {
 		w.logger.Info("job execution completed", "job_id", job.ID)
 
 		if err := w.manager.AppendEvent(job.ID, Event{
@@ -187,10 +185,20 @@ func (w *Worker) executeJob(ctx context.Context, job *Job) {
 		}); err != nil {
 			w.logger.Error("failed to append event", "job_id", job.ID, "error", err)
 		}
+	} else if result.Status == StatusPending {
+		w.logger.Info("job execution pending", "job_id", job.ID)
+
+		if err := w.manager.AppendEvent(job.ID, Event{
+			Timestamp: time.Now().UTC(),
+			Type:      "info",
+			Message:   "Job execution pending (awaiting external completion)",
+		}); err != nil {
+			w.logger.Error("failed to append event", "job_id", job.ID, "error", err)
+		}
 	}
 
-	// Update final status
-	if err := w.manager.UpdateStatus(job.ID, status, &now, &completedTime, result, errMsg); err != nil {
+	// Update final status - use what the executor returned
+	if err := w.manager.UpdateStatus(job.ID, result.Status, &now, &completedTime, result.Result, errMsg); err != nil {
 		w.logger.Error("failed to update job status", "job_id", job.ID, "error", err)
 	}
 }

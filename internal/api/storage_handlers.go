@@ -17,9 +17,8 @@ import (
 //
 // swagger:model Disk
 type Disk struct {
-	DiskID     string      `json:"disk_id"`
 	SysPath    string      `json:"sys_path"`
-	KName      string      `json:"kname"`
+	ID         string      `json:"id,omitempty"` // Stable device identifier (e.g., usb-SanDisk_Cruzer_4C8F9A1B)
 	Model      string      `json:"model,omitempty"`
 	Serial     string      `json:"serial,omitempty"`
 	WWN        string      `json:"wwn,omitempty"`
@@ -77,7 +76,7 @@ func (e *apiEnv) ListDisks(w http.ResponseWriter, r *http.Request) {
 // @Description Returns detailed metadata for a single disk
 // @Tags storage
 // @Produce json
-// @Param disk path string true "Disk ID (kname or disk_id)"
+// @Param disk path string true "Disk sys_path or device name"
 // @Success 200 {object} api.Disk
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
@@ -92,7 +91,7 @@ func (e *apiEnv) GetDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, d := range disks {
-		if d.KName == id || d.DiskID == id {
+		if d.SysPath == id || strings.HasSuffix(d.SysPath, id) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(d)
 			return
@@ -120,8 +119,6 @@ func enumerateDisks(ctx context.Context) ([]Disk, error) {
 		if t, ok := dev["type"].(string); ok && t == "disk" {
 			d := Disk{}
 			if k, ok := dev["kname"].(string); ok {
-				d.KName = k
-				d.DiskID = k
 				d.SysPath = "/dev/" + k
 			}
 			if m, ok := dev["model"].(string); ok {
@@ -174,13 +171,44 @@ func enumerateDisks(ctx context.Context) ([]Disk, error) {
 					}
 				}
 			}
-			if bootDisk != "" && d.KName == bootDisk {
+			// Check boot disk by sys_path suffix (e.g., "sda" from "/dev/sda")
+			if bootDisk != "" && strings.HasSuffix(d.SysPath, bootDisk) {
 				d.Boot = true
 			}
+			// Discover stable by-id identifier
+			d.ID = discoverByIDPath(ctx, d.SysPath)
 			disks = append(disks, d)
 		}
 	}
 	return disks, nil
+}
+
+// discoverByIDPath finds the /dev/disk/by-id/ symlink for a given device path
+// Returns just the symlink name (e.g., usb-SanDisk_Cruzer_4C8F9A1B) or empty string if not found
+func discoverByIDPath(ctx context.Context, sysPath string) string {
+	// List all symlinks in /dev/disk/by-id/ and find which ones point to our device
+	cmd := exec.CommandContext(ctx, "find", "/dev/disk/by-id", "-type", "l")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Resolve the symlink and check if it points to our device
+		resolveCmd := exec.CommandContext(ctx, "readlink", "-f", line)
+		target, err := resolveCmd.Output()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(target)) == sysPath {
+			// Return just the symlink name, not the full path
+			return filepath.Base(line)
+		}
+	}
+	return ""
 }
 
 // detectBootDisk attempts to find the parent disk kname that contains '/'

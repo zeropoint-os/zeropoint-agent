@@ -185,9 +185,6 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/storage/disks", env.ListDisks).Methods(http.MethodGet)
 	r.HandleFunc("/api/storage/disks/{disk}", env.GetDisk).Methods(http.MethodGet)
 
-	// Storage modification endpoints
-	r.HandleFunc("/api/storage/disks/format", queueHandlers.FormatNow).Methods(http.MethodPost)
-
 	// Web UI - serve static files as fallback after API routes
 	webDir := getWebDir()
 	if webDir != "" {
@@ -204,6 +201,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	worker := queue.NewWorker(queueManager, jobExecutor, logger)
 	worker.Start(context.Background())
 	logger.Info("job worker started")
+
+	// Process any boot-time format operations that may have completed
+	if err := queueHandlers.ProcessStorageResults(); err != nil {
+		logger.Error("failed to process boot-time format results", "error", err)
+	}
 
 	// Return router with middleware
 	return routerWithMiddleware, nil

@@ -1,14 +1,12 @@
 package queue
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -16,6 +14,7 @@ import (
 	"zeropoint-agent/internal/catalog"
 
 	"github.com/gorilla/mux"
+	"gopkg.in/ini.v1"
 )
 
 // Handlers handles HTTP requests for the job queue API
@@ -103,9 +102,7 @@ type EnqueueBundleUninstallRequest struct {
 //
 // swagger:model EnqueueFormatRequest
 type EnqueueFormatRequest struct {
-	DiskID    string   `json:"disk_id"`
-	SysPath   string   `json:"sys_path"`
-	ByID      string   `json:"by_id,omitempty"`
+	ID        string   `json:"id"` // Stable device identifier (e.g., usb-SanDisk_Cruzer_4C8F9A1B)
 	DependsOn []string `json:"depends_on,omitempty"`
 	// PartitionLayout was reserved for future explicit layouts; not implemented currently.
 	Filesystem                string                 `json:"filesystem" example:"ext4"`
@@ -121,12 +118,12 @@ type EnqueueFormatRequest struct {
 // EnqueueFormat handles POST /jobs/enqueue_format
 // @ID enqueueFormat
 // @Summary Enqueue a disk format job
-// @Description Enqueue a disk format operation to be executed by the job worker. Progress will be recorded to job events. Requires `confirm:true` and the same safety rules as the immediate formatter.
+// @Description Enqueue a disk format operation to be executed at boot time. The format will be staged in /etc/zeropoint/storage.pending.ini and executed by the systemd boot service. If a format job already exists for this device ID, it will be cancelled and replaced. Requires `confirm:true`.
 // @Tags jobs
 // @Accept json
 // @Produce json
 // @Param body body EnqueueFormatRequest true "Format request"
-// @Success 201 {object} JobResponse "Job enqueued successfully"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
 // @Failure 400 {string} string "Bad request"
 // @Router /jobs/enqueue_format [post]
 func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
@@ -136,8 +133,8 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SysPath == "" {
-		http.Error(w, "sys_path is required", http.StatusBadRequest)
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
 
@@ -147,19 +144,32 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build command args map
+	// Cancel any existing format_disk job for this device ID
+	// (the new request supersedes the old one)
+	allJobs, err := h.manager.ListAll()
+	if err == nil {
+		for _, job := range allJobs {
+			if job.Command.Type == CmdFormatDisk && job.Status == StatusQueued {
+				if jobID, ok := job.Command.Args["id"].(string); ok && jobID == req.ID {
+					// Cancel the old job
+					now := time.Now().UTC()
+					_ = h.manager.UpdateStatus(job.ID, StatusCancelled, nil, &now, nil, "Superseded by newer format request for same device")
+					_ = h.manager.AppendEvent(job.ID, Event{
+						Timestamp: time.Now().UTC(),
+						Type:      "info",
+						Message:   "Cancelled: superseded by newer format request for device " + req.ID,
+					})
+				}
+			}
+		}
+	}
+
+	// Create a pending format job in the job queue
 	args := map[string]interface{}{
-		"disk_id":                      req.DiskID,
-		"sys_path":                     req.SysPath,
-		"by_id":                        req.ByID,
-		"filesystem":                   req.Filesystem,
-		"label":                        req.Label,
-		"wipefs":                       req.Wipefs,
-		"luks":                         req.Luks,
-		"lvm":                          req.Lvm,
-		"confirm":                      req.Confirm,
-		"confirm_fixed_disk_operation": req.ConfirmFixedDiskOperation,
-		"auto_partition":               req.AutoPartition,
+		"id":         req.ID,
+		"filesystem": req.Filesystem,
+		"label":      req.Label,
+		"status":     "pending",
 	}
 
 	cmd := Command{
@@ -174,6 +184,30 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record initial event
+	_ = h.manager.AppendEvent(jobID, Event{
+		Timestamp: time.Now().UTC(),
+		Type:      "step",
+		Message:   "Format operation staged for boot-time execution for device " + req.ID,
+	})
+
+	// Write to /etc/zeropoint/storage.pending.ini
+	if err := writeStoragePendingINI(&req, jobID); err != nil {
+		h.logger.Error("failed to write storage.pending.ini", "error", err)
+		// Still return success for job creation, but record the error
+		_ = h.manager.AppendEvent(jobID, Event{
+			Timestamp: time.Now().UTC(),
+			Type:      "warning",
+			Message:   "Failed to write staging file: " + err.Error() + " (systemd service will not execute this operation)",
+		})
+	} else {
+		_ = h.manager.AppendEvent(jobID, Event{
+			Timestamp: time.Now().UTC(),
+			Type:      "log",
+			Message:   "Staged in /etc/zeropoint/storage.pending.ini - will execute on reboot",
+		})
+	}
+
 	job, err := h.manager.Get(jobID)
 	if err != nil {
 		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
@@ -186,228 +220,219 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// helper to stream SSE event
-func sseEvent(w http.ResponseWriter, kind, msg string) error {
-	_, err := io.WriteString(w, "event: job:event\n")
+// writeStoragePendingINI writes a format operation to /etc/zeropoint/storage.pending.ini
+// The file format is INI with [id] sections containing all format configuration parameters
+// Uses stable device id (e.g., usb-SanDisk_Cruzer_...) as section key since it survives reboots
+func writeStoragePendingINI(req *EnqueueFormatRequest, jobID string) error {
+	configDir := "/etc/zeropoint"
+	configFile := filepath.Join(configDir, "storage.pending.ini")
+
+	// Create config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Load existing INI or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var loadErr error
+		cfg, loadErr = ini.Load(configFile)
+		if loadErr != nil {
+			// If we can't load, start fresh (this overwrites any corrupt file)
+			cfg = ini.Empty()
+		}
+	}
+
+	// Create or update section for this disk (use stable id as section name)
+	section, err := cfg.NewSection(req.ID)
 	if err != nil {
-		return err
-	}
-	payload := map[string]string{"kind": kind, "msg": msg}
-	b, _ := json.Marshal(payload)
-	_, err = io.WriteString(w, "data: "+string(b)+"\n\n")
-	if err != nil {
-		return err
-	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return nil
-}
-
-// runCmdStream runs a command and streams stdout/stderr as SSE logs
-func runCmdStream(ctx context.Context, w http.ResponseWriter, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
-		sseEvent(w, "error", "failed to start command: "+err.Error())
-		return err
+		// Section might already exist, get it instead
+		section, _ = cfg.GetSection(req.ID)
 	}
 
-	stream := func(r io.Reader, streamName string) {
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			sseEvent(w, "log", streamName+": "+scanner.Text())
-		}
+	// Store all configuration parameters
+	section.Key("filesystem").SetValue(req.Filesystem)
+	if req.Label != "" {
+		section.Key("label").SetValue(req.Label)
 	}
-	go stream(stdout, "stdout")
-	go stream(stderr, "stderr")
-
-	if err := cmd.Wait(); err != nil {
-		sseEvent(w, "error", "command failed: "+err.Error())
-		return err
-	}
-	return nil
-}
-
-// FormatNow handles POST /api/storage/disks/format (immediate formatting with streaming)
-// @ID formatDiskNow
-// @Summary Format disk or partition now (streams events)
-// @Description Immediately run destructive formatting operations on a disk or partition. Streams progress as server-sent events (text/event-stream). Requires `confirm:true`. If targeting a whole-disk, include `auto_partition:true` to create a single GPT partition.
-// @Tags storage
-// @Accept json
-// @Produce text/event-stream
-// @Param body body EnqueueFormatRequest true "Format request"
-// @Success 200 {string} string "Event stream"
-// @Failure 400 {object} map[string]string
-// @Router /api/storage/disks/format [post]
-// Note: This endpoint performs destructive operations. Use carefully.
-func (h *Handlers) FormatNow(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueFormatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.SysPath == "" {
-		http.Error(w, "sys_path is required", http.StatusBadRequest)
-		return
-	}
-
-	// Require explicit confirmation for destructive ops
-	if !req.Confirm {
-		http.Error(w, "confirm must be true for destructive operation", http.StatusBadRequest)
-		return
-	}
-
-	// If device transport is not USB, require an additional explicit confirmation
-	// to avoid accidental formatting of fixed/internal drives.
-	// Query lsblk for transport of the device
-	transport := ""
-	if req.SysPath != "" {
-		ctxT, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TRAN", req.SysPath)
-		out, err := cmd.Output()
-		if err == nil {
-			transport = strings.TrimSpace(string(out))
-		}
-	}
-
-	if transport != "usb" && transport != "" && !req.ConfirmFixedDiskOperation {
-		http.Error(w, "confirm_fixed_disk_operation must be true for non-USB devices", http.StatusBadRequest)
-		return
-	}
-
-	// Determine device type (disk vs partition). If the path is a whole disk and
-	// neither auto-partition nor explicit partition_layout are provided, refuse.
-	devType := ""
-	{
-		ctxT, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctxT, "lsblk", "-dn", "-o", "TYPE", req.SysPath)
-		out, err := cmd.Output()
-		if err != nil {
-			http.Error(w, "unable to determine device type or device not found", http.StatusBadRequest)
-			return
-		}
-		devType = strings.TrimSpace(string(out))
-		if devType == "" {
-			http.Error(w, "unable to determine device type for path: "+req.SysPath, http.StatusBadRequest)
-			return
-		}
-	}
-
-	if devType == "disk" && !req.AutoPartition {
-		http.Error(w, "refusing to format whole-disk without explicit partition intent (auto_partition)", http.StatusBadRequest)
-		return
-	}
-
-	// Setup SSE
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-
-	ctx := r.Context()
-
-	// Step 1: dry-run wipefs
-	sseEvent(w, "step", "dry-run: wipefs -n")
-	if err := runCmdStream(ctx, w, "wipefs", "-n", req.SysPath); err != nil {
-		sseEvent(w, "final", "failed dry-run: "+err.Error())
-		return
-	}
-
-	// Step 2: perform wipefs
 	if req.Wipefs {
-		sseEvent(w, "step", "running: wipefs -a")
-		if err := runCmdStream(ctx, w, "wipefs", "-a", req.SysPath); err != nil {
-			sseEvent(w, "final", "wipefs failed: "+err.Error())
-			return
+		section.Key("wipefs").SetValue("true")
+	}
+	if req.AutoPartition {
+		section.Key("auto_partition").SetValue("true")
+	}
+	if req.ConfirmFixedDiskOperation {
+		section.Key("confirm_fixed_disk_operation").SetValue("true")
+	}
+	if len(req.Luks) > 0 {
+		luksJSON, _ := json.Marshal(req.Luks)
+		section.Key("luks").SetValue(string(luksJSON))
+	}
+	if len(req.Lvm) > 0 {
+		lvmJSON, _ := json.Marshal(req.Lvm)
+		section.Key("lvm").SetValue(string(lvmJSON))
+	}
+	section.Key("request_id").SetValue(jobID)
+	section.Key("timestamp").SetValue(time.Now().UTC().Format(time.RFC3339))
+
+	// Write file with restricted permissions
+	if err := cfg.SaveTo(configFile); err != nil {
+		return fmt.Errorf("failed to write storage.pending.ini: %w", err)
+	}
+
+	// Ensure proper file permissions (root-readable only)
+	if err := os.Chmod(configFile, 0600); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return nil
+}
+
+// StorageOperationResult represents a completed format operation from storage.ini
+type StorageOperationResult struct {
+	DiskID    string
+	Status    string // "success" or "error"
+	Message   string
+	RequestID string
+	Timestamp string
+}
+
+// readStorageResultsINI reads the /etc/zeropoint/storage.ini file and returns completed operations
+// Returns slice of StorageOperationResult for each disk in the file
+func readStorageResultsINI() ([]StorageOperationResult, error) {
+	configFile := "/etc/zeropoint/storage.ini"
+
+	// If file doesn't exist, no completed operations yet
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return []StorageOperationResult{}, nil
+	}
+
+	cfg, err := ini.Load(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage.ini: %w", err)
+	}
+
+	var results []StorageOperationResult
+	for _, section := range cfg.Sections() {
+		if section.Name() == ini.DefaultSection {
+			continue
+		}
+
+		result := StorageOperationResult{
+			DiskID:    section.Name(),
+			Status:    section.Key("status").String(),
+			Message:   section.Key("message").String(),
+			RequestID: section.Key("request_id").String(),
+			Timestamp: section.Key("timestamp").String(),
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// readStoragePendingINI reads the /etc/zeropoint/storage.pending.ini file and returns pending operations
+func readStoragePendingINI() (map[string]string, error) {
+	configFile := "/etc/zeropoint/storage.pending.ini"
+
+	// If file doesn't exist, no pending operations
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return make(map[string]string), nil
+	}
+
+	cfg, err := ini.Load(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage.pending.ini: %w", err)
+	}
+
+	pending := make(map[string]string)
+	for _, section := range cfg.Sections() {
+		if section.Name() == ini.DefaultSection {
+			continue
+		}
+		requestID := section.Key("request_id").String()
+		if requestID != "" {
+			pending[requestID] = section.Name() // map requestID -> diskID
 		}
 	}
-	// If auto-partition requested and we're operating on a whole disk, create a single GPT partition
-	targetPath := req.SysPath
-	if req.AutoPartition && devType == "disk" {
-		sseEvent(w, "step", "creating GPT partition table (zap)")
-		if err := runCmdStream(ctx, w, "sgdisk", "--zap-all", req.SysPath); err != nil {
-			sseEvent(w, "final", "sgdisk zap failed: "+err.Error())
-			return
+
+	return pending, nil
+}
+
+// ProcessStorageResults processes completed format operations and updates job status
+// This is called during agent startup to mark boot-time format jobs as complete/error
+// Also logs any operations that are still pending (haven't executed yet)
+func (h *Handlers) ProcessStorageResults() error {
+	// Get completed results
+	results, err := readStorageResultsINI()
+	if err != nil {
+		h.logger.Error("failed to read storage results", "error", err)
+		return err
+	}
+
+	completedRequestIDs := make(map[string]bool)
+
+	for _, result := range results {
+		if result.RequestID == "" {
+			continue
 		}
 
-		sseEvent(w, "step", "creating single partition to fill disk")
-		if err := runCmdStream(ctx, w, "sgdisk", "--new=1:1MiB:0", "--typecode=1:8300", req.SysPath); err != nil {
-			sseEvent(w, "final", "sgdisk create failed: "+err.Error())
-			return
+		completedRequestIDs[result.RequestID] = true
+		h.logger.Info("processing storage result", "disk_id", result.DiskID, "request_id", result.RequestID, "status", result.Status)
+
+		// Add completion event to job
+		eventType := "final"
+		if result.Status == "error" {
+			eventType = "error"
 		}
 
-		// Inform kernel and udev
-		_ = runCmdStream(ctx, w, "partprobe", req.SysPath)
-		_ = runCmdStream(ctx, w, "udevadm", "settle")
+		event := Event{
+			Timestamp: time.Now().UTC(),
+			Type:      eventType,
+			Message:   fmt.Sprintf("Boot-time format execution: %s", result.Message),
+		}
 
-		// Detect first partition device
-		var partPath string
-		found := false
-		for i := 0; i < 10; i++ {
-			ctxT, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			cmd := exec.CommandContext(ctxT, "lsblk", "-ln", "-o", "KNAME,TYPE", req.SysPath)
-			out, _ := cmd.Output()
-			cancel()
-			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-			for _, ln := range lines {
-				f := strings.Fields(ln)
-				if len(f) >= 2 && f[1] == "part" {
-					partPath = "/dev/" + f[0]
-					found = true
-					break
-				}
+		if err := h.manager.AppendEvent(result.RequestID, event); err != nil {
+			h.logger.Error("failed to append completion event", "job_id", result.RequestID, "error", err)
+		}
+
+		// Mark job as complete or error using UpdateStatus
+		completionTime := time.Now().UTC()
+		jobResult := map[string]interface{}{
+			"disk_id": result.DiskID,
+			"status":  "completed_at_boot",
+			"message": result.Message,
+		}
+
+		if result.Status == "success" {
+			if err := h.manager.UpdateStatus(result.RequestID, StatusCompleted, nil, &completionTime, jobResult, ""); err != nil {
+				h.logger.Error("failed to mark job complete", "job_id", result.RequestID, "error", err)
 			}
-			if found {
-				break
+		} else if result.Status == "error" {
+			if err := h.manager.UpdateStatus(result.RequestID, StatusFailed, nil, &completionTime, jobResult, result.Message); err != nil {
+				h.logger.Error("failed to mark job error", "job_id", result.RequestID, "error", err)
 			}
-			time.Sleep(500 * time.Millisecond)
 		}
-		if !found {
-			sseEvent(w, "final", "failed to detect created partition device")
-			return
-		}
-		sseEvent(w, "step", "detected partition: "+partPath)
-		targetPath = partPath
 	}
 
-	// Step 3: mkfs on targetPath
-	fs := req.Filesystem
-	if fs == "" {
-		fs = "ext4"
-	}
-	sseEvent(w, "step", "mkfs: "+fs+" on "+targetPath)
-	if fs == "ext4" {
-		if err := runCmdStream(ctx, w, "mkfs.ext4", "-F", "-L", req.Label, targetPath); err != nil {
-			sseEvent(w, "final", "mkfs failed: "+err.Error())
-			return
+	// Log any operations that are still pending (in storage.pending.ini but not in storage.ini yet)
+	pending, err := readStoragePendingINI()
+	if err != nil {
+		h.logger.Warn("failed to read pending storage operations", "error", err)
+	} else if len(pending) > 0 {
+		for requestID, diskID := range pending {
+			if !completedRequestIDs[requestID] {
+				h.logger.Info("format operation still pending (will execute on next reboot)",
+					"request_id", requestID, "disk_id", diskID)
+			}
 		}
-	} else if fs == "xfs" {
-		if err := runCmdStream(ctx, w, "mkfs.xfs", "-f", "-L", req.Label, targetPath); err != nil {
-			sseEvent(w, "final", "mkfs failed: "+err.Error())
-			return
-		}
-	} else {
-		sseEvent(w, "final", "unsupported filesystem: "+fs)
-		return
 	}
 
-	// Step 4: report blkid on the target path and include device + UUID in final event
-	sseEvent(w, "step", "reading blkid on "+targetPath)
-	// Attempt to read UUID
-	blkidOut := ""
-	if out, err := exec.CommandContext(ctx, "blkid", "-s", "UUID", "-o", "value", targetPath).Output(); err == nil {
-		blkidOut = strings.TrimSpace(string(out))
+	if len(results) == 0 && len(pending) == 0 {
+		h.logger.Debug("no boot-time format operations to process")
 	}
 
-	finalMsg := fmt.Sprintf("{\"device\": \"%s\", \"uuid\": \"%s\"}", targetPath, blkidOut)
-	sseEvent(w, "final", finalMsg)
+	return nil
 }
 
 // EnqueueInstall handles POST /api/jobs/enqueue_install
