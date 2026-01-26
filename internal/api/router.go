@@ -182,6 +182,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/jobs/enqueue_format", queueHandlers.EnqueueFormat).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_create_mount", queueHandlers.EnqueueCreateMount).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_delete_mount", queueHandlers.EnqueueDeleteMount).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_edit_system_path", queueHandlers.EnqueueEditSystemPath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_add_user_path", queueHandlers.EnqueueAddUserPath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_delete_user_path", queueHandlers.EnqueueDeleteUserPath).Methods(http.MethodPost)
 
 	// Storage discovery endpoints
 	r.HandleFunc("/api/storage/disks", env.ListDisks).Methods(http.MethodGet)
@@ -190,6 +193,10 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	// Storage mount management endpoints (read-only - writes go through queue)
 	r.HandleFunc("/api/storage/mounts", env.ListMounts).Methods(http.MethodGet)
 	r.HandleFunc("/api/storage/mounts/{id}", env.GetMount).Methods(http.MethodGet)
+
+	// Path management endpoints (read-only - writes go through queue)
+	r.HandleFunc("/api/storage/paths", env.ListPaths).Methods(http.MethodGet)
+	r.HandleFunc("/api/storage/paths/{id}", env.GetPath).Methods(http.MethodGet)
 
 	// Web UI - serve static files as fallback after API routes
 	webDir := getWebDir()
@@ -216,6 +223,11 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	// Process any boot-time mount operations that may have completed
 	if err := queueHandlers.ProcessMountsResults(); err != nil {
 		logger.Error("failed to process boot-time mount results", "error", err)
+	}
+
+	// Process any boot-time path operations that may have completed
+	if err := queueHandlers.ProcessPathsResults(); err != nil {
+		logger.Error("failed to process boot-time path results", "error", err)
 	}
 
 	// Return router with middleware

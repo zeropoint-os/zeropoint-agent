@@ -51,6 +51,9 @@ const (
 	CmdFormatDisk      CommandType = "format_disk"
 	CmdCreateMount     CommandType = "create_mount"
 	CmdDeleteMount     CommandType = "delete_mount"
+	CmdEditSystemPath  CommandType = "edit_system_path"
+	CmdAddUserPath     CommandType = "add_user_path"
+	CmdDeleteUserPath  CommandType = "delete_user_path"
 )
 
 // CommandExecutor is the interface all command types must implement
@@ -126,6 +129,21 @@ func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, expo
 		}
 	case CmdDeleteMount:
 		return &DeleteMountExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	case CmdEditSystemPath:
+		return &EditSystemPathExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	case CmdAddUserPath:
+		return &AddUserPathExecutor{
+			cmd:    c,
+			logger: logger,
+		}
+	case CmdDeleteUserPath:
+		return &DeleteUserPathExecutor{
 			cmd:    c,
 			logger: logger,
 		}

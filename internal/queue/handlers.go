@@ -1085,3 +1085,120 @@ func (h *Handlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
 }
+
+// EnqueueEditSystemPath enqueues a request to edit a system path.
+// System paths use zp_* naming convention and trigger boot-time data migration.
+func (h *Handlers) EnqueueEditSystemPath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueEditSystemPathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.PathID == "" || req.NewPath == "" {
+		http.Error(w, "path_id and new_path are required", http.StatusBadRequest)
+		return
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdEditSystemPath,
+		Args: map[string]interface{}{
+			"path_id":  req.PathID,
+			"new_path": req.NewPath,
+		},
+	}, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue edit system path job", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueAddUserPath enqueues a request to add a user path.
+// User paths are applied immediately and do not trigger boot-time processing.
+func (h *Handlers) EnqueueAddUserPath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueAddUserPathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.Path == "" || req.MountID == "" {
+		http.Error(w, "name, path, and mount_id are required", http.StatusBadRequest)
+		return
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdAddUserPath,
+		Args: map[string]interface{}{
+			"name":        req.Name,
+			"path":        req.Path,
+			"mount_id":    req.MountID,
+			"description": req.Description,
+		},
+	}, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue add user path job", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueDeleteUserPath enqueues a request to delete a path.
+// System paths (zp_* prefix) cannot be deleted.
+func (h *Handlers) EnqueueDeleteUserPath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueDeleteUserPathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.PathID == "" {
+		http.Error(w, "path_id is required", http.StatusBadRequest)
+		return
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdDeleteUserPath,
+		Args: map[string]interface{}{
+			"path_id": req.PathID,
+		},
+	}, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue delete path job", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
+}
