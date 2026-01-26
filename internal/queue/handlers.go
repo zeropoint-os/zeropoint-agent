@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -15,6 +14,12 @@ import (
 
 	"github.com/gorilla/mux"
 	"gopkg.in/ini.v1"
+)
+
+// Storage configuration file paths
+const (
+	DisksPendingConfigFile = "/etc/zeropoint/disks.pending.ini"
+	DisksConfigFile        = "/etc/zeropoint/disks.ini"
 )
 
 // Handlers handles HTTP requests for the job queue API
@@ -118,7 +123,7 @@ type EnqueueFormatRequest struct {
 // EnqueueFormat handles POST /jobs/enqueue_format
 // @ID enqueueFormat
 // @Summary Enqueue a disk format job
-// @Description Enqueue a disk format operation to be executed at boot time. The format will be staged in /etc/zeropoint/storage.pending.ini and executed by the systemd boot service. If a format job already exists for this device ID, it will be cancelled and replaced. Requires `confirm:true`.
+// @Description Enqueue a disk format operation to be executed at boot time. The format will be staged in /etc/zeropoint/disks.pending.ini and executed by the systemd boot service. If a format job already exists for this device ID, it will be cancelled and replaced. Requires `confirm:true`.
 // @Tags jobs
 // @Accept json
 // @Produce json
@@ -191,9 +196,9 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		Message:   "Format operation staged for boot-time execution for device " + req.ID,
 	})
 
-	// Write to /etc/zeropoint/storage.pending.ini
+	// Write to /etc/zeropoint/disks.pending.ini
 	if err := writeStoragePendingINI(&req, jobID); err != nil {
-		h.logger.Error("failed to write storage.pending.ini", "error", err)
+		h.logger.Error("failed to write disks.pending.ini", "error", err)
 		// Still return success for job creation, but record the error
 		_ = h.manager.AppendEvent(jobID, Event{
 			Timestamp: time.Now().UTC(),
@@ -204,7 +209,7 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		_ = h.manager.AppendEvent(jobID, Event{
 			Timestamp: time.Now().UTC(),
 			Type:      "log",
-			Message:   "Staged in /etc/zeropoint/storage.pending.ini - will execute on reboot",
+			Message:   "Staged in " + DisksPendingConfigFile + " - will execute on reboot",
 		})
 	}
 
@@ -220,12 +225,12 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// writeStoragePendingINI writes a format operation to /etc/zeropoint/storage.pending.ini
+// writeStoragePendingINI writes a format operation to /etc/zeropoint/disks.pending.ini
 // The file format is INI with [id] sections containing all format configuration parameters
 // Uses stable device id (e.g., usb-SanDisk_Cruzer_...) as section key since it survives reboots
 func writeStoragePendingINI(req *EnqueueFormatRequest, jobID string) error {
 	configDir := "/etc/zeropoint"
-	configFile := filepath.Join(configDir, "storage.pending.ini")
+	configFile := DisksPendingConfigFile
 
 	// Create config directory if it doesn't exist
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -277,7 +282,7 @@ func writeStoragePendingINI(req *EnqueueFormatRequest, jobID string) error {
 
 	// Write file with restricted permissions
 	if err := cfg.SaveTo(configFile); err != nil {
-		return fmt.Errorf("failed to write storage.pending.ini: %w", err)
+		return fmt.Errorf("failed to write disks.pending.ini: %w", err)
 	}
 
 	// Ensure proper file permissions (root-readable only)
@@ -288,7 +293,7 @@ func writeStoragePendingINI(req *EnqueueFormatRequest, jobID string) error {
 	return nil
 }
 
-// StorageOperationResult represents a completed format operation from storage.ini
+// StorageOperationResult represents a completed format operation from disks.ini
 type StorageOperationResult struct {
 	DiskID    string
 	Status    string // "success" or "error"
@@ -297,10 +302,10 @@ type StorageOperationResult struct {
 	Timestamp string
 }
 
-// readStorageResultsINI reads the /etc/zeropoint/storage.ini file and returns completed operations
+// readStorageResultsINI reads the /etc/zeropoint/disks.ini file and returns completed operations
 // Returns slice of StorageOperationResult for each disk in the file
 func readStorageResultsINI() ([]StorageOperationResult, error) {
-	configFile := "/etc/zeropoint/storage.ini"
+	configFile := DisksConfigFile
 
 	// If file doesn't exist, no completed operations yet
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
@@ -309,7 +314,7 @@ func readStorageResultsINI() ([]StorageOperationResult, error) {
 
 	cfg, err := ini.Load(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read storage.ini: %w", err)
+		return nil, fmt.Errorf("failed to read disks.ini: %w", err)
 	}
 
 	var results []StorageOperationResult
@@ -331,9 +336,9 @@ func readStorageResultsINI() ([]StorageOperationResult, error) {
 	return results, nil
 }
 
-// readStoragePendingINI reads the /etc/zeropoint/storage.pending.ini file and returns pending operations
+// readStoragePendingINI reads the /etc/zeropoint/disks.pending.ini file and returns pending operations
 func readStoragePendingINI() (map[string]string, error) {
-	configFile := "/etc/zeropoint/storage.pending.ini"
+	configFile := DisksPendingConfigFile
 
 	// If file doesn't exist, no pending operations
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
@@ -342,7 +347,7 @@ func readStoragePendingINI() (map[string]string, error) {
 
 	cfg, err := ini.Load(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read storage.pending.ini: %w", err)
+		return nil, fmt.Errorf("failed to read disks.pending.ini: %w", err)
 	}
 
 	pending := make(map[string]string)
@@ -415,7 +420,7 @@ func (h *Handlers) ProcessStorageResults() error {
 		}
 	}
 
-	// Log any operations that are still pending (in storage.pending.ini but not in storage.ini yet)
+	// Log any operations that are still pending (in disks.pending.ini but not in disks.ini yet)
 	pending, err := readStoragePendingINI()
 	if err != nil {
 		h.logger.Warn("failed to read pending storage operations", "error", err)
