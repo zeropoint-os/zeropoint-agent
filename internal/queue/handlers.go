@@ -804,7 +804,7 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Enqueue create_link jobs for each link in the bundle
-	if bundle.Links != nil && len(bundle.Links) > 0 {
+	if len(bundle.Links) > 0 {
 		for linkID, linkConfig := range bundle.Links {
 			// Convert bundle link format to module format expected by create_link
 			modules := make(map[string]map[string]interface{})
@@ -833,7 +833,7 @@ func (h *Handlers) EnqueueBundleInstall(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Enqueue create_exposure jobs for each exposure in the bundle
-	if bundle.Exposures != nil && len(bundle.Exposures) > 0 {
+	if len(bundle.Exposures) > 0 {
 		for exposureID, exposureConfig := range bundle.Exposures {
 			exposureJobID, err := h.manager.Enqueue(Command{
 				Type: CmdCreateExposure,

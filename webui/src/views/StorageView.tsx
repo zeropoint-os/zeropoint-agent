@@ -103,6 +103,21 @@ export default function StorageView() {
     return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
   };
 
+  const getDiskNameById = (diskId?: string): string => {
+    if (!diskId) return 'Unknown';
+    const disk = disks.find(d => d.id === diskId);
+    if (!disk) return diskId;
+    // Prefer model name, fall back to vendor + size
+    if (disk.model && disk.model.trim()) {
+      return disk.model.trim();
+    }
+    if (disk.vendor) {
+      const size = formatBytes(disk.sizeBytes);
+      return `${disk.vendor.trim()} ${size}`;
+    }
+    return diskId;
+  };
+
   return (
     <div className="view-container">
       <div className="view-header">
@@ -255,7 +270,7 @@ export default function StorageView() {
                     <div>
                       <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{m.mountPoint}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-                        {m.filesystem} • {m.type}
+                        {getDiskNameById(m.diskId)} • {m.type}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

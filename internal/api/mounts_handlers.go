@@ -17,7 +17,7 @@ import (
 type Mount struct {
 	ID         string `json:"id"`          // Unique identifier for the mount (section name in ini)
 	MountPoint string `json:"mount_point"` // Where filesystem is mounted (e.g., /)
-	Filesystem string `json:"filesystem"`  // Device or virtual filesystem identifier
+	DiskID     string `json:"disk_id"`     // Stable disk ID that this mount uses (e.g., nvme-eui.0025385c2140105d)
 	Type       string `json:"type"`        // Filesystem type (ext4, tmpfs, overlay, etc.)
 	Status     string `json:"status"`      // "active" or "pending"
 }
@@ -27,7 +27,7 @@ type Mount struct {
 // swagger:model CreateMountRequest
 type CreateMountRequest struct {
 	MountPoint string `json:"mount_point"` // Where filesystem is mounted
-	Filesystem string `json:"filesystem"`  // Device or virtual filesystem identifier
+	DiskID     string `json:"disk_id"`     // Stable disk ID (from /api/storage/disks)
 	Type       string `json:"type"`        // Filesystem type
 }
 
@@ -61,7 +61,7 @@ func readMountsINI() ([]Mount, error) {
 		mount := Mount{
 			ID:         section.Name(),
 			MountPoint: section.Key("mount_point").String(),
-			Filesystem: section.Key("filesystem").String(),
+			DiskID:     section.Key("disk_id").String(),
 			Type:       section.Key("type").String(),
 			Status:     "active",
 		}
@@ -94,7 +94,7 @@ func readMountsPendingINI() ([]Mount, error) {
 		mount := Mount{
 			ID:         section.Name(),
 			MountPoint: section.Key("mount_point").String(),
-			Filesystem: section.Key("filesystem").String(),
+			DiskID:     section.Key("disk_id").String(),
 			Type:       section.Key("type").String(),
 			Status:     "pending",
 		}
@@ -137,7 +137,7 @@ func (e *apiEnv) ListMounts(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range pendingMounts {
 		// Check if it's a deletion marker
-		if m.MountPoint == "" && m.Filesystem == "" {
+		if m.MountPoint == "" && m.DiskID == "" {
 			delete(mountMap, m.ID)
 		} else {
 			mountMap[m.ID] = m
@@ -227,8 +227,8 @@ func (e *apiEnv) CreateMount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.MountPoint == "" || req.Filesystem == "" || req.Type == "" {
-		http.Error(w, "mount_point, filesystem, and type are required", http.StatusBadRequest)
+	if req.MountPoint == "" || req.DiskID == "" || req.Type == "" {
+		http.Error(w, "mount_point, disk_id, and type are required", http.StatusBadRequest)
 		return
 	}
 
@@ -242,7 +242,7 @@ func (e *apiEnv) CreateMount(w http.ResponseWriter, r *http.Request) {
 	mount := Mount{
 		ID:         sanitizeID(req.MountPoint),
 		MountPoint: req.MountPoint,
-		Filesystem: req.Filesystem,
+		DiskID:     req.DiskID,
 		Type:       req.Type,
 		Status:     "pending",
 	}
@@ -277,8 +277,8 @@ func (e *apiEnv) UpdateMount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.MountPoint == "" || req.Filesystem == "" || req.Type == "" {
-		http.Error(w, "mount_point, filesystem, and type are required", http.StatusBadRequest)
+	if req.MountPoint == "" || req.DiskID == "" || req.Type == "" {
+		http.Error(w, "mount_point, disk_id, and type are required", http.StatusBadRequest)
 		return
 	}
 
@@ -292,7 +292,7 @@ func (e *apiEnv) UpdateMount(w http.ResponseWriter, r *http.Request) {
 	mount := Mount{
 		ID:         id,
 		MountPoint: req.MountPoint,
-		Filesystem: req.Filesystem,
+		DiskID:     req.DiskID,
 		Type:       req.Type,
 		Status:     "pending",
 	}

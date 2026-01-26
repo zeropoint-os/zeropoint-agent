@@ -167,7 +167,7 @@ func (h *LinkHandlers) CreateOrUpdateLink(w http.ResponseWriter, r *http.Request
 func (h *LinkHandlers) CreateLink(ctx context.Context, linkID string, modules map[string]map[string]interface{}, tags []string) error {
 	response := h.linkApps(linkID, modules, tags)
 	if !response.Success {
-		return fmt.Errorf(response.Message)
+		return fmt.Errorf("link validation failed: %s", response.Message)
 	}
 	return nil
 }
