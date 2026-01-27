@@ -24,7 +24,25 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback) E
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk id is required"}
 	}
 
-	// Check if this operation already completed in disks.ini
+	// For release operations: check if disk is still managed
+	// If it's no longer in disks.ini, the release completed successfully
+	if e.operation == "release" {
+		managedDisks, err := readDisksINI()
+		if err == nil {
+			if _, stillManaged := managedDisks[diskID]; !stillManaged {
+				// Disk is no longer in managed list - release completed
+				return ExecutionResult{
+					Status: StatusCompleted,
+					Result: map[string]interface{}{
+						"message": "Disk release completed",
+						"status":  "success",
+					},
+				}
+			}
+		}
+	}
+
+	// Check if this operation already completed in disks.ini (for manage operations)
 	existingResults, err := readStorageResultsINI()
 	if err == nil {
 		for _, result := range existingResults {

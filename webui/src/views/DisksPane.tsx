@@ -71,6 +71,19 @@ export default function DisksPane() {
     return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
   };
 
+  const handleRelease = async (diskId?: string) => {
+    if (!diskId) return;
+    try {
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+      await jobsApi.enqueueReleaseDisk({ queueEnqueueReleaseDiskRequest: { id: diskId } });
+      // Refetch disks after releasing
+      await fetchDisks();
+    } catch (err: unknown) {
+      console.error('Failed to release disk', err);
+      setError(err instanceof Error ? err.message : 'Failed to release disk');
+    }
+  };
+
   return (
     <div className="section-block">
       <div
@@ -239,8 +252,16 @@ export default function DisksPane() {
                   )}
 
                   {/* Actions */}
-                  <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end' }}>
-                    {/* Managed disks don't show format button */}
+                  <div style={{ marginTop: 'auto', display: 'flex', gap: '0.5rem' }}>
+                    {!d.boot && (
+                      <button
+                        className="button button-danger"
+                        onClick={() => handleRelease(d.id)}
+                        style={{ flex: 1 }}
+                      >
+                        Release
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
