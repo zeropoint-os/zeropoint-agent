@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/gorilla/mux"
+	"gopkg.in/ini.v1"
 )
 
 // Disk represents a block device exposed by the API
@@ -50,18 +52,52 @@ type lsblkOut struct {
 	Blockdevices []map[string]interface{} `json:"blockdevices"`
 }
 
+// readDisksINI reads the managed disks from /etc/zeropoint/disks.ini
+func readDisksINI() ([]Disk, error) {
+	configFile := "/etc/zeropoint/disks.ini"
+
+	// If file doesn't exist, return empty list (no managed disks)
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return []Disk{}, nil
+	}
+
+	cfg, err := ini.Load(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read disks.ini: %w", err)
+	}
+
+	var disks []Disk
+	for _, section := range cfg.Sections() {
+		if section.Name() == ini.DefaultSection {
+			continue
+		}
+
+		disk := Disk{
+			SysPath:   section.Key("sys_path").String(),
+			ID:        section.Name(), // Section name is the stable disk ID
+			Model:     section.Key("model").String(),
+			Serial:    section.Key("serial").String(),
+			WWN:       section.Key("wwn").String(),
+			Transport: section.Key("transport").String(),
+			Vendor:    section.Key("vendor").String(),
+		}
+		disks = append(disks, disk)
+	}
+
+	return disks, nil
+}
+
 // ListDisks handles GET /api/storage/disks
 //
-// @Summary List block devices
-// @Description Returns block devices detected on the system
+// @Summary List managed disks
+// @Description Returns disks configured in the system (from disks.ini)
 // @Tags storage
 // @Produce json
 // @Success 200 {array} api.Disk
 // @Failure 500 {object} map[string]string
 // @Router /api/storage/disks [get]
 func (e *apiEnv) ListDisks(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	disks, err := enumerateDisks(ctx)
+	disks, err := readDisksINI()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -72,11 +108,11 @@ func (e *apiEnv) ListDisks(w http.ResponseWriter, r *http.Request) {
 
 // GetDisk handles GET /api/storage/disks/{disk}
 //
-// @Summary Get a single block device
-// @Description Returns detailed metadata for a single disk
+// @Summary Get a single managed disk
+// @Description Returns detailed metadata for a single managed disk
 // @Tags storage
 // @Produce json
-// @Param disk path string true "Disk sys_path or device name"
+// @Param disk path string true "Disk ID"
 // @Success 200 {object} api.Disk
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
@@ -84,20 +120,39 @@ func (e *apiEnv) ListDisks(w http.ResponseWriter, r *http.Request) {
 func (e *apiEnv) GetDisk(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["disk"]
-	ctx := r.Context()
-	disks, err := enumerateDisks(ctx)
+	disks, err := readDisksINI()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	for _, d := range disks {
-		if d.SysPath == id || strings.HasSuffix(d.SysPath, id) {
+		if d.ID == id {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(d)
 			return
 		}
 	}
 	http.Error(w, "disk not found", http.StatusNotFound)
+}
+
+// DiscoverDisks handles GET /api/storage/disks/discover
+//
+// @Summary Discover available block devices
+// @Description Returns all block devices detected on the system (enumeration)
+// @Tags storage
+// @Produce json
+// @Success 200 {array} api.Disk
+// @Failure 500 {object} map[string]string
+// @Router /api/storage/disks/discover [get]
+func (e *apiEnv) DiscoverDisks(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	disks, err := enumerateDisks(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(disks)
 }
 
 // enumerateDisks calls lsblk and parses minimal device info

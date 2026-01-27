@@ -17,18 +17,9 @@ import (
 type Mount struct {
 	ID         string `json:"id"`          // Unique identifier for the mount (section name in ini)
 	MountPoint string `json:"mount_point"` // Where filesystem is mounted (e.g., /)
-	DiskID     string `json:"disk_id"`     // Stable disk ID that this mount uses (e.g., nvme-eui.0025385c2140105d)
-	Type       string `json:"type"`        // Filesystem type (ext4, tmpfs, overlay, etc.)
+	Disk       string `json:"disk"`        // Stable disk ID that this mount uses (e.g., nvme-eui.0025385c2140105d)
+	Partition  int    `json:"partition"`   // Partition number on the disk
 	Status     string `json:"status"`      // "active" or "pending"
-}
-
-// CreateMountRequest is the request to create/update a mount entry
-//
-// swagger:model CreateMountRequest
-type CreateMountRequest struct {
-	MountPoint string `json:"mount_point"` // Where filesystem is mounted
-	DiskID     string `json:"disk_id"`     // Stable disk ID (from /api/storage/disks)
-	Type       string `json:"type"`        // Filesystem type
 }
 
 // MountsResponse is the response for list mounts
@@ -61,9 +52,17 @@ func readMountsINI() ([]Mount, error) {
 		mount := Mount{
 			ID:         section.Name(),
 			MountPoint: section.Key("mount_point").String(),
-			DiskID:     section.Key("disk_id").String(),
-			Type:       section.Key("type").String(),
-			Status:     "active",
+			Disk:       section.Key("disk").String(),
+			Partition: func() int {
+				p := section.Key("partition").String()
+				if p != "" {
+					var part int
+					fmt.Sscanf(p, "%d", &part)
+					return part
+				}
+				return 0
+			}(),
+			Status: "active",
 		}
 		mounts = append(mounts, mount)
 	}
@@ -91,11 +90,17 @@ func readMountsPendingINI() ([]Mount, error) {
 			continue
 		}
 
+		diskID := section.Key("disk").String()
+		partitionStr := section.Key("partition").String()
+		var partition int
+		if partitionStr != "" {
+			fmt.Sscanf(partitionStr, "%d", &partition)
+		}
 		mount := Mount{
 			ID:         section.Name(),
 			MountPoint: section.Key("mount_point").String(),
-			DiskID:     section.Key("disk_id").String(),
-			Type:       section.Key("type").String(),
+			Disk:       diskID,
+			Partition:  partition,
 			Status:     "pending",
 		}
 		mounts = append(mounts, mount)
@@ -137,7 +142,7 @@ func (e *apiEnv) ListMounts(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range pendingMounts {
 		// Check if it's a deletion marker
-		if m.MountPoint == "" && m.DiskID == "" {
+		if m.MountPoint == "" && m.Disk == "" {
 			delete(mountMap, m.ID)
 		} else {
 			mountMap[m.ID] = m
@@ -204,101 +209,6 @@ func (e *apiEnv) GetMount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "mount not found", http.StatusNotFound)
-}
-
-// CreateMount handles POST /api/storage/mounts
-// Creates or updates a mount entry - delegates to queue system which writes to pending file
-//
-// @Summary Create or update a mount
-// @Description Enqueues mount operation (executed at boot)
-// @Tags storage
-// @Accept json
-// @Produce json
-// @Param body body CreateMountRequest true "Mount details"
-// @Success 201 {object} Mount "Mount staged for boot-time execution"
-// @Failure 400 {string} string "Bad request"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/storage/mounts [post]
-func (e *apiEnv) CreateMount(w http.ResponseWriter, r *http.Request) {
-	var req CreateMountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Validate required fields
-	if req.MountPoint == "" || req.DiskID == "" || req.Type == "" {
-		http.Error(w, "mount_point, disk_id, and type are required", http.StatusBadRequest)
-		return
-	}
-
-	// Prevent root mount modification
-	if req.MountPoint == "/" {
-		http.Error(w, "cannot create or modify root mount point", http.StatusBadRequest)
-		return
-	}
-
-	// Return a pending mount response (actual job creation happens via queue endpoint)
-	mount := Mount{
-		ID:         sanitizeID(req.MountPoint),
-		MountPoint: req.MountPoint,
-		DiskID:     req.DiskID,
-		Type:       req.Type,
-		Status:     "pending",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(mount)
-}
-
-// UpdateMount handles PUT /api/storage/mounts/{id}
-// Updates an existing mount entry - delegates to queue system
-//
-// @Summary Update a mount
-// @Description Updates mount in pending (executed at boot)
-// @Tags storage
-// @Accept json
-// @Produce json
-// @Param id path string true "Mount ID"
-// @Param body body CreateMountRequest true "Updated mount details"
-// @Success 200 {object} Mount
-// @Failure 400 {string} string "Bad request"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/storage/mounts/{id} [put]
-func (e *apiEnv) UpdateMount(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	var req CreateMountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Validate required fields
-	if req.MountPoint == "" || req.DiskID == "" || req.Type == "" {
-		http.Error(w, "mount_point, disk_id, and type are required", http.StatusBadRequest)
-		return
-	}
-
-	// Prevent root mount modification
-	if req.MountPoint == "/" {
-		http.Error(w, "cannot create or modify root mount point", http.StatusBadRequest)
-		return
-	}
-
-	// Return the updated mount response (actual job creation happens via queue endpoint)
-	mount := Mount{
-		ID:         id,
-		MountPoint: req.MountPoint,
-		DiskID:     req.DiskID,
-		Type:       req.Type,
-		Status:     "pending",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(mount)
 }
 
 // DeleteMount handles DELETE /api/storage/mounts/{id}

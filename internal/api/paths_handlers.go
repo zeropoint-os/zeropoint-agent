@@ -47,7 +47,7 @@ type PathsResponse struct {
 	Paths []Path `json:"paths"`
 }
 
-// readPathsINI reads the completed paths.ini file (system paths)
+// readPathsINI reads the paths.ini file (all active paths)
 func readPathsINI() ([]Path, error) {
 	configFile := "/etc/zeropoint/paths.ini"
 
@@ -67,14 +67,15 @@ func readPathsINI() ([]Path, error) {
 			continue
 		}
 
+		pathID := section.Name()
 		path := Path{
-			ID:           section.Name(),
+			ID:           pathID,
 			Name:         section.Key("name").String(),
 			Path:         section.Key("path").String(),
 			MountID:      section.Key("mount_id").String(),
-			IsSystemPath: true,
+			IsSystemPath: section.Key("is_system_path").MustBool(false),
 			Status:       "active",
-			Description:  "",
+			Description:  section.Key("description").String(),
 		}
 		paths = append(paths, path)
 	}
@@ -82,7 +83,7 @@ func readPathsINI() ([]Path, error) {
 	return paths, nil
 }
 
-// readPathsPendingINI reads the pending paths.pending.ini file
+// readPathsPendingINI reads the paths.pending.ini file (pending operations for all paths)
 func readPathsPendingINI() ([]Path, error) {
 	configFile := "/etc/zeropoint/paths.pending.ini"
 
@@ -102,26 +103,20 @@ func readPathsPendingINI() ([]Path, error) {
 			continue
 		}
 
+		pathID := section.Name()
 		path := Path{
-			ID:           section.Name(),
+			ID:           pathID,
 			Name:         section.Key("name").String(),
 			Path:         section.Key("path").String(),
 			MountID:      section.Key("mount_id").String(),
-			IsSystemPath: true,
+			IsSystemPath: section.Key("is_system_path").MustBool(false),
 			Status:       "pending",
-			Description:  "",
+			Description:  section.Key("description").String(),
 		}
 		paths = append(paths, path)
 	}
 
 	return paths, nil
-}
-
-// readPathsJSON reads user-defined paths from data/paths.json
-func readPathsJSON() ([]Path, error) {
-	// For now, return empty list until user paths are implemented
-	// This will be populated by the paths queue handler
-	return []Path{}, nil
 }
 
 // ListPaths handles GET /api/storage/paths
@@ -142,15 +137,8 @@ func (e *apiEnv) ListPaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get pending system paths
+	// Get pending paths
 	pendingPaths, err := readPathsPendingINI()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get user paths
-	userPaths, err := readPathsJSON()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -163,17 +151,12 @@ func (e *apiEnv) ListPaths(w http.ResponseWriter, r *http.Request) {
 		pathMap[p.ID] = p
 	}
 	for _, p := range pendingPaths {
-		// Check if it's a deletion marker
+		// Check if it's a deletion marker (empty path)
 		if p.Path == "" {
 			delete(pathMap, p.ID)
 		} else {
 			pathMap[p.ID] = p
 		}
-	}
-
-	// Add user paths
-	for _, p := range userPaths {
-		pathMap[p.ID] = p
 	}
 
 	// Convert map back to slice
@@ -232,18 +215,6 @@ func (e *apiEnv) GetPath(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(p)
 			return
-		}
-	}
-
-	// Check user paths
-	userPaths, err := readPathsJSON()
-	if err == nil {
-		for _, p := range userPaths {
-			if p.ID == id {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(p)
-				return
-			}
 		}
 	}
 

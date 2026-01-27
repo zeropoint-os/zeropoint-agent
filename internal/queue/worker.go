@@ -14,11 +14,12 @@ type Executor interface {
 
 // Worker processes queued jobs in topological order
 type Worker struct {
-	manager  *Manager
-	executor Executor
-	logger   *slog.Logger
-	stop     chan struct{}
-	done     chan struct{}
+	manager          *Manager
+	executor         Executor
+	logger           *slog.Logger
+	stop             chan struct{}
+	done             chan struct{}
+	lastPendingCheck time.Time
 }
 
 // NewWorker creates a new job worker
@@ -60,6 +61,12 @@ func (w *Worker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.processNextJob(ctx)
+
+			// Every 5 seconds, also retry pending jobs that might have been completed externally
+			if time.Since(w.lastPendingCheck) > 5*time.Second {
+				w.retryPendingJobs(ctx)
+				w.lastPendingCheck = time.Now()
+			}
 		}
 	}
 }
@@ -200,5 +207,36 @@ func (w *Worker) executeJob(ctx context.Context, job *Job) {
 	// Update final status - use what the executor returned
 	if err := w.manager.UpdateStatus(job.ID, result.Status, &now, &completedTime, result.Result, errMsg); err != nil {
 		w.logger.Error("failed to update job status", "job_id", job.ID, "error", err)
+	}
+}
+
+// retryPendingJobs re-executes pending jobs to check if they've been completed externally
+// Only retries jobs whose dependencies are satisfied to maintain ordering
+func (w *Worker) retryPendingJobs(ctx context.Context) {
+	pending, err := w.manager.GetPending()
+	if err != nil {
+		w.logger.Error("failed to get pending jobs for retry", "error", err)
+		return
+	}
+
+	if len(pending) == 0 {
+		return
+	}
+
+	for _, job := range pending {
+		// Only retry disk, mount, and path operations (these can complete externally)
+		if job.Command.Type != CmdManageDisk && job.Command.Type != CmdReleaseDisk &&
+			job.Command.Type != CmdCreateMount && job.Command.Type != CmdDeleteMount &&
+			job.Command.Type != CmdEditPath && job.Command.Type != CmdAddPath && job.Command.Type != CmdDeletePath {
+			continue
+		}
+
+		// Check if dependencies are satisfied before retrying
+		if !w.dependenciesSatisfied(job) {
+			continue
+		}
+
+		// Re-execute the job - it will detect if operation is already complete
+		w.executeJob(ctx, job)
 	}
 }

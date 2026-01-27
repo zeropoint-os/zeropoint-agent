@@ -9,19 +9,60 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-// EditSystemPathExecutor executes system path edit commands
-type EditSystemPathExecutor struct {
-	cmd    Command
-	logger *slog.Logger
+// PathExecutor handles all path operations (edit, add, delete) for both system and user paths
+type PathExecutor struct {
+	cmd       Command
+	logger    *slog.Logger
+	operation string // "edit", "add", or "delete"
 }
 
-// Execute stages a system path edit in paths.pending.ini
-func (e *EditSystemPathExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+// Execute handles path operations, writing to paths.pending.ini with operation details
+// Retryable: if the operation was already completed by the boot service, returns StatusCompleted
+func (e *PathExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
 	pathID, ok := e.cmd.Args["path_id"].(string)
 	if !ok || pathID == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "path_id is required"}
 	}
 
+	// Check if this operation already completed in paths.ini
+	existingResults, err := readPathResultsINI()
+	if err == nil {
+		for _, result := range existingResults {
+			if result.PathID == pathID && result.Operation == e.operation {
+				// Operation already completed by boot service
+				if result.Status == "success" {
+					return ExecutionResult{
+						Status: StatusCompleted,
+						Result: map[string]interface{}{
+							"message": result.Message,
+							"status":  "success",
+						},
+					}
+				} else if result.Status == "error" {
+					return ExecutionResult{
+						Status:   StatusFailed,
+						ErrorMsg: result.Message,
+					}
+				}
+			}
+		}
+	}
+
+	isSystemPath := isSystemPath(pathID)
+
+	switch e.operation {
+	case "edit":
+		return e.executeEdit(pathID, isSystemPath, callback)
+	case "add":
+		return e.executeAdd(pathID, isSystemPath, callback)
+	case "delete":
+		return e.executeDelete(pathID, isSystemPath, callback)
+	default:
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: fmt.Sprintf("unknown operation: %s", e.operation)}
+	}
+}
+
+func (e *PathExecutor) executeEdit(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
 	newPath, ok := e.cmd.Args["new_path"].(string)
 	if !ok || newPath == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "new_path is required"}
@@ -32,14 +73,13 @@ func (e *EditSystemPathExecutor) Execute(ctx context.Context, callback ProgressC
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "old_path is required"}
 	}
 
-	// Notify progress
 	callback(ProgressUpdate{
 		Status:  "in_progress",
-		Message: fmt.Sprintf("Preparing to edit system path %s", pathID),
+		Message: fmt.Sprintf("Preparing to edit path %s", pathID),
 	})
 
-	// Write to paths.pending.ini
-	if err := writePathPendingINI(pathID, "edit", oldPath, newPath); err != nil {
+	// Write to paths.pending.ini with all path details
+	if err := writePathToPendingINI(pathID, "edit", oldPath, newPath, isSystemPath); err != nil {
 		e.logger.Error("failed to write paths.pending.ini", "error", err)
 		callback(ProgressUpdate{
 			Status: "failed",
@@ -53,32 +93,18 @@ func (e *EditSystemPathExecutor) Execute(ctx context.Context, callback ProgressC
 
 	callback(ProgressUpdate{
 		Status:  "pending",
-		Message: fmt.Sprintf("Path edit staged in %s for boot-time execution", PathsPendingConfigFile),
+		Message: fmt.Sprintf("Path edit staged in %s for boot-time processing", PathsPendingConfigFile),
 	})
 
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message":  fmt.Sprintf("Path %s edit staged, migration will occur at boot", pathID),
-			"old_path": oldPath,
-			"new_path": newPath,
+			"message": fmt.Sprintf("Path %s edit staged, will be executed at boot", pathID),
 		},
 	}
 }
 
-// AddUserPathExecutor executes user path addition commands
-type AddUserPathExecutor struct {
-	cmd    Command
-	logger *slog.Logger
-}
-
-// Execute adds a user path (no pending needed - immediate)
-func (e *AddUserPathExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
-	pathID, ok := e.cmd.Args["path_id"].(string)
-	if !ok || pathID == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "path_id is required"}
-	}
-
+func (e *PathExecutor) executeAdd(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
 	name, ok := e.cmd.Args["name"].(string)
 	if !ok || name == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "name is required"}
@@ -94,10 +120,14 @@ func (e *AddUserPathExecutor) Execute(ctx context.Context, callback ProgressCall
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "mount_id is required"}
 	}
 
-	// Notify progress
+	description, ok := e.cmd.Args["description"].(string)
+	if !ok {
+		description = ""
+	}
+
 	callback(ProgressUpdate{
 		Status:  "in_progress",
-		Message: fmt.Sprintf("Adding user path %s", pathID),
+		Message: fmt.Sprintf("Adding path %s", pathID),
 	})
 
 	// Validate mount_id exists in mounts.ini
@@ -112,67 +142,74 @@ func (e *AddUserPathExecutor) Execute(ctx context.Context, callback ProgressCall
 		}
 	}
 
-	// Write to paths data (handled by API layer, executor just validates)
-	// This is immediate, no pending
+	// Write to paths.pending.ini with operation details
+	if err := writePathToPendingINIFull(pathID, "add", path, mountID, name, description, isSystemPath); err != nil {
+		e.logger.Error("failed to write paths.pending.ini", "error", err)
+		callback(ProgressUpdate{
+			Status: "failed",
+			Error:  fmt.Sprintf("Failed to write path configuration: %v", err),
+		})
+		return ExecutionResult{
+			Status:   StatusFailed,
+			ErrorMsg: fmt.Sprintf("Failed to write path configuration: %v", err),
+		}
+	}
+
 	callback(ProgressUpdate{
-		Status:  "completed",
-		Message: fmt.Sprintf("User path %s added successfully", pathID),
+		Status:  "pending",
+		Message: fmt.Sprintf("Path %s staged in %s for boot-time execution", pathID, PathsPendingConfigFile),
 	})
 
 	return ExecutionResult{
-		Status: StatusCompleted,
+		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message": fmt.Sprintf("User path %s added", pathID),
-			"path_id": pathID,
-			"path":    path,
+			"message": fmt.Sprintf("Path %s add staged, will be executed at boot", pathID),
 		},
 	}
 }
 
-// DeleteUserPathExecutor executes user path deletion commands
-type DeleteUserPathExecutor struct {
-	cmd    Command
-	logger *slog.Logger
-}
-
-// Execute deletes a user path (no pending needed - immediate)
-func (e *DeleteUserPathExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
-	pathID, ok := e.cmd.Args["path_id"].(string)
-	if !ok || pathID == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "path_id is required"}
-	}
-
+func (e *PathExecutor) executeDelete(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
 	// Prevent deletion of system paths
-	if isSystemPath(pathID) {
+	if isSystemPath {
 		return ExecutionResult{
 			Status:   StatusFailed,
 			ErrorMsg: fmt.Sprintf("Cannot delete system path %s", pathID),
 		}
 	}
 
-	// Notify progress
 	callback(ProgressUpdate{
 		Status:  "in_progress",
-		Message: fmt.Sprintf("Deleting user path %s", pathID),
+		Message: fmt.Sprintf("Deleting path %s", pathID),
 	})
 
-	// Deletion is immediate (handled by API layer)
+	// Write deletion marker to paths.pending.ini
+	if err := writePathDeletionMarker(pathID); err != nil {
+		e.logger.Error("failed to write deletion marker", "error", err)
+		callback(ProgressUpdate{
+			Status: "failed",
+			Error:  fmt.Sprintf("Failed to delete path: %v", err),
+		})
+		return ExecutionResult{
+			Status:   StatusFailed,
+			ErrorMsg: fmt.Sprintf("Failed to delete path: %v", err),
+		}
+	}
+
 	callback(ProgressUpdate{
-		Status:  "completed",
-		Message: fmt.Sprintf("User path %s deleted successfully", pathID),
+		Status:  "pending",
+		Message: fmt.Sprintf("Path deletion staged in %s for boot-time execution", PathsPendingConfigFile),
 	})
 
 	return ExecutionResult{
-		Status: StatusCompleted,
+		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message": fmt.Sprintf("User path %s deleted", pathID),
-			"path_id": pathID,
+			"message": fmt.Sprintf("Path %s delete staged, will be executed at boot", pathID),
 		},
 	}
 }
 
-// writePathPendingINI writes a path operation to /etc/zeropoint/paths.pending.ini
-func writePathPendingINI(pathID, operation, oldPath, newPath string) error {
+// writePathToPendingINI writes an edit operation to paths.pending.ini
+func writePathToPendingINI(pathID, operation, oldPath, newPath string, isSystemPath bool) error {
 	configDir := "/etc/zeropoint"
 	configFile := PathsPendingConfigFile
 
@@ -201,6 +238,98 @@ func writePathPendingINI(pathID, operation, oldPath, newPath string) error {
 	section.Key("operation").SetValue(operation)
 	section.Key("old_path").SetValue(oldPath)
 	section.Key("new_path").SetValue(newPath)
+	section.Key("is_system_path").SetValue(fmt.Sprintf("%v", isSystemPath))
+
+	// Write file
+	if err := cfg.SaveTo(configFile); err != nil {
+		return fmt.Errorf("failed to write paths.pending.ini: %w", err)
+	}
+
+	// Ensure proper file permissions
+	if err := os.Chmod(configFile, 0600); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return nil
+}
+
+// writePathToPendingINIFull writes a complete path entry to paths.pending.ini
+func writePathToPendingINIFull(pathID, operation, path, mountID, name, description string, isSystemPath bool) error {
+	configDir := "/etc/zeropoint"
+	configFile := PathsPendingConfigFile
+
+	// Create config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Load existing INI or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var loadErr error
+		cfg, loadErr = ini.Load(configFile)
+		if loadErr != nil {
+			cfg = ini.Empty()
+		}
+	}
+
+	// Create or update section
+	section, err := cfg.NewSection(pathID)
+	if err != nil {
+		section, _ = cfg.GetSection(pathID)
+	}
+
+	// Store complete path configuration
+	section.Key("operation").SetValue(operation)
+	section.Key("path").SetValue(path)
+	section.Key("mount_id").SetValue(mountID)
+	section.Key("name").SetValue(name)
+	section.Key("description").SetValue(description)
+	section.Key("is_system_path").SetValue(fmt.Sprintf("%v", isSystemPath))
+
+	// Write file
+	if err := cfg.SaveTo(configFile); err != nil {
+		return fmt.Errorf("failed to write paths.pending.ini: %w", err)
+	}
+
+	// Ensure proper file permissions
+	if err := os.Chmod(configFile, 0600); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return nil
+}
+
+// writePathDeletionMarker writes a deletion marker for a path
+func writePathDeletionMarker(pathID string) error {
+	configDir := "/etc/zeropoint"
+	configFile := PathsPendingConfigFile
+
+	// Create config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Load existing INI or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var loadErr error
+		cfg, loadErr = ini.Load(configFile)
+		if loadErr != nil {
+			cfg = ini.Empty()
+		}
+	}
+
+	// Create or update section
+	section, err := cfg.NewSection(pathID)
+	if err != nil {
+		section, _ = cfg.GetSection(pathID)
+	}
+
+	// Store deletion marker
+	section.Key("operation").SetValue("delete")
+	section.Key("path").SetValue("") // Empty path indicates deletion
+	section.Key("is_system_path").SetValue("false")
 
 	// Write file
 	if err := cfg.SaveTo(configFile); err != nil {

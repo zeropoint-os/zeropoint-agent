@@ -31,10 +31,10 @@ func NewHandlers(manager *Manager, catalogStore *catalog.Store, bundleStore inte
 	}
 }
 
-// EnqueueFormat handles POST /jobs/enqueue_format
+// EnqueueFormat handles POST /jobs/enqueue_format (legacy endpoint, kept for backward compatibility)
 // @ID enqueueFormat
-// @Summary Enqueue a disk format job
-// @Description Enqueue a disk format operation to be executed at boot time. The format will be staged in /etc/zeropoint/disks.pending.ini and executed by the systemd boot service. If a format job already exists for this device ID, it will be cancelled and replaced. Requires `confirm:true`.
+// @Summary Enqueue a disk format job (legacy)
+// @Description DEPRECATED: Use enqueue_manage_disk instead. This endpoint kept for backward compatibility.
 // @Tags jobs
 // @Accept json
 // @Produce json
@@ -60,12 +60,12 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel any existing format_disk job for this device ID
+	// Cancel any existing manage_disk job for this device ID
 	// (the new request supersedes the old one)
 	allJobs, err := h.manager.ListAll()
 	if err == nil {
 		for _, job := range allJobs {
-			if job.Command.Type == CmdFormatDisk && job.Status == StatusQueued {
+			if job.Command.Type == CmdManageDisk && job.Status == StatusPending {
 				if jobID, ok := job.Command.Args["id"].(string); ok && jobID == req.ID {
 					// Cancel the old job
 					now := time.Now().UTC()
@@ -80,16 +80,26 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create a pending format job in the job queue
+	// Create a pending manage disk job using the new command type
 	args := map[string]interface{}{
-		"id":         req.ID,
-		"filesystem": req.Filesystem,
-		"label":      req.Label,
-		"status":     "pending",
+		"id":             req.ID,
+		"filesystem":     req.Filesystem,
+		"label":          req.Label,
+		"wipefs":         req.Wipefs,
+		"auto_partition": req.AutoPartition,
+		"confirm":        req.Confirm,
+	}
+
+	// Add optional fields
+	if len(req.Luks) > 0 {
+		args["luks"] = req.Luks
+	}
+	if len(req.Lvm) > 0 {
+		args["lvm"] = req.Lvm
 	}
 
 	cmd := Command{
-		Type: CmdFormatDisk,
+		Type: CmdManageDisk,
 		Args: args,
 	}
 
@@ -107,22 +117,160 @@ func (h *Handlers) EnqueueFormat(w http.ResponseWriter, r *http.Request) {
 		Message:   "Format operation staged for boot-time execution for device " + req.ID,
 	})
 
-	// Write to /etc/zeropoint/disks.pending.ini
-	if err := writeStoragePendingINI(&req, jobID); err != nil {
-		h.logger.Error("failed to write disks.pending.ini", "error", err)
-		// Still return success for job creation, but record the error
-		_ = h.manager.AppendEvent(jobID, Event{
-			Timestamp: time.Now().UTC(),
-			Type:      "warning",
-			Message:   "Failed to write staging file: " + err.Error() + " (systemd service will not execute this operation)",
-		})
-	} else {
-		_ = h.manager.AppendEvent(jobID, Event{
-			Timestamp: time.Now().UTC(),
-			Type:      "log",
-			Message:   "Staged in " + DisksPendingConfigFile + " - will execute on reboot",
-		})
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueManageDisk handles POST /jobs/enqueue_manage_disk
+// @ID enqueueManageDisk
+// @Summary Enqueue a disk management job
+// @Description Enqueue a disk management operation (add to managed pool) to be executed at boot time. The management will be staged in /etc/zeropoint/disks.pending.ini and executed by the systemd boot service. If a management job already exists for this device ID, it will be cancelled and replaced. Requires `confirm:true`.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueManageDiskRequest true "Manage disk request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_manage_disk [post]
+func (h *Handlers) EnqueueManageDisk(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueManageDiskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Require explicit confirmation
+	if !req.Confirm {
+		http.Error(w, "confirm must be true for destructive operation", http.StatusBadRequest)
+		return
+	}
+
+	// Cancel any existing manage_disk job for this device ID
+	// (the new request supersedes the old one)
+	allJobs, err := h.manager.ListAll()
+	if err == nil {
+		for _, job := range allJobs {
+			if job.Command.Type == CmdManageDisk && job.Status == StatusPending {
+				if jobID, ok := job.Command.Args["id"].(string); ok && jobID == req.ID {
+					// Cancel the old job
+					now := time.Now().UTC()
+					_ = h.manager.UpdateStatus(job.ID, StatusCancelled, nil, &now, nil, "Superseded by newer manage request for same device")
+					_ = h.manager.AppendEvent(job.ID, Event{
+						Timestamp: time.Now().UTC(),
+						Type:      "info",
+						Message:   "Cancelled: superseded by newer manage request for device " + req.ID,
+					})
+				}
+			}
+		}
+	}
+
+	// Create a pending manage disk job in the job queue
+	args := map[string]interface{}{
+		"id":             req.ID,
+		"filesystem":     req.Filesystem,
+		"label":          req.Label,
+		"wipefs":         req.Wipefs,
+		"auto_partition": req.AutoPartition,
+		"confirm":        req.Confirm,
+	}
+
+	// Add optional fields
+	if len(req.Luks) > 0 {
+		args["luks"] = req.Luks
+	}
+	if len(req.Lvm) > 0 {
+		args["lvm"] = req.Lvm
+	}
+
+	cmd := Command{
+		Type: CmdManageDisk,
+		Args: args,
+	}
+
+	jobID, err := h.manager.Enqueue(cmd, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue manage disk job", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Record initial event
+	_ = h.manager.AppendEvent(jobID, Event{
+		Timestamp: time.Now().UTC(),
+		Type:      "step",
+		Message:   "Disk management operation staged for boot-time execution for device " + req.ID,
+	})
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueReleaseDisk handles POST /jobs/enqueue_release_disk
+// @ID enqueueReleaseDisk
+// @Summary Enqueue a disk release job
+// @Description Enqueue a disk release operation (remove from managed pool) to be executed at boot time. The release will be staged in /etc/zeropoint/disks.pending.ini and executed by the systemd boot service.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueReleaseDiskRequest true "Release disk request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_release_disk [post]
+func (h *Handlers) EnqueueReleaseDisk(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueReleaseDiskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Create a release disk job in the job queue
+	cmd := Command{
+		Type: CmdReleaseDisk,
+		Args: map[string]interface{}{
+			"id": req.ID,
+		},
+	}
+
+	jobID, err := h.manager.Enqueue(cmd, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue release disk job", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Record initial event
+	_ = h.manager.AppendEvent(jobID, Event{
+		Timestamp: time.Now().UTC(),
+		Type:      "step",
+		Message:   "Disk release operation staged for boot-time execution for device " + req.ID,
+	})
 
 	job, err := h.manager.Get(jobID)
 	if err != nil {
@@ -155,8 +303,8 @@ func (h *Handlers) EnqueueCreateMount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.MountPoint == "" || req.Filesystem == "" || req.Type == "" {
-		http.Error(w, "mount_point, filesystem, and type are required", http.StatusBadRequest)
+	if req.MountPoint == "" || req.Disk == "" {
+		http.Error(w, "mount_point and disk are required", http.StatusBadRequest)
 		return
 	}
 
@@ -170,8 +318,8 @@ func (h *Handlers) EnqueueCreateMount(w http.ResponseWriter, r *http.Request) {
 		Type: CmdCreateMount,
 		Args: map[string]interface{}{
 			"mount_point": req.MountPoint,
-			"filesystem":  req.Filesystem,
-			"type":        req.Type,
+			"disk":        req.Disk,
+			"partition":   req.Partition,
 		},
 	}, req.DependsOn)
 
@@ -1086,62 +1234,50 @@ func (h *Handlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// EnqueueEditSystemPath enqueues a request to edit a system path.
-// System paths use zp_* naming convention and trigger boot-time data migration.
-func (h *Handlers) EnqueueEditSystemPath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueEditSystemPathRequest
+// EnqueueAddPath enqueues a request to add a new path.
+// Paths with zp_* prefix are rejected (system paths are read-only).
+// @Summary Add a new path
+// @Description Enqueues a path creation. User paths are created immediately, system paths (zp_* prefix) are rejected.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueAddPathRequest true "Add path request"
+// @Success 201 {object} JobResponse
+// @Failure 400 {string} string "Bad request (cannot add system path with zp_ prefix)"
+// @Failure 500 {string} string "Internal server error"
+// @Router /api/jobs/enqueue_add_path [post]
+func (h *Handlers) EnqueueAddPath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueAddPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.PathID == "" || req.NewPath == "" {
-		http.Error(w, "path_id and new_path are required", http.StatusBadRequest)
+	if req.ID == "" || req.Name == "" || req.Path == "" || req.MountID == "" {
+		http.Error(w, "id, name, path, and mount_id are required", http.StatusBadRequest)
 		return
+	}
+
+	// Reject paths with zp_ prefix (system paths)
+	if strings.HasPrefix(req.ID, "zp_") {
+		http.Error(w, "cannot add system path (zp_* prefix is reserved)", http.StatusBadRequest)
+		return
+	}
+
+	// Cancel any existing jobs operating on the same path_id
+	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
+	if err == nil {
+		for _, job := range existingJobs {
+			if err := h.manager.Cancel(job.ID); err != nil {
+				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
+			}
+		}
 	}
 
 	jobID, err := h.manager.Enqueue(Command{
-		Type: CmdEditSystemPath,
+		Type: CmdAddPath,
 		Args: map[string]interface{}{
-			"path_id":  req.PathID,
-			"new_path": req.NewPath,
-		},
-	}, req.DependsOn)
-	if err != nil {
-		h.logger.Error("failed to enqueue edit system path job", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	job, err := h.manager.Get(jobID)
-	if err != nil {
-		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
-		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(job)
-}
-
-// EnqueueAddUserPath enqueues a request to add a user path.
-// User paths are applied immediately and do not trigger boot-time processing.
-func (h *Handlers) EnqueueAddUserPath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueAddUserPathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.Name == "" || req.Path == "" || req.MountID == "" {
-		http.Error(w, "name, path, and mount_id are required", http.StatusBadRequest)
-		return
-	}
-
-	jobID, err := h.manager.Enqueue(Command{
-		Type: CmdAddUserPath,
-		Args: map[string]interface{}{
+			"path_id":     req.ID,
 			"name":        req.Name,
 			"path":        req.Path,
 			"mount_id":    req.MountID,
@@ -1149,7 +1285,7 @@ func (h *Handlers) EnqueueAddUserPath(w http.ResponseWriter, r *http.Request) {
 		},
 	}, req.DependsOn)
 	if err != nil {
-		h.logger.Error("failed to enqueue add user path job", "error", err)
+		h.logger.Error("failed to enqueue add path job", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1166,24 +1302,115 @@ func (h *Handlers) EnqueueAddUserPath(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// EnqueueDeleteUserPath enqueues a request to delete a path.
-// System paths (zp_* prefix) cannot be deleted.
-func (h *Handlers) EnqueueDeleteUserPath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueDeleteUserPathRequest
+// EnqueueEditPath enqueues a request to edit a path.
+// System paths (zp_* prefix) can be edited and changes are staged for boot-time application.
+// User paths are edited immediately.
+// @Summary Edit an existing path
+// @Description Enqueues a path edit. System paths are staged for boot, user paths are applied immediately.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueEditPathRequest true "Edit path request"
+// @Success 201 {object} JobResponse
+// @Failure 400 {string} string "Bad request"
+// @Failure 500 {string} string "Internal server error"
+// @Router /api/jobs/enqueue_edit_path [post]
+func (h *Handlers) EnqueueEditPath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueEditPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.PathID == "" {
-		http.Error(w, "path_id is required", http.StatusBadRequest)
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
 
+	// Cancel any existing jobs operating on the same path_id
+	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
+	if err == nil {
+		for _, job := range existingJobs {
+			if err := h.manager.Cancel(job.ID); err != nil {
+				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
+			}
+		}
+	}
+
+	// Always use CmdEditPath - the executor determines behavior based on is_system_path
 	jobID, err := h.manager.Enqueue(Command{
-		Type: CmdDeleteUserPath,
+		Type: CmdEditPath,
 		Args: map[string]interface{}{
-			"path_id": req.PathID,
+			"path_id":     req.ID,
+			"name":        req.Name,
+			"new_path":    req.Path,
+			"old_path":    req.OldPath,
+			"mount_id":    req.MountID,
+			"description": req.Description,
+		},
+	}, req.DependsOn)
+	if err != nil {
+		h.logger.Error("failed to enqueue edit path job", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
+// EnqueueDeletePath enqueues a request to delete a path.
+// System paths (zp_* prefix) cannot be deleted and will return an error.
+// @Summary Delete an existing path
+// @Description Enqueues a path deletion. System paths (zp_* prefix) cannot be deleted and will fail.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueDeletePathRequest true "Delete path request"
+// @Success 201 {object} JobResponse
+// @Failure 400 {string} string "Bad request (cannot delete system path)"
+// @Failure 500 {string} string "Internal server error"
+// @Router /api/jobs/enqueue_delete_path [post]
+func (h *Handlers) EnqueueDeletePath(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueDeletePathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Reject system path deletion
+	if strings.HasPrefix(req.ID, "zp_") {
+		http.Error(w, "cannot delete system path (zp_* prefix is reserved)", http.StatusBadRequest)
+		return
+	}
+
+	// Cancel any existing jobs operating on the same path_id
+	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
+	if err == nil {
+		for _, job := range existingJobs {
+			if err := h.manager.Cancel(job.ID); err != nil {
+				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
+			}
+		}
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdDeletePath,
+		Args: map[string]interface{}{
+			"path_id": req.ID,
 		},
 	}, req.DependsOn)
 	if err != nil {
@@ -1200,5 +1427,6 @@ func (h *Handlers) EnqueueDeleteUserPath(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(job)
 }

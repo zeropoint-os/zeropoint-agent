@@ -19,8 +19,8 @@ const (
 // swagger:model EnqueueCreateMountRequest
 type EnqueueCreateMountRequest struct {
 	MountPoint string   `json:"mount_point"` // Where filesystem is mounted
-	Filesystem string   `json:"filesystem"`  // Device or virtual filesystem identifier
-	Type       string   `json:"type"`        // Filesystem type
+	Disk       string   `json:"disk"`        // Stable disk ID (from disk layer)
+	Partition  int      `json:"partition"`   // Partition number (0, 1, 2, etc.)
 	DependsOn  []string `json:"depends_on,omitempty"`
 }
 

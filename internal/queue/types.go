@@ -48,12 +48,13 @@ const (
 	CmdDeleteLink      CommandType = "delete_link"
 	CmdBundleInstall   CommandType = "bundle_install"   // Meta-job that orchestrates bundle installation
 	CmdBundleUninstall CommandType = "bundle_uninstall" // Meta-job that orchestrates bundle uninstallation
-	CmdFormatDisk      CommandType = "format_disk"
+	CmdManageDisk      CommandType = "manage_disk"      // Add disk to managed pool
+	CmdReleaseDisk     CommandType = "release_disk"     // Remove disk from managed pool
 	CmdCreateMount     CommandType = "create_mount"
 	CmdDeleteMount     CommandType = "delete_mount"
-	CmdEditSystemPath  CommandType = "edit_system_path"
-	CmdAddUserPath     CommandType = "add_user_path"
-	CmdDeleteUserPath  CommandType = "delete_user_path"
+	CmdEditPath        CommandType = "edit_path"
+	CmdAddPath         CommandType = "add_path"
+	CmdDeletePath      CommandType = "delete_path"
 )
 
 // CommandExecutor is the interface all command types must implement
@@ -117,35 +118,47 @@ func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, expo
 			cmd:    c,
 			logger: logger,
 		}
-	case CmdFormatDisk:
-		return &FormatDiskExecutor{
-			cmd:    c,
-			logger: logger,
+	case CmdManageDisk:
+		return &DiskExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "manage",
+		}
+	case CmdReleaseDisk:
+		return &DiskExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "release",
 		}
 	case CmdCreateMount:
-		return &CreateMountExecutor{
-			cmd:    c,
-			logger: logger,
+		return &MountExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "create",
 		}
 	case CmdDeleteMount:
-		return &DeleteMountExecutor{
-			cmd:    c,
-			logger: logger,
+		return &MountExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "delete",
 		}
-	case CmdEditSystemPath:
-		return &EditSystemPathExecutor{
-			cmd:    c,
-			logger: logger,
+	case CmdEditPath:
+		return &PathExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "edit",
 		}
-	case CmdAddUserPath:
-		return &AddUserPathExecutor{
-			cmd:    c,
-			logger: logger,
+	case CmdAddPath:
+		return &PathExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "add",
 		}
-	case CmdDeleteUserPath:
-		return &DeleteUserPathExecutor{
-			cmd:    c,
-			logger: logger,
+	case CmdDeletePath:
+		return &PathExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "delete",
 		}
 	default:
 		return &UnknownCommandExecutor{
@@ -157,16 +170,17 @@ func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, expo
 
 // Job represents a job in the queue
 type Job struct {
-	ID          string      `json:"id"`
-	Status      JobStatus   `json:"status"`
-	Command     Command     `json:"command"`
-	DependsOn   []string    `json:"depends_on"`     // IDs of jobs this depends on
-	Tags        []string    `json:"tags,omitempty"` // Tags associated with this job (e.g., bundle name)
-	CreatedAt   time.Time   `json:"created_at"`
-	StartedAt   *time.Time  `json:"started_at,omitempty"`
-	CompletedAt *time.Time  `json:"completed_at,omitempty"`
-	Result      interface{} `json:"result,omitempty"`
-	Error       string      `json:"error,omitempty"`
+	ID          string                 `json:"id"`
+	Status      JobStatus              `json:"status"`
+	Command     Command                `json:"command"`
+	DependsOn   []string               `json:"depends_on"`         // IDs of jobs this depends on
+	Tags        []string               `json:"tags,omitempty"`     // Tags associated with this job (e.g., bundle name)
+	Metadata    map[string]interface{} `json:"metadata,omitempty"` // Command-specific metadata (opaque to manager)
+	CreatedAt   time.Time              `json:"created_at"`
+	StartedAt   *time.Time             `json:"started_at,omitempty"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+	Result      interface{}            `json:"result,omitempty"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 // Event represents a single event in a job's execution

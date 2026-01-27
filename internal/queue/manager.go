@@ -538,6 +538,38 @@ func (m *Manager) topoSort(jobs []*Job, jobMap map[string]*Job) []*Job {
 	return sorted
 }
 
+// GetPending returns all pending jobs (jobs awaiting external completion)
+func (m *Manager) GetPending() ([]*Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entries, err := os.ReadDir(m.jobsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read jobs directory: %w", err)
+	}
+
+	var jobs []*Job
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		jobID := entry.Name()
+		job, err := m.getJob(jobID)
+		if err != nil {
+			m.logger.Error("failed to read job", "job_id", jobID, "error", err)
+			continue
+		}
+
+		if job.Status == StatusPending {
+			jobs = append(jobs, job)
+		}
+	}
+
+	return jobs, nil
+}
+
 // UpdateStatus updates a job's status and writes to disk
 func (m *Manager) UpdateStatus(jobID string, status JobStatus, startedAt, completedAt *time.Time, result interface{}, errMsg string) error {
 	m.mu.Lock()
@@ -568,6 +600,25 @@ func (m *Manager) UpdateDependencies(jobID string, dependsOn []string) error {
 	}
 
 	job.DependsOn = dependsOn
+	return m.writeJobMetadata(job)
+}
+
+// UpdateMetadata updates a job's metadata field
+func (m *Manager) UpdateMetadata(jobID string, metadata map[string]interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, err := m.getJob(jobID)
+	if err != nil {
+		return err
+	}
+
+	if job.Metadata == nil {
+		job.Metadata = make(map[string]interface{})
+	}
+	for k, v := range metadata {
+		job.Metadata[k] = v
+	}
 	return m.writeJobMetadata(job)
 }
 

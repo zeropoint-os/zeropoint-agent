@@ -9,27 +9,70 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-// CreateMountExecutor executes mount creation commands
-type CreateMountExecutor struct {
-	cmd    Command
-	logger *slog.Logger
+// MountExecutor handles both create and delete mount operations
+type MountExecutor struct {
+	cmd       Command
+	logger    *slog.Logger
+	operation string // "create" or "delete"
 }
 
-// Execute creates a mount entry in mounts.pending.ini
-func (e *CreateMountExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+// Execute stages the mount operation for boot-time execution
+// Retryable: if the operation was already completed by the boot service, returns StatusCompleted
+func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
 	mountPoint, ok := e.cmd.Args["mount_point"].(string)
 	if !ok || mountPoint == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "mount_point is required"}
 	}
 
-	filesystem, ok := e.cmd.Args["filesystem"].(string)
-	if !ok || filesystem == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "filesystem is required"}
+	// Check if this operation already completed in mounts.ini
+	existingResults, err := readMountResultsINI()
+	if err == nil {
+		id := sanitizeMountID(mountPoint)
+		for _, result := range existingResults {
+			if sanitizeMountID(result.MountPoint) == id {
+				// Operation already completed by boot service
+				if result.Status == "success" {
+					return ExecutionResult{
+						Status: StatusCompleted,
+						Result: map[string]interface{}{
+							"message": result.Message,
+							"status":  "success",
+						},
+					}
+				} else if result.Status == "error" {
+					return ExecutionResult{
+						Status:   StatusFailed,
+						ErrorMsg: result.Message,
+					}
+				}
+			}
+		}
 	}
 
-	fsType, ok := e.cmd.Args["type"].(string)
-	if !ok || fsType == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "type is required"}
+	// Operation not yet complete - execute based on operation type
+	switch e.operation {
+	case "create":
+		return e.executeCreate(mountPoint, callback)
+	case "delete":
+		return e.executeDelete(mountPoint, callback)
+	default:
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown mount operation: " + e.operation}
+	}
+}
+
+// executeCreate writes mount config to mounts.pending.ini
+func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallback) ExecutionResult {
+	disk, ok := e.cmd.Args["disk"].(string)
+	if !ok || disk == "" {
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk is required"}
+	}
+
+	// Validate partition exists and is numeric
+	switch e.cmd.Args["partition"].(type) {
+	case int, float64:
+		// OK
+	default:
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: "partition must be a number"}
 	}
 
 	// Prevent root mount modification
@@ -47,15 +90,15 @@ func (e *CreateMountExecutor) Execute(ctx context.Context, callback ProgressCall
 	id := sanitizeMountID(mountPoint)
 
 	// Write to mounts.pending.ini
-	if err := writeMountPendingINI(id, mountPoint, filesystem, fsType); err != nil {
+	if err := writeMountPendingINI(id, e.cmd.Args); err != nil {
 		e.logger.Error("failed to write mounts.pending.ini", "error", err)
 		callback(ProgressUpdate{
 			Status: "failed",
-			Error:  fmt.Sprintf("Failed to write mount configuration: %v", err),
+			Error:  fmt.Sprintf("Failed to stage mount: %v", err),
 		})
 		return ExecutionResult{
 			Status:   StatusFailed,
-			ErrorMsg: fmt.Sprintf("Failed to write mount configuration: %v", err),
+			ErrorMsg: fmt.Sprintf("Failed to stage mount: %v", err),
 		}
 	}
 
@@ -72,19 +115,8 @@ func (e *CreateMountExecutor) Execute(ctx context.Context, callback ProgressCall
 	}
 }
 
-// DeleteMountExecutor executes mount deletion commands
-type DeleteMountExecutor struct {
-	cmd    Command
-	logger *slog.Logger
-}
-
-// Execute marks a mount for deletion in mounts.pending.ini
-func (e *DeleteMountExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
-	mountPoint, ok := e.cmd.Args["mount_point"].(string)
-	if !ok || mountPoint == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "mount_point is required"}
-	}
-
+// executeDelete marks a mount for deletion in mounts.pending.ini
+func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallback) ExecutionResult {
 	// Prevent root mount deletion
 	if mountPoint == "/" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot delete root mount point"}
@@ -125,8 +157,9 @@ func (e *DeleteMountExecutor) Execute(ctx context.Context, callback ProgressCall
 	}
 }
 
-// writeMountPendingINI writes a mount entry to /etc/zeropoint/mounts.pending.ini
-func writeMountPendingINI(id, mountPoint, filesystem, fsType string) error {
+// writeMountPendingINI writes mount config to /etc/zeropoint/mounts.pending.ini
+// Args should contain: mount_point (required), disk, partition
+func writeMountPendingINI(id string, args map[string]interface{}) error {
 	configDir := "/etc/zeropoint"
 	configFile := MountsPendingConfigFile
 
@@ -151,10 +184,12 @@ func writeMountPendingINI(id, mountPoint, filesystem, fsType string) error {
 		section, _ = cfg.GetSection(id)
 	}
 
-	// Store mount configuration (essential fields only)
-	section.Key("mount_point").SetValue(mountPoint)
-	section.Key("filesystem").SetValue(filesystem)
-	section.Key("type").SetValue(fsType)
+	// Write all args as strings (like cmd_disk.go does)
+	for key, value := range args {
+		if key != "depends_on" { // Skip depends_on, it's for job manager
+			section.Key(key).SetValue(fmt.Sprintf("%v", value))
+		}
+	}
 
 	// Write file
 	if err := cfg.SaveTo(configFile); err != nil {
@@ -189,14 +224,15 @@ func markMountForDeletion(id string) error {
 		}
 	}
 
-	// Get or create section
-	section, err := cfg.NewSection(id)
+	// Create deletion marker section [!id]
+	sectionName := "!" + id
+	section, err := cfg.NewSection(sectionName)
 	if err != nil {
-		section, _ = cfg.GetSection(id)
+		section, _ = cfg.GetSection(sectionName)
 	}
 
-	// Mark for deletion
-	section.Key("action").SetValue("delete")
+	// Empty section indicates deletion
+	_ = section
 
 	// Write file
 	if err := cfg.SaveTo(configFile); err != nil {
@@ -211,25 +247,31 @@ func markMountForDeletion(id string) error {
 	return nil
 }
 
-// sanitizeMountID converts a mount_point to a safe section ID for ini file
+// sanitizeMountID converts a mount point path to a valid INI section ID
 func sanitizeMountID(mountPoint string) string {
-	var result string
-	for _, ch := range mountPoint {
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
-			result += string(ch)
-		} else if ch == '/' || ch == '-' || ch == '_' {
+	// Root becomes "root", everything else becomes "mnt_<sanitized>"
+	if mountPoint == "/" {
+		return "root"
+	}
+
+	// Remove leading/trailing slashes and replace internal slashes with underscores
+	id := mountPoint
+	if id[0] == '/' {
+		id = id[1:]
+	}
+	if id[len(id)-1] == '/' && len(id) > 1 {
+		id = id[:len(id)-1]
+	}
+
+	// Replace slashes with underscores
+	result := ""
+	for _, c := range id {
+		if c == '/' {
 			result += "_"
+		} else {
+			result += string(c)
 		}
 	}
-	// Remove leading/trailing underscores
-	for len(result) > 0 && result[0] == '_' {
-		result = result[1:]
-	}
-	for len(result) > 0 && result[len(result)-1] == '_' {
-		result = result[:len(result)-1]
-	}
-	if result == "" {
-		result = "mount"
-	}
-	return result
+
+	return "mnt_" + result
 }

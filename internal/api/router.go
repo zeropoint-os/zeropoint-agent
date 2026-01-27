@@ -180,14 +180,17 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/jobs/enqueue_install_bundle", queueHandlers.EnqueueBundleInstall).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_uninstall_bundle", queueHandlers.EnqueueBundleUninstall).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_format", queueHandlers.EnqueueFormat).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_manage_disk", queueHandlers.EnqueueManageDisk).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_release_disk", queueHandlers.EnqueueReleaseDisk).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_create_mount", queueHandlers.EnqueueCreateMount).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_delete_mount", queueHandlers.EnqueueDeleteMount).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_edit_system_path", queueHandlers.EnqueueEditSystemPath).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_add_user_path", queueHandlers.EnqueueAddUserPath).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_delete_user_path", queueHandlers.EnqueueDeleteUserPath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_add_path", queueHandlers.EnqueueAddPath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_edit_path", queueHandlers.EnqueueEditPath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_delete_path", queueHandlers.EnqueueDeletePath).Methods(http.MethodPost)
 
 	// Storage discovery endpoints
 	r.HandleFunc("/api/storage/disks", env.ListDisks).Methods(http.MethodGet)
+	r.HandleFunc("/api/storage/disks/discover", env.DiscoverDisks).Methods(http.MethodGet)
 	r.HandleFunc("/api/storage/disks/{disk}", env.GetDisk).Methods(http.MethodGet)
 
 	// Storage mount management endpoints (read-only - writes go through queue)
@@ -215,19 +218,9 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	worker.Start(context.Background())
 	logger.Info("job worker started")
 
-	// Process any boot-time format operations that may have completed
-	if err := queueHandlers.ProcessStorageResults(); err != nil {
-		logger.Error("failed to process boot-time format results", "error", err)
-	}
-
 	// Process any boot-time mount operations that may have completed
 	if err := queueHandlers.ProcessMountsResults(); err != nil {
 		logger.Error("failed to process boot-time mount results", "error", err)
-	}
-
-	// Process any boot-time path operations that may have completed
-	if err := queueHandlers.ProcessPathsResults(); err != nil {
-		logger.Error("failed to process boot-time path results", "error", err)
 	}
 
 	// Return router with middleware
