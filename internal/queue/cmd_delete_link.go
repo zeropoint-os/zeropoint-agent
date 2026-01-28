@@ -14,7 +14,8 @@ type DeleteLinkExecutor struct {
 }
 
 // Execute runs the delete link command
-func (e *DeleteLinkExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *DeleteLinkExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	linkID, ok := e.cmd.Args["link_id"].(string)
 	if !ok || linkID == "" {
 		return ExecutionResult{

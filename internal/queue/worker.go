@@ -236,7 +236,25 @@ func (w *Worker) retryPendingJobs(ctx context.Context) {
 			continue
 		}
 
-		// Re-execute the job - it will detect if operation is already complete
-		w.executeJob(ctx, job)
+		// Check if the job is already completed without re-executing
+		result := w.executor.ExecuteWithJob(ctx, job.ID, w.manager, job.Command)
+
+		// Only update status if the result changed from what we have
+		if result.Status != StatusPending {
+			// Job completed or failed - update status without appending more events
+			completedTime := time.Now().UTC()
+			var errMsg string
+
+			if result.Status == StatusFailed {
+				errMsg = result.ErrorMsg
+				w.logger.Info("job completion detected on retry", "job_id", job.ID, "status", "failed")
+			} else {
+				w.logger.Info("job completion detected on retry", "job_id", job.ID, "status", "completed")
+			}
+
+			if err := w.manager.UpdateStatus(job.ID, result.Status, nil, &completedTime, result.Result, errMsg); err != nil {
+				w.logger.Error("failed to update job status on retry", "job_id", job.ID, "error", err)
+			}
+		}
 	}
 }

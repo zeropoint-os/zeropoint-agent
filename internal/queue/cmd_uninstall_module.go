@@ -16,7 +16,8 @@ type UninstallModuleExecutor struct {
 }
 
 // Execute runs the uninstall module command
-func (e *UninstallModuleExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *UninstallModuleExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	moduleID, ok := e.cmd.Args["module_id"].(string)
 	if !ok || moduleID == "" {
 		return ExecutionResult{

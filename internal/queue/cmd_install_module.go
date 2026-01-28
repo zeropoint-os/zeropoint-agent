@@ -16,7 +16,8 @@ type InstallModuleExecutor struct {
 }
 
 // Execute runs the install module command
-func (e *InstallModuleExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *InstallModuleExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	moduleID, ok := e.cmd.Args["module_id"].(string)
 	if !ok || moduleID == "" {
 		return ExecutionResult{

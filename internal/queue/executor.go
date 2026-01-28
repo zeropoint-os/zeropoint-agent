@@ -64,6 +64,13 @@ func NewJobExecutor(installer *modules.Installer, uninstaller *modules.Uninstall
 
 // ExecuteWithJob runs a command by delegating to its polymorphic executor
 func (e *JobExecutor) ExecuteWithJob(ctx context.Context, jobID string, manager *Manager, cmd Command) ExecutionResult {
+	// Get job metadata to pass to executor
+	metadata, err := manager.GetJobMetadata(jobID)
+	if err != nil {
+		e.logger.Error("failed to get job metadata", "job_id", jobID, "error", err)
+		metadata = make(map[string]interface{})
+	}
+
 	// Create callback that appends events to the job
 	callback := func(update ProgressUpdate) {
 		event := Event{
@@ -91,8 +98,17 @@ func (e *JobExecutor) ExecuteWithJob(ctx context.Context, jobID string, manager 
 		e.logger,
 	)
 
-	// Execute the command - it returns its own status
-	return executor.Execute(ctx, callback)
+	// Execute the command with metadata - it returns updated metadata
+	result := executor.Execute(ctx, callback, metadata)
+
+	// Persist updated metadata if the executor modified it
+	if result.Metadata != nil && len(result.Metadata) > 0 {
+		if err := manager.UpdateMetadata(jobID, result.Metadata); err != nil {
+			e.logger.Error("failed to update job metadata", "job_id", jobID, "error", err)
+		}
+	}
+
+	return result
 }
 
 // runCmdJobStream runs a command and appends stdout/stderr lines as job events

@@ -14,7 +14,8 @@ type CreateExposureExecutor struct {
 }
 
 // Execute runs the create exposure command
-func (e *CreateExposureExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *CreateExposureExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	exposureID, ok := e.cmd.Args["exposure_id"].(string)
 	if !ok || exposureID == "" {
 		return ExecutionResult{

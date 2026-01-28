@@ -18,7 +18,7 @@ type PathExecutor struct {
 
 // Execute handles path operations, writing to paths.pending.ini with operation details
 // Retryable: if the operation was already completed by the boot service, returns StatusCompleted
-func (e *PathExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *PathExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	pathID, ok := e.cmd.Args["path_id"].(string)
 	if !ok || pathID == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "path_id is required"}
@@ -52,17 +52,17 @@ func (e *PathExecutor) Execute(ctx context.Context, callback ProgressCallback) E
 
 	switch e.operation {
 	case "edit":
-		return e.executeEdit(pathID, isSystemPath, callback)
+		return e.executeEdit(pathID, isSystemPath, callback, metadata)
 	case "add":
-		return e.executeAdd(pathID, isSystemPath, callback)
+		return e.executeAdd(pathID, isSystemPath, callback, metadata)
 	case "delete":
-		return e.executeDelete(pathID, isSystemPath, callback)
+		return e.executeDelete(pathID, isSystemPath, callback, metadata)
 	default:
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: fmt.Sprintf("unknown operation: %s", e.operation)}
 	}
 }
 
-func (e *PathExecutor) executeEdit(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
+func (e *PathExecutor) executeEdit(pathID string, isSystemPath bool, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	newPath, ok := e.cmd.Args["new_path"].(string)
 	if !ok || newPath == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "new_path is required"}
@@ -104,7 +104,7 @@ func (e *PathExecutor) executeEdit(pathID string, isSystemPath bool, callback Pr
 	}
 }
 
-func (e *PathExecutor) executeAdd(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
+func (e *PathExecutor) executeAdd(pathID string, isSystemPath bool, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	name, ok := e.cmd.Args["name"].(string)
 	if !ok || name == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "name is required"}
@@ -168,7 +168,7 @@ func (e *PathExecutor) executeAdd(pathID string, isSystemPath bool, callback Pro
 	}
 }
 
-func (e *PathExecutor) executeDelete(pathID string, isSystemPath bool, callback ProgressCallback) ExecutionResult {
+func (e *PathExecutor) executeDelete(pathID string, isSystemPath bool, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	// Prevent deletion of system paths
 	if isSystemPath {
 		return ExecutionResult{

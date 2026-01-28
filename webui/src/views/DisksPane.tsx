@@ -1,17 +1,22 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { StorageApi, Configuration, ApiDisk, JobsApi, QueueEnqueueFormatRequest } from 'artifacts/clients/typescript';
+import { StorageApi, Configuration, ApiDisk, JobsApi, QueueEnqueueFormatRequest, QueueJobResponse, QueueCommandType } from 'artifacts/clients/typescript';
 import FormatView from './FormatView';
+import AddManagedDiskDialog from './AddManagedDiskDialog';
 import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
 export default function DisksPane() {
   const navigate = useNavigate();
   const [disks, setDisks] = useState<ApiDisk[]>([]);
+  const [discoveredDisks, setDiscoveredDisks] = useState<ApiDisk[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [formatTarget, setFormatTarget] = useState<ApiDisk | null>(null);
+  const [pendingReleases, setPendingReleases] = useState<Set<string>>(new Set());
+  const [pendingManages, setPendingManages] = useState<Set<string>>(new Set());
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const loadingTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // StorageApi paths include /api prefix in generated client, use empty basePath to avoid double /api
@@ -40,6 +45,50 @@ export default function DisksPane() {
       });
 
       setDisks(enriched);
+
+      // Store discovered disks for the add dialog
+      setDiscoveredDisks(discoveredResp || []);
+
+      // Fetch all release disk jobs (regardless of status) to check if any are pending
+      const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
+      const jobsResp = await jobsApi.listJobs({});
+      const jobs: QueueJobResponse[] = jobsResp.jobs || [];
+      
+      const pendingReleaseSet = new Set<string>();
+      const pendingManageSet = new Set<string>();
+      jobs.forEach((job) => {
+        // Check for any release_disk job that's in pending state
+        if (job.command?.type === QueueCommandType.CmdReleaseDisk && job.status === 'pending') {
+          const diskId = job.command?.args?.id;
+          if (diskId) {
+            pendingReleaseSet.add(diskId as string);
+          }
+        }
+        // Check for any manage_disk job that's in pending state
+        if (job.command?.type === QueueCommandType.CmdManageDisk && job.status === 'pending') {
+          const diskId = job.command?.args?.id;
+          if (diskId) {
+            pendingManageSet.add(diskId as string);
+          }
+        }
+      });
+      setPendingReleases(pendingReleaseSet);
+      setPendingManages(pendingManageSet);
+
+      // Include pending manage disks in the displayed list
+      // These are disks that are being managed but not yet in the final managed list
+      const pendingDiskIds = Array.from(pendingManageSet);
+      const pendingDisks = pendingDiskIds
+        .map((id) => discoveredMap.get(id))
+        .filter((d): d is ApiDisk => d !== undefined);
+      
+      const allDisplayedDisks = [...enriched, ...pendingDisks];
+      // Remove duplicates by id
+      const uniqueDisks = Array.from(
+        new Map(allDisplayedDisks.map((d) => [d.id, d])).values()
+      );
+      setDisks(uniqueDisks);
+
       setError(null);
     } catch (err: unknown) {
       console.error('Failed to load disks', err);
@@ -83,6 +132,8 @@ export default function DisksPane() {
       setError(err instanceof Error ? err.message : 'Failed to release disk');
     }
   };
+
+
 
   return (
     <div className="section-block">
@@ -253,18 +304,45 @@ export default function DisksPane() {
 
                   {/* Actions */}
                   <div style={{ marginTop: 'auto', display: 'flex', gap: '0.5rem' }}>
-                    {!d.boot && (
+                    {pendingManages.has(d.id || '') ? (
+                      <button
+                        className="button button-danger"
+                        disabled={true}
+                        style={{ flex: 1 }}
+                      >
+                        Add on reboot
+                      </button>
+                    ) : !d.boot ? (
                       <button
                         className="button button-danger"
                         onClick={() => handleRelease(d.id)}
+                        disabled={pendingReleases.has(d.id || '')}
                         style={{ flex: 1 }}
                       >
-                        Release
+                        {pendingReleases.has(d.id || '') ? 'Release on reboot' : 'Release'}
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))}
+              {/* Add disk button */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '300px',
+                  padding: '1rem',
+                }}
+              >
+                <button
+                  className="button button-primary"
+                  onClick={() => setShowAddDialog(true)}
+                >
+                  <span>+</span> Manage Disk
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -279,6 +357,18 @@ export default function DisksPane() {
             fetchDisks();
             setFormatTarget(null);
             navigate('/jobs');
+          }}
+        />
+      )}
+
+      {showAddDialog && (
+        <AddManagedDiskDialog
+          managedDisks={disks}
+          discoveredDisks={discoveredDisks}
+          onClose={() => setShowAddDialog(false)}
+          onSuccess={() => {
+            fetchDisks();
+            setShowAddDialog(false);
           }}
         />
       )}

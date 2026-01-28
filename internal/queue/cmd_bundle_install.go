@@ -16,7 +16,8 @@ type BundleInstallExecutor struct {
 // The bundle_install is a meta-job that marks completion after all dependency jobs complete.
 // The actual orchestration (module installation, linking, exposures) is handled by BundleInstallPlanCreator
 // which creates the dependency graph when the bundle is first enqueued.
-func (e *BundleInstallExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *BundleInstallExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	bundleName, ok := e.cmd.Args["bundle_name"].(string)
 	if !ok || bundleName == "" {
 		return ExecutionResult{

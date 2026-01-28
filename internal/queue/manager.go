@@ -184,6 +184,23 @@ func (m *Manager) Get(jobID string) (*JobResponse, error) {
 	}, nil
 }
 
+// GetJobMetadata retrieves a job's metadata field
+func (m *Manager) GetJobMetadata(jobID string) (map[string]interface{}, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	job, err := m.getJob(jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	if job.Metadata == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	return job.Metadata, nil
+}
+
 // getJob is an internal method that reads job metadata without locking (caller must lock)
 func (m *Manager) getJob(jobID string) (*Job, error) {
 	jobPath := m.jobFile(jobID)

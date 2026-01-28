@@ -152,8 +152,8 @@ func (h *Handlers) EnqueueManageDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require explicit confirmation
-	if !req.Confirm {
+	// Require explicit confirmation only for destructive operations
+	if req.Wipefs && !req.Confirm {
 		http.Error(w, "confirm must be true for destructive operation", http.StatusBadRequest)
 		return
 	}
@@ -207,6 +207,11 @@ func (h *Handlers) EnqueueManageDisk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Initialize metadata to track if initial status has been emitted
+	_ = h.manager.UpdateMetadata(jobID, map[string]interface{}{
+		"status_emitted": false,
+	})
 
 	// Record initial event
 	_ = h.manager.AppendEvent(jobID, Event{

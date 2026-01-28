@@ -18,7 +18,7 @@ type MountExecutor struct {
 
 // Execute stages the mount operation for boot-time execution
 // Retryable: if the operation was already completed by the boot service, returns StatusCompleted
-func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	mountPoint, ok := e.cmd.Args["mount_point"].(string)
 	if !ok || mountPoint == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "mount_point is required"}
@@ -52,16 +52,16 @@ func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback) 
 	// Operation not yet complete - execute based on operation type
 	switch e.operation {
 	case "create":
-		return e.executeCreate(mountPoint, callback)
+		return e.executeCreate(mountPoint, callback, metadata)
 	case "delete":
-		return e.executeDelete(mountPoint, callback)
+		return e.executeDelete(mountPoint, callback, metadata)
 	default:
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown mount operation: " + e.operation}
 	}
 }
 
 // executeCreate writes mount config to mounts.pending.ini
-func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallback) ExecutionResult {
+func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	disk, ok := e.cmd.Args["disk"].(string)
 	if !ok || disk == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk is required"}
@@ -116,7 +116,7 @@ func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallba
 }
 
 // executeDelete marks a mount for deletion in mounts.pending.ini
-func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallback) ExecutionResult {
+func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	// Prevent root mount deletion
 	if mountPoint == "/" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot delete root mount point"}

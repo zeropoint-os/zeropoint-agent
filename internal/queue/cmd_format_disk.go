@@ -12,7 +12,8 @@ type FormatDiskExecutor struct {
 }
 
 // Execute stages the format operation for boot-time execution via systemd
-func (e *FormatDiskExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *FormatDiskExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	// Format disk operations are staged at boot time via systemd
 	// Return pending status since the actual execution happens on reboot
 	callback(ProgressUpdate{
@@ -34,7 +35,8 @@ type UnknownCommandExecutor struct {
 }
 
 // Execute returns an error for unknown command types
-func (e *UnknownCommandExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *UnknownCommandExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	return ExecutionResult{
 		Status:   StatusFailed,
 		ErrorMsg: "unknown command type: " + string(e.cmd.Type),

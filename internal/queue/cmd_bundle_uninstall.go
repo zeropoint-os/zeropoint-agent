@@ -16,7 +16,8 @@ type BundleUninstallExecutor struct {
 // The bundle_uninstall is a meta-job that marks completion after all dependency jobs complete.
 // The actual orchestration (exposure deletion, link deletion, module uninstall) is handled by BundleUninstallPlanCreator
 // which creates the dependency graph when the bundle uninstall is first enqueued.
-func (e *BundleUninstallExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *BundleUninstallExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	bundleID, ok := e.cmd.Args["bundle_id"].(string)
 	if !ok || bundleID == "" {
 		return ExecutionResult{

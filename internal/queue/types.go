@@ -31,9 +31,10 @@ type ProgressCallback func(ProgressUpdate)
 
 // ExecutionResult is returned by command executors to specify the result of execution
 type ExecutionResult struct {
-	Status   JobStatus   // Status to set on the job (completed, failed, pending, cancelled, etc.)
-	Result   interface{} // Command-specific result data
-	ErrorMsg string      // Error message if status is failed
+	Status   JobStatus              // Status to set on the job (completed, failed, pending, cancelled, etc.)
+	Result   interface{}            // Command-specific result data
+	ErrorMsg string                 // Error message if status is failed
+	Metadata map[string]interface{} // Updated metadata to persist
 }
 
 // CommandType represents the type of command to execute
@@ -59,7 +60,7 @@ const (
 
 // CommandExecutor is the interface all command types must implement
 type CommandExecutor interface {
-	Execute(ctx context.Context, callback ProgressCallback) ExecutionResult
+	Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult
 }
 
 // Command represents a queued command to execute

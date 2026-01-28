@@ -18,7 +18,7 @@ type DiskExecutor struct {
 
 // Execute stages the disk management operation for boot-time execution
 // Retryable: if the operation was already completed by the boot service, returns StatusCompleted
-func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	diskID, ok := e.cmd.Args["id"].(string)
 	if !ok || diskID == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk id is required"}
@@ -69,75 +69,87 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback) E
 	// Operation not yet complete - execute based on operation type
 	switch e.operation {
 	case "manage":
-		return e.executeManage(diskID, callback)
+		return e.executeManage(diskID, callback, metadata)
 	case "release":
-		return e.executeRelease(diskID, callback)
+		return e.executeRelease(diskID, callback, metadata)
 	default:
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown disk operation: " + e.operation}
 	}
 }
 
 // executeManage writes disk management spec to disks.pending.ini
-func (e *DiskExecutor) executeManage(diskID string, callback ProgressCallback) ExecutionResult {
-	callback(ProgressUpdate{
-		Status:  "in_progress",
-		Message: fmt.Sprintf("Preparing to manage disk %s", diskID),
-	})
-
-	if err := writeStoragePendingINI(diskID, e.cmd.Args); err != nil {
-		e.logger.Error("failed to write disks.pending.ini", "error", err)
+func (e *DiskExecutor) executeManage(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	// Only execute once (metadata persists across retries)
+	if metadata["status_emitted"] != true {
 		callback(ProgressUpdate{
-			Status: "failed",
-			Error:  fmt.Sprintf("Failed to stage disk management: %v", err),
+			Status:  "in_progress",
+			Message: fmt.Sprintf("Preparing to manage disk %s", diskID),
 		})
-		return ExecutionResult{
-			Status:   StatusFailed,
-			ErrorMsg: fmt.Sprintf("Failed to stage disk management: %v", err),
-		}
-	}
 
-	callback(ProgressUpdate{
-		Status:  "pending",
-		Message: fmt.Sprintf("Disk %s staged in %s for boot-time management", diskID, DisksPendingConfigFile),
-	})
+		if err := writeStoragePendingINI(diskID, e.cmd.Args); err != nil {
+			e.logger.Error("failed to write disks.pending.ini", "error", err)
+			callback(ProgressUpdate{
+				Status: "failed",
+				Error:  fmt.Sprintf("Failed to stage disk management: %v", err),
+			})
+			return ExecutionResult{
+				Status:   StatusFailed,
+				ErrorMsg: fmt.Sprintf("Failed to stage disk management: %v", err),
+			}
+		}
+
+		callback(ProgressUpdate{
+			Status:  "pending",
+			Message: fmt.Sprintf("Disk %s staged in %s for boot-time management", diskID, DisksPendingConfigFile),
+		})
+
+		metadata["status_emitted"] = true
+	}
 
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Disk %s management staged, will be executed at boot", diskID),
 		},
+		Metadata: metadata,
 	}
 }
 
 // executeRelease writes deletion marker to disks.pending.ini
-func (e *DiskExecutor) executeRelease(diskID string, callback ProgressCallback) ExecutionResult {
-	callback(ProgressUpdate{
-		Status:  "in_progress",
-		Message: fmt.Sprintf("Preparing to release disk %s", diskID),
-	})
-
-	if err := writeStorageDeletionMarker(diskID); err != nil {
-		e.logger.Error("failed to mark disk for release", "error", err)
+func (e *DiskExecutor) executeRelease(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	// Only execute once (metadata persists across retries)
+	if metadata["status_emitted"] != true {
 		callback(ProgressUpdate{
-			Status: "failed",
-			Error:  fmt.Sprintf("Failed to mark disk for release: %v", err),
+			Status:  "in_progress",
+			Message: fmt.Sprintf("Preparing to release disk %s", diskID),
 		})
-		return ExecutionResult{
-			Status:   StatusFailed,
-			ErrorMsg: fmt.Sprintf("Failed to mark disk for release: %v", err),
-		}
-	}
 
-	callback(ProgressUpdate{
-		Status:  "pending",
-		Message: fmt.Sprintf("Disk %s marked for release in %s, will be executed at boot", diskID, DisksPendingConfigFile),
-	})
+		if err := writeStorageDeletionMarker(diskID); err != nil {
+			e.logger.Error("failed to mark disk for release", "error", err)
+			callback(ProgressUpdate{
+				Status: "failed",
+				Error:  fmt.Sprintf("Failed to mark disk for release: %v", err),
+			})
+			return ExecutionResult{
+				Status:   StatusFailed,
+				ErrorMsg: fmt.Sprintf("Failed to mark disk for release: %v", err),
+			}
+		}
+
+		callback(ProgressUpdate{
+			Status:  "pending",
+			Message: fmt.Sprintf("Disk %s marked for release in %s, will be executed at boot", diskID, DisksPendingConfigFile),
+		})
+
+		metadata["status_emitted"] = true
+	}
 
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Disk %s marked for release, will be executed at boot", diskID),
 		},
+		Metadata: metadata,
 	}
 }
 

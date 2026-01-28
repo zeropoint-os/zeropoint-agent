@@ -14,7 +14,8 @@ type DeleteExposureExecutor struct {
 }
 
 // Execute runs the delete exposure command
-func (e *DeleteExposureExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *DeleteExposureExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	exposureID, ok := e.cmd.Args["exposure_id"].(string)
 	if !ok || exposureID == "" {
 		return ExecutionResult{

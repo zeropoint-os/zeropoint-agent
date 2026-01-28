@@ -14,7 +14,8 @@ type CreateLinkExecutor struct {
 }
 
 // Execute runs the create link command
-func (e *CreateLinkExecutor) Execute(ctx context.Context, callback ProgressCallback) ExecutionResult {
+func (e *CreateLinkExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	_ = metadata
 	linkID, ok := e.cmd.Args["link_id"].(string)
 	if !ok || linkID == "" {
 		return ExecutionResult{
