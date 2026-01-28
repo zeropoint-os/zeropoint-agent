@@ -25,26 +25,26 @@ func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback, 
 	}
 
 	// Check if this operation already completed in mounts.ini
-	existingResults, err := readMountResultsINI()
+	activeMounts, err := readMountResultsINI()
 	if err == nil {
 		id := sanitizeMountID(mountPoint)
-		for _, result := range existingResults {
-			if sanitizeMountID(result.MountPoint) == id {
-				// Operation already completed by boot service
-				if result.Status == "success" {
-					return ExecutionResult{
-						Status: StatusCompleted,
-						Result: map[string]interface{}{
-							"message": result.Message,
-							"status":  "success",
-						},
-					}
-				} else if result.Status == "error" {
-					return ExecutionResult{
-						Status:   StatusFailed,
-						ErrorMsg: result.Message,
-					}
+		if mountData, exists := activeMounts[id]; exists {
+			// Mount exists in mounts.ini - operation is complete
+			// (may have status/message fields, or may just be a pending entry moved to active)
+			if status := mountData["status"]; status == "error" {
+				// Explicitly failed at boot time
+				return ExecutionResult{
+					Status:   StatusFailed,
+					ErrorMsg: mountData["message"],
 				}
+			}
+			// Mount is in active mounts.ini file - operation succeeded
+			return ExecutionResult{
+				Status: StatusCompleted,
+				Result: map[string]interface{}{
+					"message": fmt.Sprintf("Mount %s is now active", mountPoint),
+					"status":  "success",
+				},
 			}
 		}
 	}
@@ -80,6 +80,20 @@ func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallba
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot create or modify root mount point"}
 	}
 
+	// Check if we already emitted status for this operation
+	if metadata["status_emitted"] == true {
+		return ExecutionResult{
+			Status: StatusPending,
+			Result: map[string]interface{}{
+				"message": fmt.Sprintf("Mount %s creation staged, awaiting boot", mountPoint),
+			},
+			Metadata: metadata,
+		}
+	}
+
+	// Mark that we're emitting status now
+	metadata["status_emitted"] = true
+
 	// Notify progress
 	callback(ProgressUpdate{
 		Status:  "in_progress",
@@ -99,6 +113,7 @@ func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallba
 		return ExecutionResult{
 			Status:   StatusFailed,
 			ErrorMsg: fmt.Sprintf("Failed to stage mount: %v", err),
+			Metadata: metadata,
 		}
 	}
 
@@ -112,6 +127,7 @@ func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallba
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Mount %s created in pending file, will be executed at boot", mountPoint),
 		},
+		Metadata: metadata,
 	}
 }
 
@@ -121,6 +137,20 @@ func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallba
 	if mountPoint == "/" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot delete root mount point"}
 	}
+
+	// Check if we already emitted status for this operation
+	if metadata["status_emitted"] == true {
+		return ExecutionResult{
+			Status: StatusPending,
+			Result: map[string]interface{}{
+				"message": fmt.Sprintf("Mount %s deletion staged, awaiting boot", mountPoint),
+			},
+			Metadata: metadata,
+		}
+	}
+
+	// Mark that we're emitting status now
+	metadata["status_emitted"] = true
 
 	// Notify progress
 	callback(ProgressUpdate{
@@ -141,6 +171,7 @@ func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallba
 		return ExecutionResult{
 			Status:   StatusFailed,
 			ErrorMsg: fmt.Sprintf("Failed to mark mount for deletion: %v", err),
+			Metadata: metadata,
 		}
 	}
 
@@ -154,6 +185,7 @@ func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallba
 		Result: map[string]interface{}{
 			"message": fmt.Sprintf("Mount %s marked for deletion, will be executed at boot", mountPoint),
 		},
+		Metadata: metadata,
 	}
 }
 

@@ -32,23 +32,14 @@ type EnqueueDeleteMountRequest struct {
 	DependsOn  []string `json:"depends_on,omitempty"`
 }
 
-// MountOperationResult represents a completed mount operation from mounts.ini
-type MountOperationResult struct {
-	MountPoint string
-	Status     string // "success" or "error"
-	Message    string
-	RequestID  string
-	Timestamp  string
-}
-
-// readMountResultsINI reads the /etc/zeropoint/mounts.ini file and returns completed operations
-// Returns slice of MountOperationResult for each mount in the file
-func readMountResultsINI() ([]MountOperationResult, error) {
+// readMountResultsINI reads the /etc/zeropoint/mounts.ini file and returns active mounts by sanitized mount ID
+// Returns map of sanitized mount ID -> mount data, matching the disk.ini format
+func readMountResultsINI() (map[string]map[string]string, error) {
 	configFile := MountsConfigFile
 
-	// If file doesn't exist, no completed operations yet
+	// If file doesn't exist, no active mounts yet
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return []MountOperationResult{}, nil
+		return make(map[string]map[string]string), nil
 	}
 
 	cfg, err := ini.Load(configFile)
@@ -56,23 +47,20 @@ func readMountResultsINI() ([]MountOperationResult, error) {
 		return nil, fmt.Errorf("failed to read mounts.ini: %w", err)
 	}
 
-	var results []MountOperationResult
+	mounts := make(map[string]map[string]string)
 	for _, section := range cfg.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
 
-		result := MountOperationResult{
-			MountPoint: section.Name(),
-			Status:     section.Key("status").String(),
-			Message:    section.Key("message").String(),
-			RequestID:  section.Key("request_id").String(),
-			Timestamp:  section.Key("timestamp").String(),
+		mountData := make(map[string]string)
+		for _, key := range section.Keys() {
+			mountData[key.Name()] = key.Value()
 		}
-		results = append(results, result)
+		mounts[section.Name()] = mountData
 	}
 
-	return results, nil
+	return mounts, nil
 }
 
 // readMountPendingINI reads the /etc/zeropoint/mounts.pending.ini file and returns pending operations
@@ -116,53 +104,59 @@ func (h *Handlers) ProcessMountsResults() error {
 
 	completedRequestIDs := make(map[string]bool)
 
-	for _, result := range results {
-		if result.RequestID == "" {
+	for _, mountData := range results {
+		requestID := mountData["request_id"]
+		if requestID == "" {
 			continue
 		}
 
 		// Validate that the job actually exists before processing
 		// This prevents errors if the boot service puts a placeholder like <JOB_ID>
-		_, err := h.manager.Get(result.RequestID)
+		_, err := h.manager.Get(requestID)
 		if err != nil {
-			h.logger.Warn("skipping mount result with non-existent job", "request_id", result.RequestID, "mount_point", result.MountPoint)
+			mountPoint := mountData["mount_point"]
+			h.logger.Warn("skipping mount result with non-existent job", "request_id", requestID, "mount_point", mountPoint)
 			continue
 		}
 
-		completedRequestIDs[result.RequestID] = true
-		h.logger.Info("processing mount result", "mount_point", result.MountPoint, "request_id", result.RequestID, "status", result.Status)
+		completedRequestIDs[requestID] = true
+		mountPoint := mountData["mount_point"]
+		status := mountData["status"]
+		h.logger.Info("processing mount result", "mount_point", mountPoint, "request_id", requestID, "status", status)
 
 		// Add completion event to job
 		eventType := "final"
-		if result.Status == "error" {
+		if status == "error" {
 			eventType = "error"
 		}
 
+		message := mountData["message"]
 		event := Event{
 			Timestamp: time.Now().UTC(),
 			Type:      eventType,
-			Message:   fmt.Sprintf("Boot-time mount execution: %s", result.Message),
+			Message:   fmt.Sprintf("Boot-time mount execution: %s", message),
 		}
 
-		if err := h.manager.AppendEvent(result.RequestID, event); err != nil {
-			h.logger.Error("failed to append completion event", "job_id", result.RequestID, "error", err)
+		if err := h.manager.AppendEvent(requestID, event); err != nil {
+			h.logger.Error("failed to append completion event", "job_id", requestID, "error", err)
 		}
 
 		// Mark job as complete or error using UpdateStatus
 		completionTime := time.Now().UTC()
 		jobResult := map[string]interface{}{
-			"mount_point": result.MountPoint,
+			"mount_point": mountPoint,
 			"status":      "completed_at_boot",
-			"message":     result.Message,
+			"message":     message,
 		}
 
-		if result.Status == "success" {
-			if err := h.manager.UpdateStatus(result.RequestID, StatusCompleted, nil, &completionTime, jobResult, ""); err != nil {
-				h.logger.Error("failed to mark job complete", "job_id", result.RequestID, "error", err)
+		if status == "success" || status == "" {
+			// Empty status means it was moved to mounts.ini without explicit status (already active)
+			if err := h.manager.UpdateStatus(requestID, StatusCompleted, nil, &completionTime, jobResult, ""); err != nil {
+				h.logger.Error("failed to mark job complete", "job_id", requestID, "error", err)
 			}
-		} else if result.Status == "error" {
-			if err := h.manager.UpdateStatus(result.RequestID, StatusFailed, nil, &completionTime, jobResult, result.Message); err != nil {
-				h.logger.Error("failed to mark job error", "job_id", result.RequestID, "error", err)
+		} else if status == "error" {
+			if err := h.manager.UpdateStatus(requestID, StatusFailed, nil, &completionTime, jobResult, message); err != nil {
+				h.logger.Error("failed to mark job error", "job_id", requestID, "error", err)
 			}
 		}
 	}
