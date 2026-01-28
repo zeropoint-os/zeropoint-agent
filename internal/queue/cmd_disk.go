@@ -24,6 +24,24 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, m
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk id is required"}
 	}
 
+	// For manage operations: check if disk is already in disks.ini
+	// If it is, the manage operation completed
+	if e.operation == "manage" {
+		managedDisks, err := readDisksINI()
+		if err == nil {
+			if _, isManaged := managedDisks[diskID]; isManaged {
+				// Disk is already in managed list - manage operation completed
+				return ExecutionResult{
+					Status: StatusCompleted,
+					Result: map[string]interface{}{
+						"message": "Disk management completed",
+						"status":  "success",
+					},
+				}
+			}
+		}
+	}
+
 	// For release operations: check if disk is still managed
 	// If it's no longer in disks.ini, the release completed successfully
 	if e.operation == "release" {
@@ -37,30 +55,6 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, m
 						"message": "Disk release completed",
 						"status":  "success",
 					},
-				}
-			}
-		}
-	}
-
-	// Check if this operation already completed in disks.ini (for manage operations)
-	existingResults, err := readStorageResultsINI()
-	if err == nil {
-		for _, result := range existingResults {
-			if result.DiskID == diskID {
-				// Operation already completed by boot service
-				if result.Status == "success" {
-					return ExecutionResult{
-						Status: StatusCompleted,
-						Result: map[string]interface{}{
-							"message": result.Message,
-							"status":  "success",
-						},
-					}
-				} else if result.Status == "error" {
-					return ExecutionResult{
-						Status:   StatusFailed,
-						ErrorMsg: result.Message,
-					}
 				}
 			}
 		}

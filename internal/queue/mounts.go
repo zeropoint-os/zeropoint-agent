@@ -121,6 +121,14 @@ func (h *Handlers) ProcessMountsResults() error {
 			continue
 		}
 
+		// Validate that the job actually exists before processing
+		// This prevents errors if the boot service puts a placeholder like <JOB_ID>
+		_, err := h.manager.Get(result.RequestID)
+		if err != nil {
+			h.logger.Warn("skipping mount result with non-existent job", "request_id", result.RequestID, "mount_point", result.MountPoint)
+			continue
+		}
+
 		completedRequestIDs[result.RequestID] = true
 		h.logger.Info("processing mount result", "mount_point", result.MountPoint, "request_id", result.RequestID, "status", result.Status)
 

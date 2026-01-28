@@ -109,6 +109,14 @@ func (h *Handlers) ProcessPathsResults() error {
 			continue
 		}
 
+		// Validate that the job actually exists before processing
+		// This prevents errors if the boot service puts a placeholder like <JOB_ID>
+		_, err := h.manager.Get(result.RequestID)
+		if err != nil {
+			h.logger.Warn("skipping path result with non-existent job", "request_id", result.RequestID, "path_id", result.PathID)
+			continue
+		}
+
 		completedRequestIDs[result.RequestID] = true
 		h.logger.Info("processing path result", "path_id", result.PathID, "request_id", result.RequestID, "operation", result.Operation, "status", result.Status)
 
