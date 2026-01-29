@@ -143,23 +143,23 @@ func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, expo
 			logger:    logger,
 			operation: "delete",
 		}
-	case CmdEditPath:
-		return &PathExecutor{
-			cmd:       c,
-			logger:    logger,
-			operation: "edit",
-		}
 	case CmdAddPath:
 		return &PathExecutor{
 			cmd:       c,
 			logger:    logger,
-			operation: "add",
+			operation: "create",
 		}
 	case CmdDeletePath:
 		return &PathExecutor{
 			cmd:       c,
 			logger:    logger,
 			operation: "delete",
+		}
+	case CmdEditPath:
+		return &PathExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "edit",
 		}
 	default:
 		return &UnknownCommandExecutor{

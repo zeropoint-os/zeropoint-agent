@@ -11,49 +11,32 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-// Path represents a configured path for storage or modules
+// MountPath represents a configured path for mount-based storage
 //
-// swagger:model Path
-type Path struct {
-	ID           string `json:"id"`             // Unique identifier (zp_* for system paths)
-	Name         string `json:"name"`           // Human-readable name
-	Path         string `json:"path"`           // Filesystem path
-	MountID      string `json:"mount_id"`       // Mount ID that this path belongs to (stable reference)
-	IsSystemPath bool   `json:"is_system_path"` // True if zp_* prefix (system-managed)
-	Status       string `json:"status"`         // "active", "pending", or "user"
-	Description  string `json:"description"`    // Optional description for user paths
+// swagger:model MountPath
+type MountPath struct {
+	ID         string `json:"id"`                    // Unique identifier (e.g., path_mnt_mnt_storage_media)
+	Mount      string `json:"mount"`                 // Mount ID this path belongs to (FK)
+	PathSuffix string `json:"path_suffix"`           // Subdirectory name (e.g., "media", "photos")
+	Status     string `json:"status"`                // "active" or "pending"
+	MountPoint string `json:"mount_point,omitempty"` // Enriched: actual mount path from mounts.ini
+	FullPath   string `json:"full_path,omitempty"`   // Enriched: full path (mount_point + path_suffix)
 }
 
-// CreatePathRequest is the request to create a user path
+// MountPathsResponse is the response for list paths
 //
-// swagger:model CreatePathRequest
-type CreatePathRequest struct {
-	Name        string `json:"name"`        // Human-readable name
-	Path        string `json:"path"`        // Filesystem path
-	Description string `json:"description"` // Optional description
+// swagger:model MountPathsResponse
+type MountPathsResponse struct {
+	Paths []MountPath `json:"paths"`
 }
 
-// UpdatePathRequest is the request to update a system path
-//
-// swagger:model UpdatePathRequest
-type UpdatePathRequest struct {
-	NewPath string `json:"new_path"` // New filesystem path
-}
-
-// PathsResponse is the response for list paths
-//
-// swagger:model PathsResponse
-type PathsResponse struct {
-	Paths []Path `json:"paths"`
-}
-
-// readPathsINI reads the paths.ini file (all active paths)
-func readPathsINI() ([]Path, error) {
+// readMountPathsINI reads the active paths.ini file (mount-based paths)
+func readMountPathsINI() ([]MountPath, error) {
 	configFile := "/etc/zeropoint/paths.ini"
 
 	// If file doesn't exist, return empty list
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return []Path{}, nil
+		return []MountPath{}, nil
 	}
 
 	cfg, err := ini.Load(configFile)
@@ -61,21 +44,17 @@ func readPathsINI() ([]Path, error) {
 		return nil, fmt.Errorf("failed to read paths.ini: %w", err)
 	}
 
-	var paths []Path
+	var paths []MountPath
 	for _, section := range cfg.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
 
-		pathID := section.Name()
-		path := Path{
-			ID:           pathID,
-			Name:         section.Key("name").String(),
-			Path:         section.Key("path").String(),
-			MountID:      section.Key("mount_id").String(),
-			IsSystemPath: section.Key("is_system_path").MustBool(false),
-			Status:       "active",
-			Description:  section.Key("description").String(),
+		path := MountPath{
+			ID:         section.Name(),
+			Mount:      section.Key("mount").String(),
+			PathSuffix: section.Key("path_suffix").String(),
+			Status:     "active",
 		}
 		paths = append(paths, path)
 	}
@@ -83,13 +62,13 @@ func readPathsINI() ([]Path, error) {
 	return paths, nil
 }
 
-// readPathsPendingINI reads the paths.pending.ini file (pending operations for all paths)
-func readPathsPendingINI() ([]Path, error) {
+// readMountPathsPendingINI reads the pending paths.pending.ini file
+func readMountPathsPendingINI() ([]MountPath, error) {
 	configFile := "/etc/zeropoint/paths.pending.ini"
 
 	// If file doesn't exist, return empty list
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return []Path{}, nil
+		return []MountPath{}, nil
 	}
 
 	cfg, err := ini.Load(configFile)
@@ -97,21 +76,17 @@ func readPathsPendingINI() ([]Path, error) {
 		return nil, fmt.Errorf("failed to read paths.pending.ini: %w", err)
 	}
 
-	var paths []Path
+	var paths []MountPath
 	for _, section := range cfg.Sections() {
 		if section.Name() == ini.DefaultSection {
 			continue
 		}
 
-		pathID := section.Name()
-		path := Path{
-			ID:           pathID,
-			Name:         section.Key("name").String(),
-			Path:         section.Key("path").String(),
-			MountID:      section.Key("mount_id").String(),
-			IsSystemPath: section.Key("is_system_path").MustBool(false),
-			Status:       "pending",
-			Description:  section.Key("description").String(),
+		path := MountPath{
+			ID:         section.Name(),
+			Mount:      section.Key("mount").String(),
+			PathSuffix: section.Key("path_suffix").String(),
+			Status:     "pending",
 		}
 		paths = append(paths, path)
 	}
@@ -119,248 +94,135 @@ func readPathsPendingINI() ([]Path, error) {
 	return paths, nil
 }
 
-// ListPaths handles GET /api/storage/paths
-// Returns active system paths from paths.ini plus any pending changes and user paths
-//
-// @Summary List configured paths
-// @Description Returns list of configured paths (system and user)
+// ListPaths handles GET /api/storage/paths (mount-based)
+// @Summary List configured paths (mount-based)
+// @Description Returns list of configured mount-based paths with enriched mount information
 // @Tags storage
 // @Produce json
-// @Success 200 {object} PathsResponse
-// @Failure 500 {object} map[string]string
+// @Success 200 {object} MountPathsResponse
+// @Failure 500 {string} string "Internal server error"
 // @Router /api/storage/paths [get]
 func (e *apiEnv) ListPaths(w http.ResponseWriter, r *http.Request) {
-	// Get active system paths
-	activePaths, err := readPathsINI()
+	// Get active paths
+	activePaths, err := readMountPathsINI()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to read paths: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Get pending paths
-	pendingPaths, err := readPathsPendingINI()
+	pendingPaths, err := readMountPathsPendingINI()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to read pending paths: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Combine: active paths + pending updates
-	// Pending paths override active ones if same ID
-	pathMap := make(map[string]Path)
+	// Merge active and pending, with pending taking precedence
+	pathMap := make(map[string]MountPath)
 	for _, p := range activePaths {
 		pathMap[p.ID] = p
 	}
 	for _, p := range pendingPaths {
-		// Check if it's a deletion marker (empty path)
-		if p.Path == "" {
-			delete(pathMap, p.ID)
-		} else {
-			pathMap[p.ID] = p
-		}
+		pathMap[p.ID] = p
 	}
 
-	// Convert map back to slice
-	var allPaths []Path
+	// Convert map to slice and sort
+	var allPaths []MountPath
 	for _, p := range pathMap {
 		allPaths = append(allPaths, p)
 	}
 
-	// Sort by path for stable ordering
 	sort.Slice(allPaths, func(i, j int) bool {
-		return allPaths[i].Path < allPaths[j].Path
+		return allPaths[i].ID < allPaths[j].ID
 	})
 
-	response := PathsResponse{Paths: allPaths}
+	// Enrich with mount point information
+	activeMounts, err := readMountsINI()
+	if err != nil {
+		// Log the warning if logger available
+	}
+
+	// Build mount map for quick lookup
+	mountMap := make(map[string]Mount)
+	for _, m := range activeMounts {
+		mountMap[m.ID] = m
+	}
+
+	// Enrich paths with mount information
+	for i := range allPaths {
+		if mount, exists := mountMap[allPaths[i].Mount]; exists {
+			allPaths[i].MountPoint = mount.MountPoint
+			allPaths[i].FullPath = mount.MountPoint + "/" + allPaths[i].PathSuffix
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(MountPathsResponse{Paths: allPaths})
 }
 
-// GetPath handles GET /api/storage/paths/{id}
-// Returns a single path by ID
-//
-// @Summary Get a single path
-// @Description Returns detailed information for a single path
+// GetPath handles GET /api/storage/paths/{id} (mount-based)
+// @Summary Get a specific path by ID
+// @Description Returns details about a specific mount-based path including enriched mount information
 // @Tags storage
 // @Produce json
 // @Param id path string true "Path ID"
-// @Success 200 {object} Path
-// @Failure 404 {object} map[string]string
-// @Failure 500 {object} map[string]string
+// @Success 200 {object} MountPath
+// @Failure 404 {string} string "Path not found"
+// @Failure 500 {string} string "Internal server error"
 // @Router /api/storage/paths/{id} [get]
 func (e *apiEnv) GetPath(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
+	pathID := mux.Vars(r)["id"]
 
-	// Check pending first
-	pendingPaths, err := readPathsPendingINI()
-	if err == nil {
-		for _, p := range pendingPaths {
-			if p.ID == id {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(p)
-				return
+	// Read active paths
+	activePaths, err := readMountPathsINI()
+	if err != nil {
+		http.Error(w, "failed to read paths", http.StatusInternalServerError)
+		return
+	}
+
+	// Read pending paths
+	pendingPaths, err := readMountPathsPendingINI()
+	if err != nil {
+		http.Error(w, "failed to read pending paths", http.StatusInternalServerError)
+		return
+	}
+
+	// Search in both active and pending
+	var foundPath *MountPath
+	for i := range activePaths {
+		if activePaths[i].ID == pathID {
+			foundPath = &activePaths[i]
+			break
+		}
+	}
+	if foundPath == nil {
+		for i := range pendingPaths {
+			if pendingPaths[i].ID == pathID {
+				foundPath = &pendingPaths[i]
+				break
 			}
 		}
 	}
 
-	// Check active
-	activePaths, err := readPathsINI()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	for _, p := range activePaths {
-		if p.ID == id {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(p)
-			return
-		}
-	}
-
-	http.Error(w, "path not found", http.StatusNotFound)
-}
-
-// CreatePath handles POST /api/storage/paths
-// Creates a user path - delegates to queue system
-//
-// @Summary Create a user path
-// @Description Enqueues user path creation (applied immediately)
-// @Tags storage
-// @Accept json
-// @Produce json
-// @Param body body CreatePathRequest true "Path details"
-// @Success 201 {object} Path "Path created"
-// @Failure 400 {string} string "Bad request"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/storage/paths [post]
-func (e *apiEnv) CreatePath(w http.ResponseWriter, r *http.Request) {
-	var req CreatePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Validate required fields
-	if req.Name == "" || req.Path == "" {
-		http.Error(w, "name and path are required", http.StatusBadRequest)
-		return
-	}
-
-	// Return a user path response (actual job creation happens via queue endpoint)
-	path := Path{
-		ID:           sanitizeID(req.Name),
-		Name:         req.Name,
-		Path:         req.Path,
-		IsSystemPath: false,
-		Status:       "user",
-		Description:  req.Description,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(path)
-}
-
-// UpdatePath handles PUT /api/storage/paths/{id}
-// Updates a system path - delegates to queue system
-//
-// @Summary Update a system path
-// @Description Enqueues system path update (executed at boot)
-// @Tags storage
-// @Accept json
-// @Produce json
-// @Param id path string true "Path ID"
-// @Param body body UpdatePathRequest true "New path details"
-// @Success 200 {object} Path "Path staged for boot-time execution"
-// @Failure 400 {string} string "Bad request"
-// @Failure 404 {string} string "Path not found"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/storage/paths/{id} [put]
-func (e *apiEnv) UpdatePath(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	var req UpdatePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.NewPath == "" {
-		http.Error(w, "new_path is required", http.StatusBadRequest)
-		return
-	}
-
-	// Verify path exists
-	activePaths, err := readPathsINI()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	found := false
-	var existingPath Path
-	for _, p := range activePaths {
-		if p.ID == id {
-			found = true
-			existingPath = p
-			break
-		}
-	}
-
-	if !found {
+	if foundPath == nil {
 		http.Error(w, "path not found", http.StatusNotFound)
 		return
 	}
 
-	// Return pending path response (actual job creation happens via queue endpoint)
-	path := Path{
-		ID:           existingPath.ID,
-		Name:         existingPath.Name,
-		Path:         req.NewPath,
-		MountID:      existingPath.MountID,
-		IsSystemPath: true,
-		Status:       "pending",
-		Description:  existingPath.Description,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(path)
-}
-
-// DeletePath handles DELETE /api/storage/paths/{id}
-// Deletes a user path - delegates to queue system
-// System paths (zp_* prefix) cannot be deleted
-//
-// @Summary Delete a path
-// @Description Enqueues path deletion (user paths immediate, system paths rejected)
-// @Tags storage
-// @Produce json
-// @Param id path string true "Path ID"
-// @Success 200 {object} map[string]string
-// @Failure 400 {string} string "Cannot delete system path"
-// @Failure 404 {string} string "Path not found"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/storage/paths/{id} [delete]
-func (e *apiEnv) DeletePath(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
-
-	// Check if path exists and is not system path
-	activePaths, err := readPathsINI()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	for _, p := range activePaths {
-		if p.ID == id && p.IsSystemPath {
-			http.Error(w, "cannot delete system paths", http.StatusBadRequest)
-			return
+	// Enrich with mount point
+	activeMounts, err := readMountsINI()
+	if err == nil {
+		for _, m := range activeMounts {
+			if m.ID == foundPath.Mount {
+				foundPath.MountPoint = m.MountPoint
+				foundPath.FullPath = m.MountPoint + "/" + foundPath.PathSuffix
+				break
+			}
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	json.NewEncoder(w).Encode(foundPath)
 }
+
+// CreatePathRequest is the request to create a user path

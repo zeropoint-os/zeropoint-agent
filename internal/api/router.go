@@ -184,9 +184,8 @@ func NewRouter(dockerClient *client.Client, xdsServer *xds.Server, mdnsService M
 	r.HandleFunc("/api/jobs/enqueue_release_disk", queueHandlers.EnqueueReleaseDisk).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_create_mount", queueHandlers.EnqueueCreateMount).Methods(http.MethodPost)
 	r.HandleFunc("/api/jobs/enqueue_delete_mount", queueHandlers.EnqueueDeleteMount).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_add_path", queueHandlers.EnqueueAddPath).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_edit_path", queueHandlers.EnqueueEditPath).Methods(http.MethodPost)
-	r.HandleFunc("/api/jobs/enqueue_delete_path", queueHandlers.EnqueueDeletePath).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_create_path", queueHandlers.EnqueueCreatePathMount).Methods(http.MethodPost)
+	r.HandleFunc("/api/jobs/enqueue_delete_path", queueHandlers.EnqueueDeletePathMount).Methods(http.MethodPost)
 
 	// Storage discovery endpoints
 	r.HandleFunc("/api/storage/disks", env.ListDisks).Methods(http.MethodGet)

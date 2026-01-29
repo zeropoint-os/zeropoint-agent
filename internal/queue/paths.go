@@ -3,6 +3,7 @@ package queue
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"gopkg.in/ini.v1"
@@ -13,6 +14,36 @@ const (
 	PathsPendingConfigFile = "/etc/zeropoint/paths.pending.ini"
 	PathsConfigFile        = "/etc/zeropoint/paths.ini"
 )
+
+// EnqueueCreateMountPathRequest is the request to create a path within a mount
+//
+// swagger:model EnqueueCreateMountPathRequest
+type EnqueueCreateMountPathRequest struct {
+	Mount      string   `json:"mount"`       // Mount ID (FK to mounts)
+	PathSuffix string   `json:"path_suffix"` // Subdirectory name (e.g., "media", "photos")
+	DependsOn  []string `json:"depends_on,omitempty"`
+}
+
+// EnqueueDeleteMountPathRequest is the request to delete a path within a mount
+//
+// swagger:model EnqueueDeleteMountPathRequest
+type EnqueueDeleteMountPathRequest struct {
+	Mount      string   `json:"mount"`       // Mount ID (FK to mounts)
+	PathSuffix string   `json:"path_suffix"` // Subdirectory name
+	DependsOn  []string `json:"depends_on,omitempty"`
+}
+
+// PathInfo represents a path entry (active or pending)
+//
+// swagger:model PathInfo
+type PathInfo struct {
+	ID         string `json:"id"`    // Path ID (sanitized)
+	Mount      string `json:"mount"` // Mount ID (FK)
+	PathSuffix string `json:"path_suffix"`
+	Status     string `json:"status"`                // "active" or "pending"
+	MountPoint string `json:"mount_point,omitempty"` // Enriched: actual mount path
+	FullPath   string `json:"full_path,omitempty"`   // Enriched: full path (mount_point + path_suffix)
+}
 
 // PathOperationResult represents a completed path operation from paths.ini
 type PathOperationResult struct {
@@ -89,6 +120,187 @@ func readPathPendingINI() (map[string]string, error) {
 	}
 
 	return pending, nil
+}
+
+// readPathsActivINI reads the /etc/zeropoint/paths.ini file and returns active paths by sanitized path ID
+// Returns map of sanitized path ID -> path data, matching the disk/mount.ini format
+func readPathsActivINI() (map[string]map[string]string, error) {
+	configFile := PathsConfigFile
+
+	// If file doesn't exist, no active paths yet
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return make(map[string]map[string]string), nil
+	}
+
+	cfg, err := ini.Load(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read paths.ini: %w", err)
+	}
+
+	paths := make(map[string]map[string]string)
+	for _, section := range cfg.Sections() {
+		if section.Name() == ini.DefaultSection {
+			continue
+		}
+
+		pathData := make(map[string]string)
+		for _, key := range section.Keys() {
+			pathData[key.Name()] = key.Value()
+		}
+		paths[section.Name()] = pathData
+	}
+
+	return paths, nil
+}
+
+// readPathsPendingINI (mount-based) reads the /etc/zeropoint/paths.pending.ini file
+func readPathsPendingINI() (map[string]map[string]string, error) {
+	configFile := PathsPendingConfigFile
+
+	// If file doesn't exist, no pending paths
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return make(map[string]map[string]string), nil
+	}
+
+	cfg, err := ini.Load(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read paths.pending.ini: %w", err)
+	}
+
+	paths := make(map[string]map[string]string)
+	for _, section := range cfg.Sections() {
+		if section.Name() == ini.DefaultSection {
+			continue
+		}
+
+		pathData := make(map[string]string)
+		for _, key := range section.Keys() {
+			pathData[key.Name()] = key.Value()
+		}
+		paths[section.Name()] = pathData
+	}
+
+	return paths, nil
+}
+
+// writePathsPendingINI writes path creation/deletion spec to paths.pending.ini
+func writePathsPendingINI(pathID string, args map[string]interface{}) error {
+	configFile := PathsPendingConfigFile
+
+	// Load existing file or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var errLoad error
+		cfg, errLoad = ini.Load(configFile)
+		if errLoad != nil {
+			return fmt.Errorf("failed to load paths.pending.ini: %w", errLoad)
+		}
+	}
+
+	// Create or update section
+	section, err := cfg.NewSection(pathID)
+	if err != nil {
+		return fmt.Errorf("failed to create section: %w", err)
+	}
+
+	// Write mount (FK)
+	mount, ok := args["mount"].(string)
+	if !ok || mount == "" {
+		return fmt.Errorf("mount is required")
+	}
+	section.Key("mount").SetValue(mount)
+
+	// Write path_suffix
+	pathSuffix, ok := args["path_suffix"].(string)
+	if !ok || pathSuffix == "" {
+		return fmt.Errorf("path_suffix is required")
+	}
+	section.Key("path_suffix").SetValue(pathSuffix)
+
+	// Save file
+	return cfg.SaveTo(configFile)
+}
+
+// markPathForDeletion marks a path for deletion in paths.pending.ini with [!pathID] section
+func markPathForDeletion(pathID string) error {
+	configDir := "/etc/zeropoint"
+	configFile := PathsPendingConfigFile
+
+	// Create config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Load existing INI or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var loadErr error
+		cfg, loadErr = ini.Load(configFile)
+		if loadErr != nil {
+			cfg = ini.Empty()
+		}
+	}
+
+	// Create deletion marker section [!pathID]
+	sectionName := "!" + pathID
+	section, err := cfg.NewSection(sectionName)
+	if err != nil {
+		section, _ = cfg.GetSection(sectionName)
+	}
+
+	// Empty section indicates deletion
+	_ = section
+
+	// Write file
+	if err := cfg.SaveTo(configFile); err != nil {
+		return fmt.Errorf("failed to write paths.pending.ini: %w", err)
+	}
+
+	// Ensure proper file permissions
+	if err := os.Chmod(configFile, 0600); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return nil
+}
+
+// sanitizePathID converts a mount + path_suffix to a valid INI section ID
+// Format: path_<mount>_<suffix> e.g., path_mnt_mnt_storage_media
+func sanitizePathID(mount, pathSuffix string) string {
+	result := "path_" + mount + "_" + pathSuffix
+	for i, c := range result {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
+			result = result[:i] + "_" + result[i+1:]
+		}
+	}
+	return result
+}
+
+// ValidatePathSuffix ensures path_suffix doesn't contain directory traversal or absolute paths
+func ValidatePathSuffix(pathSuffix string) error {
+	if pathSuffix == "" {
+		return fmt.Errorf("path_suffix cannot be empty")
+	}
+
+	if pathSuffix[0] == '/' {
+		return fmt.Errorf("path_suffix cannot start with /")
+	}
+
+	if pathSuffix == ".." || pathSuffix == "." {
+		return fmt.Errorf("path_suffix cannot be . or ..")
+	}
+
+	// Check for directory traversal patterns
+	if matched, _ := regexp.MatchString(`(^|\/)\.\.(/|$)`, pathSuffix); matched {
+		return fmt.Errorf("path_suffix cannot contain .. traversal")
+	}
+
+	// Only allow alphanumeric, underscores, hyphens, and forward slashes (for nested paths)
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_\-/]+$`, pathSuffix); !matched {
+		return fmt.Errorf("path_suffix contains invalid characters")
+	}
+
+	return nil
 }
 
 // ProcessPathsResults processes completed path operations and updates job status

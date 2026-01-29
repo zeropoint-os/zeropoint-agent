@@ -2,6 +2,7 @@ package queue
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -1239,61 +1240,56 @@ func (h *Handlers) CancelJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// EnqueueAddPath enqueues a request to add a new path.
-// Paths with zp_* prefix are rejected (system paths are read-only).
-// @Summary Add a new path
-// @Description Enqueues a path creation. User paths are created immediately, system paths (zp_* prefix) are rejected.
+// EnqueueCreatePathMount handles POST /jobs/enqueue_create_path (for mount-based paths)
+// @ID enqueueCreatePathMount
+// @Summary Enqueue a path creation job (mount-based)
+// @Description Enqueue a path creation to be executed at boot time. Creates a subdirectory within a mount. The path creation will be staged in /etc/zeropoint/paths.pending.ini and executed by the systemd boot service.
 // @Tags jobs
 // @Accept json
 // @Produce json
-// @Param body body EnqueueAddPathRequest true "Add path request"
-// @Success 201 {object} JobResponse
-// @Failure 400 {string} string "Bad request (cannot add system path with zp_ prefix)"
+// @Param body body EnqueueCreateMountPathRequest true "Path creation request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
-// @Router /api/jobs/enqueue_add_path [post]
-func (h *Handlers) EnqueueAddPath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueAddPathRequest
+// @Router /jobs/enqueue_create_path [post]
+func (h *Handlers) EnqueueCreatePathMount(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueCreateMountPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.ID == "" || req.Name == "" || req.Path == "" || req.MountID == "" {
-		http.Error(w, "id, name, path, and mount_id are required", http.StatusBadRequest)
+	// Validate required fields
+	if req.Mount == "" {
+		http.Error(w, "mount is required", http.StatusBadRequest)
+		return
+	}
+	if req.PathSuffix == "" {
+		http.Error(w, "path_suffix is required", http.StatusBadRequest)
 		return
 	}
 
-	// Reject paths with zp_ prefix (system paths)
-	if strings.HasPrefix(req.ID, "zp_") {
-		http.Error(w, "cannot add system path (zp_* prefix is reserved)", http.StatusBadRequest)
+	// Validate path_suffix
+	if err := ValidatePathSuffix(req.PathSuffix); err != nil {
+		http.Error(w, fmt.Sprintf("invalid path_suffix: %v", err), http.StatusBadRequest)
 		return
-	}
-
-	// Cancel any existing jobs operating on the same path_id
-	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
-	if err == nil {
-		for _, job := range existingJobs {
-			if err := h.manager.Cancel(job.ID); err != nil {
-				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
-			}
-		}
 	}
 
 	jobID, err := h.manager.Enqueue(Command{
 		Type: CmdAddPath,
 		Args: map[string]interface{}{
-			"path_id":     req.ID,
-			"name":        req.Name,
-			"path":        req.Path,
-			"mount_id":    req.MountID,
-			"description": req.Description,
+			"mount":       req.Mount,
+			"path_suffix": req.PathSuffix,
 		},
 	}, req.DependsOn)
+
 	if err != nil {
-		h.logger.Error("failed to enqueue add path job", "error", err)
+		h.logger.Error("failed to enqueue path creation", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	h.logger.Info("path creation job enqueued", "job_id", jobID, "mount", req.Mount, "path_suffix", req.PathSuffix)
 
 	job, err := h.manager.Get(jobID)
 	if err != nil {
@@ -1307,122 +1303,56 @@ func (h *Handlers) EnqueueAddPath(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-// EnqueueEditPath enqueues a request to edit a path.
-// System paths (zp_* prefix) can be edited and changes are staged for boot-time application.
-// User paths are edited immediately.
-// @Summary Edit an existing path
-// @Description Enqueues a path edit. System paths are staged for boot, user paths are applied immediately.
+// EnqueueDeletePathMount handles DELETE path requests for mount-based paths
+// @ID enqueueDeletePathMount
+// @Summary Enqueue a path deletion job (mount-based)
+// @Description Enqueue a path deletion to be executed at boot time. Removes a subdirectory within a mount. The path removal will be staged in /etc/zeropoint/paths.pending.ini and executed by the systemd boot service.
 // @Tags jobs
 // @Accept json
 // @Produce json
-// @Param body body EnqueueEditPathRequest true "Edit path request"
-// @Success 201 {object} JobResponse
+// @Param body body EnqueueDeleteMountPathRequest true "Path deletion request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
 // @Failure 400 {string} string "Bad request"
 // @Failure 500 {string} string "Internal server error"
-// @Router /api/jobs/enqueue_edit_path [post]
-func (h *Handlers) EnqueueEditPath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueEditPathRequest
+// @Router /jobs/enqueue_delete_path [post]
+func (h *Handlers) EnqueueDeletePathMount(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueDeleteMountPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.ID == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
+	// Validate required fields
+	if req.Mount == "" {
+		http.Error(w, "mount is required", http.StatusBadRequest)
+		return
+	}
+	if req.PathSuffix == "" {
+		http.Error(w, "path_suffix is required", http.StatusBadRequest)
 		return
 	}
 
-	// Cancel any existing jobs operating on the same path_id
-	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
-	if err == nil {
-		for _, job := range existingJobs {
-			if err := h.manager.Cancel(job.ID); err != nil {
-				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
-			}
-		}
-	}
-
-	// Always use CmdEditPath - the executor determines behavior based on is_system_path
-	jobID, err := h.manager.Enqueue(Command{
-		Type: CmdEditPath,
-		Args: map[string]interface{}{
-			"path_id":     req.ID,
-			"name":        req.Name,
-			"new_path":    req.Path,
-			"old_path":    req.OldPath,
-			"mount_id":    req.MountID,
-			"description": req.Description,
-		},
-	}, req.DependsOn)
-	if err != nil {
-		h.logger.Error("failed to enqueue edit path job", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Validate path_suffix
+	if err := ValidatePathSuffix(req.PathSuffix); err != nil {
+		http.Error(w, fmt.Sprintf("invalid path_suffix: %v", err), http.StatusBadRequest)
 		return
-	}
-
-	job, err := h.manager.Get(jobID)
-	if err != nil {
-		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
-		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(job)
-}
-
-// EnqueueDeletePath enqueues a request to delete a path.
-// System paths (zp_* prefix) cannot be deleted and will return an error.
-// @Summary Delete an existing path
-// @Description Enqueues a path deletion. System paths (zp_* prefix) cannot be deleted and will fail.
-// @Tags jobs
-// @Accept json
-// @Produce json
-// @Param body body EnqueueDeletePathRequest true "Delete path request"
-// @Success 201 {object} JobResponse
-// @Failure 400 {string} string "Bad request (cannot delete system path)"
-// @Failure 500 {string} string "Internal server error"
-// @Router /api/jobs/enqueue_delete_path [post]
-func (h *Handlers) EnqueueDeletePath(w http.ResponseWriter, r *http.Request) {
-	var req EnqueueDeletePathRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.ID == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
-	}
-
-	// Reject system path deletion
-	if strings.HasPrefix(req.ID, "zp_") {
-		http.Error(w, "cannot delete system path (zp_* prefix is reserved)", http.StatusBadRequest)
-		return
-	}
-
-	// Cancel any existing jobs operating on the same path_id
-	existingJobs, err := FindJobsByResourceID(h.manager, "path_id", req.ID, CmdAddPath, CmdEditPath, CmdDeletePath)
-	if err == nil {
-		for _, job := range existingJobs {
-			if err := h.manager.Cancel(job.ID); err != nil {
-				h.logger.Warn("failed to cancel previous job", "job_id", job.ID, "error", err)
-			}
-		}
 	}
 
 	jobID, err := h.manager.Enqueue(Command{
 		Type: CmdDeletePath,
 		Args: map[string]interface{}{
-			"path_id": req.ID,
+			"mount":       req.Mount,
+			"path_suffix": req.PathSuffix,
 		},
 	}, req.DependsOn)
+
 	if err != nil {
-		h.logger.Error("failed to enqueue delete path job", "error", err)
+		h.logger.Error("failed to enqueue path deletion", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	h.logger.Info("path deletion job enqueued", "job_id", jobID, "mount", req.Mount, "path_suffix", req.PathSuffix)
 
 	job, err := h.manager.Get(jobID)
 	if err != nil {

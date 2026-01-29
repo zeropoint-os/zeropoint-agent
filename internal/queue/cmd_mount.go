@@ -9,6 +9,12 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+// Mount execution phases
+const (
+	mountPhaseWritePending = "write_pending" // Phase 1: Write [mnt_*] to mounts.pending.ini
+	mountPhaseCheckActive  = "check_active"  // Phase 2: Check if mount moved to mounts.ini
+)
+
 // MountExecutor handles both create and delete mount operations
 type MountExecutor struct {
 	cmd       Command
@@ -16,52 +22,54 @@ type MountExecutor struct {
 	operation string // "create" or "delete"
 }
 
-// Execute stages the mount operation for boot-time execution
-// Retryable: if the operation was already completed by the boot service, returns StatusCompleted
+// Execute handles the two-phase mount operation lifecycle:
+// Phase 1: Write marker to mounts.pending.ini (returns StatusPending)
+// Phase 2: Check if entry moved to mounts.ini (returns StatusCompleted or StatusPending)
 func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	mountPoint, ok := e.cmd.Args["mount_point"].(string)
 	if !ok || mountPoint == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "mount_point is required"}
 	}
 
-	// Check if this operation already completed in mounts.ini
-	activeMounts, err := readMountResultsINI()
-	if err == nil {
-		id := sanitizeMountID(mountPoint)
-		if mountData, exists := activeMounts[id]; exists {
-			// Mount exists in mounts.ini - operation is complete
-			// (may have status/message fields, or may just be a pending entry moved to active)
-			if status := mountData["status"]; status == "error" {
-				// Explicitly failed at boot time
-				return ExecutionResult{
-					Status:   StatusFailed,
-					ErrorMsg: mountData["message"],
-				}
-			}
-			// Mount is in active mounts.ini file - operation succeeded
-			return ExecutionResult{
-				Status: StatusCompleted,
-				Result: map[string]interface{}{
-					"message": fmt.Sprintf("Mount %s is now active", mountPoint),
-					"status":  "success",
-				},
-			}
+	// Initialize phase if not set (first execution)
+	if metadata["phase"] == nil {
+		metadata["phase"] = mountPhaseWritePending
+	}
+
+	currentPhase := metadata["phase"]
+	prevPhase := metadata["prev_phase"]
+
+	// Execute if phase changed (phase != prev_phase)
+	if prevPhase != currentPhase {
+		switch currentPhase {
+		case mountPhaseWritePending:
+			return e.executeWritePending(mountPoint, callback, metadata)
+		case mountPhaseCheckActive:
+			return e.executeCheckActive(mountPoint, callback, metadata)
 		}
 	}
 
-	// Operation not yet complete - execute based on operation type
-	switch e.operation {
-	case "create":
-		return e.executeCreate(mountPoint, callback, metadata)
-	case "delete":
-		return e.executeDelete(mountPoint, callback, metadata)
+	// Phase already executed - continue with current phase behavior
+	switch currentPhase {
+	case mountPhaseWritePending:
+		// Already wrote pending, return pending status
+		return ExecutionResult{
+			Status: StatusPending,
+			Result: map[string]interface{}{
+				"message": fmt.Sprintf("Mount %s %s staged, awaiting boot", mountPoint, e.operation),
+			},
+			Metadata: metadata,
+		}
+	case mountPhaseCheckActive:
+		// Keep checking active file
+		return e.executeCheckActive(mountPoint, callback, metadata)
 	default:
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown mount operation: " + e.operation}
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown mount phase"}
 	}
 }
 
-// executeCreate writes mount config to mounts.pending.ini
-func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+// executeWritePending writes mount config to mounts.pending.ini (Phase 1)
+func (e *MountExecutor) executeWritePending(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	disk, ok := e.cmd.Args["disk"].(string)
 	if !ok || disk == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk is required"}
@@ -80,110 +88,83 @@ func (e *MountExecutor) executeCreate(mountPoint string, callback ProgressCallba
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot create or modify root mount point"}
 	}
 
-	// Check if we already emitted status for this operation
-	if metadata["status_emitted"] == true {
-		return ExecutionResult{
-			Status: StatusPending,
-			Result: map[string]interface{}{
-				"message": fmt.Sprintf("Mount %s creation staged, awaiting boot", mountPoint),
-			},
-			Metadata: metadata,
-		}
-	}
-
-	// Mark that we're emitting status now
-	metadata["status_emitted"] = true
-
 	// Notify progress
 	callback(ProgressUpdate{
 		Status:  "in_progress",
-		Message: fmt.Sprintf("Preparing to create mount %s", mountPoint),
+		Message: fmt.Sprintf("Preparing to %s mount %s", e.operation, mountPoint),
 	})
 
 	// Sanitize the mount point for INI section ID
 	id := sanitizeMountID(mountPoint)
 
 	// Write to mounts.pending.ini
-	if err := writeMountPendingINI(id, e.cmd.Args); err != nil {
-		e.logger.Error("failed to write mounts.pending.ini", "error", err)
+	var writeErr error
+	if e.operation == "create" {
+		writeErr = writeMountPendingINI(id, e.cmd.Args)
+	} else if e.operation == "delete" {
+		writeErr = markMountForDeletion(id)
+	}
+
+	if writeErr != nil {
+		e.logger.Error("failed to write mount marker", "error", writeErr, "operation", e.operation)
 		callback(ProgressUpdate{
 			Status: "failed",
-			Error:  fmt.Sprintf("Failed to stage mount: %v", err),
+			Error:  fmt.Sprintf("Failed to %s mount: %v", e.operation, writeErr),
 		})
 		return ExecutionResult{
 			Status:   StatusFailed,
-			ErrorMsg: fmt.Sprintf("Failed to stage mount: %v", err),
-			Metadata: metadata,
+			ErrorMsg: fmt.Sprintf("Failed to %s mount: %v", e.operation, writeErr),
 		}
 	}
 
 	callback(ProgressUpdate{
 		Status:  "pending",
-		Message: fmt.Sprintf("Mount %s staged in %s for boot-time execution", mountPoint, MountsPendingConfigFile),
+		Message: fmt.Sprintf("Mount %s %s staged in %s for boot-time execution", mountPoint, e.operation, MountsPendingConfigFile),
 	})
+
+	// Transition to phase 2
+	metadata["prev_phase"] = mountPhaseWritePending
+	metadata["phase"] = mountPhaseCheckActive
 
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message": fmt.Sprintf("Mount %s created in pending file, will be executed at boot", mountPoint),
+			"message": fmt.Sprintf("Mount %s %s staged, will be executed at boot", mountPoint, e.operation),
 		},
 		Metadata: metadata,
 	}
 }
 
-// executeDelete marks a mount for deletion in mounts.pending.ini
-func (e *MountExecutor) executeDelete(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
-	// Prevent root mount deletion
-	if mountPoint == "/" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "cannot delete root mount point"}
-	}
-
-	// Check if we already emitted status for this operation
-	if metadata["status_emitted"] == true {
-		return ExecutionResult{
-			Status: StatusPending,
-			Result: map[string]interface{}{
-				"message": fmt.Sprintf("Mount %s deletion staged, awaiting boot", mountPoint),
-			},
-			Metadata: metadata,
-		}
-	}
-
-	// Mark that we're emitting status now
-	metadata["status_emitted"] = true
-
-	// Notify progress
-	callback(ProgressUpdate{
-		Status:  "in_progress",
-		Message: fmt.Sprintf("Preparing to delete mount %s", mountPoint),
-	})
-
-	// Sanitize the mount point for INI section ID
+// executeCheckActive checks if mount has moved from pending.ini to active mounts.ini (Phase 2)
+func (e *MountExecutor) executeCheckActive(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	id := sanitizeMountID(mountPoint)
 
-	// Mark for deletion in mounts.pending.ini
-	if err := markMountForDeletion(id); err != nil {
-		e.logger.Error("failed to mark mount for deletion", "error", err)
-		callback(ProgressUpdate{
-			Status: "failed",
-			Error:  fmt.Sprintf("Failed to mark mount for deletion: %v", err),
-		})
-		return ExecutionResult{
-			Status:   StatusFailed,
-			ErrorMsg: fmt.Sprintf("Failed to mark mount for deletion: %v", err),
-			Metadata: metadata,
+	activeMounts, err := readMountResultsINI()
+	if err == nil && activeMounts != nil {
+		if mountData, exists := activeMounts[id]; exists {
+			// Mount exists in mounts.ini - operation complete
+			if status := mountData["status"]; status == "error" {
+				return ExecutionResult{
+					Status:   StatusFailed,
+					ErrorMsg: mountData["message"],
+				}
+			}
+			// Entry found in active file - success
+			return ExecutionResult{
+				Status: StatusCompleted,
+				Result: map[string]interface{}{
+					"message": fmt.Sprintf("Mount %s is now active", mountPoint),
+					"status":  "success",
+				},
+			}
 		}
 	}
 
-	callback(ProgressUpdate{
-		Status:  "pending",
-		Message: fmt.Sprintf("Mount %s marked for deletion in %s, will be executed at boot", mountPoint, MountsPendingConfigFile),
-	})
-
+	// Still pending, check again on next retry
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message": fmt.Sprintf("Mount %s marked for deletion, will be executed at boot", mountPoint),
+			"message": fmt.Sprintf("Mount %s still pending boot completion", mountPoint),
 		},
 		Metadata: metadata,
 	}

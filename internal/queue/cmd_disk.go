@@ -9,6 +9,12 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+// Disk execution phases
+const (
+	diskPhaseWritePending = "write_pending" // Phase 1: Write [id] to disks.pending.ini
+	diskPhaseCheckActive  = "check_active"  // Phase 2: Check if disk moved to disks.ini
+)
+
 // DiskExecutor handles both manage and release disk operations
 type DiskExecutor struct {
 	cmd       Command
@@ -16,21 +22,105 @@ type DiskExecutor struct {
 	operation string // "manage" or "release"
 }
 
-// Execute stages the disk management operation for boot-time execution
-// Retryable: if the operation was already completed by the boot service, returns StatusCompleted
+// Execute handles the two-phase disk operation lifecycle:
+// Phase 1 (write_pending): Write marker to disks.pending.ini (returns StatusPending)
+// Phase 2 (check_active): Check if entry moved to disks.ini (returns StatusCompleted or StatusPending)
 func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
 	diskID, ok := e.cmd.Args["id"].(string)
 	if !ok || diskID == "" {
 		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk id is required"}
 	}
 
-	// For manage operations: check if disk is already in disks.ini
-	// If it is, the manage operation completed
+	// Initialize phase if not set (first execution)
+	if metadata["phase"] == nil {
+		metadata["phase"] = diskPhaseWritePending
+	}
+
+	currentPhase := metadata["phase"]
+	prevPhase := metadata["prev_phase"]
+
+	// Execute if phase changed (phase != prev_phase)
+	if prevPhase != currentPhase {
+		switch currentPhase {
+		case diskPhaseWritePending:
+			return e.executeWritePending(diskID, callback, metadata)
+		case diskPhaseCheckActive:
+			return e.executeCheckActive(diskID, callback, metadata)
+		}
+	}
+
+	// Phase already executed - continue with current phase behavior
+	switch currentPhase {
+	case diskPhaseWritePending:
+		// Already wrote pending, return pending status
+		return ExecutionResult{
+			Status: StatusPending,
+			Result: map[string]interface{}{
+				"message": fmt.Sprintf("Disk %s %s staged, awaiting boot", diskID, e.operation),
+			},
+			Metadata: metadata,
+		}
+	case diskPhaseCheckActive:
+		// Keep checking active file
+		return e.executeCheckActive(diskID, callback, metadata)
+	default:
+		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown disk phase"}
+	}
+}
+
+// executeWritePending writes disk operation marker to disks.pending.ini (Phase 1)
+func (e *DiskExecutor) executeWritePending(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	callback(ProgressUpdate{
+		Status:  "in_progress",
+		Message: fmt.Sprintf("Preparing to %s disk %s", e.operation, diskID),
+	})
+
+	// Write operation marker to pending.ini
+	var writeErr error
 	if e.operation == "manage" {
-		managedDisks, err := readDisksINI()
-		if err == nil {
+		writeErr = writeStoragePendingINI(diskID, e.cmd.Args)
+	} else if e.operation == "release" {
+		writeErr = writeStorageDeletionMarker(diskID)
+	}
+
+	if writeErr != nil {
+		e.logger.Error("failed to write disk marker", "error", writeErr, "operation", e.operation)
+		callback(ProgressUpdate{
+			Status: "failed",
+			Error:  fmt.Sprintf("Failed to %s disk: %v", e.operation, writeErr),
+		})
+		return ExecutionResult{
+			Status:   StatusFailed,
+			ErrorMsg: fmt.Sprintf("Failed to %s disk: %v", e.operation, writeErr),
+		}
+	}
+
+	callback(ProgressUpdate{
+		Status:  "pending",
+		Message: fmt.Sprintf("Disk %s %s staged in %s for boot-time execution", diskID, e.operation, DisksPendingConfigFile),
+	})
+
+	// Transition to phase 2
+	metadata["prev_phase"] = diskPhaseWritePending
+	metadata["phase"] = diskPhaseCheckActive
+
+	return ExecutionResult{
+		Status: StatusPending,
+		Result: map[string]interface{}{
+			"message": fmt.Sprintf("Disk %s %s staged, will be executed at boot", diskID, e.operation),
+		},
+		Metadata: metadata,
+	}
+}
+
+// executeCheckActive checks if disk has moved from pending.ini to active disks.ini (Phase 2)
+func (e *DiskExecutor) executeCheckActive(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
+	managedDisks, err := readDisksINI()
+	if err == nil && managedDisks != nil {
+		if e.operation == "manage" {
+			// For manage: check if disk is now in disks.ini
 			if _, isManaged := managedDisks[diskID]; isManaged {
-				// Disk is already in managed list - manage operation completed
+				// Disk is in managed list - operation completed
 				return ExecutionResult{
 					Status: StatusCompleted,
 					Result: map[string]interface{}{
@@ -39,16 +129,10 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, m
 					},
 				}
 			}
-		}
-	}
-
-	// For release operations: check if disk is still managed
-	// If it's no longer in disks.ini, the release completed successfully
-	if e.operation == "release" {
-		managedDisks, err := readDisksINI()
-		if err == nil {
+		} else if e.operation == "release" {
+			// For release: check if disk is no longer in disks.ini
 			if _, stillManaged := managedDisks[diskID]; !stillManaged {
-				// Disk is no longer in managed list - release completed
+				// Disk is no longer in managed list - operation completed
 				return ExecutionResult{
 					Status: StatusCompleted,
 					Result: map[string]interface{}{
@@ -60,88 +144,11 @@ func (e *DiskExecutor) Execute(ctx context.Context, callback ProgressCallback, m
 		}
 	}
 
-	// Operation not yet complete - execute based on operation type
-	switch e.operation {
-	case "manage":
-		return e.executeManage(diskID, callback, metadata)
-	case "release":
-		return e.executeRelease(diskID, callback, metadata)
-	default:
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "unknown disk operation: " + e.operation}
-	}
-}
-
-// executeManage writes disk management spec to disks.pending.ini
-func (e *DiskExecutor) executeManage(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
-	// Only execute once (metadata persists across retries)
-	if metadata["status_emitted"] != true {
-		callback(ProgressUpdate{
-			Status:  "in_progress",
-			Message: fmt.Sprintf("Preparing to manage disk %s", diskID),
-		})
-
-		if err := writeStoragePendingINI(diskID, e.cmd.Args); err != nil {
-			e.logger.Error("failed to write disks.pending.ini", "error", err)
-			callback(ProgressUpdate{
-				Status: "failed",
-				Error:  fmt.Sprintf("Failed to stage disk management: %v", err),
-			})
-			return ExecutionResult{
-				Status:   StatusFailed,
-				ErrorMsg: fmt.Sprintf("Failed to stage disk management: %v", err),
-			}
-		}
-
-		callback(ProgressUpdate{
-			Status:  "pending",
-			Message: fmt.Sprintf("Disk %s staged in %s for boot-time management", diskID, DisksPendingConfigFile),
-		})
-
-		metadata["status_emitted"] = true
-	}
-
+	// Still pending, check again on next retry
 	return ExecutionResult{
 		Status: StatusPending,
 		Result: map[string]interface{}{
-			"message": fmt.Sprintf("Disk %s management staged, will be executed at boot", diskID),
-		},
-		Metadata: metadata,
-	}
-}
-
-// executeRelease writes deletion marker to disks.pending.ini
-func (e *DiskExecutor) executeRelease(diskID string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
-	// Only execute once (metadata persists across retries)
-	if metadata["status_emitted"] != true {
-		callback(ProgressUpdate{
-			Status:  "in_progress",
-			Message: fmt.Sprintf("Preparing to release disk %s", diskID),
-		})
-
-		if err := writeStorageDeletionMarker(diskID); err != nil {
-			e.logger.Error("failed to mark disk for release", "error", err)
-			callback(ProgressUpdate{
-				Status: "failed",
-				Error:  fmt.Sprintf("Failed to mark disk for release: %v", err),
-			})
-			return ExecutionResult{
-				Status:   StatusFailed,
-				ErrorMsg: fmt.Sprintf("Failed to mark disk for release: %v", err),
-			}
-		}
-
-		callback(ProgressUpdate{
-			Status:  "pending",
-			Message: fmt.Sprintf("Disk %s marked for release in %s, will be executed at boot", diskID, DisksPendingConfigFile),
-		})
-
-		metadata["status_emitted"] = true
-	}
-
-	return ExecutionResult{
-		Status: StatusPending,
-		Result: map[string]interface{}{
-			"message": fmt.Sprintf("Disk %s marked for release, will be executed at boot", diskID),
+			"message": fmt.Sprintf("Disk %s still pending boot completion", diskID),
 		},
 		Metadata: metadata,
 	}
