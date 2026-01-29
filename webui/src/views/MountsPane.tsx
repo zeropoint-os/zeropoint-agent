@@ -174,13 +174,11 @@ export default function MountsPane() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   minHeight: '200px',
-                  cursor: 'pointer',
                 }}
-                onClick={() => setShowCreateDialog(true)}
               >
                 <button
                   className="button button-primary"
-                  style={{ pointerEvents: 'none' }}
+                  onClick={() => setShowCreateDialog(true)}
                 >
                   + Mount
                 </button>

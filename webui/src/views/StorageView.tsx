@@ -1,6 +1,7 @@
 import React from 'react';
 import DisksPane from './DisksPane';
 import MountsPane from './MountsPane';
+import PathsPane from './PathsPane';
 import './Views.css';
 
 export default function StorageView() {
@@ -12,6 +13,7 @@ export default function StorageView() {
 
       <DisksPane />
       <MountsPane />
+      <PathsPane />
     </div>
   );
 }
