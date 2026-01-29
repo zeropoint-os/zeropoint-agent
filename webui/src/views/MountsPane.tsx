@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StorageApi, Configuration, ApiMount } from 'artifacts/clients/typescript';
+import { StorageApi, Configuration, ApiMount, ApiDisk } from 'artifacts/clients/typescript';
 import CreateLocalDiskMountDialog from './CreateLocalDiskMountDialog';
 import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
 export default function MountsPane() {
   const [mounts, setMounts] = useState<ApiMount[]>([]);
-  const [disksMap, setDisksMap] = useState<Map<string, any>>(new Map());
+  const [disksMap, setDisksMap] = useState<Map<string, ApiDisk>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
@@ -23,8 +23,8 @@ export default function MountsPane() {
       
       // Also fetch discovered disks to enrich mount display
       const discoveredResp = await storageApi.apiStorageDisksDiscoverGet();
-      const diskMap = new Map<string, any>();
-      (discoveredResp || []).forEach((d: any) => {
+      const diskMap = new Map<string, ApiDisk>();
+      (discoveredResp || []).forEach((d: ApiDisk) => {
         if (d.id) {
           diskMap.set(d.id, d);
         }
