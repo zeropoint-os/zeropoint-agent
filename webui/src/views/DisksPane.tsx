@@ -183,18 +183,9 @@ export default function DisksPane() {
                     border: `1px solid var(--color-border)`,
                     borderRadius: '0.5rem',
                     padding: '1.5rem',
-                    transition: 'all 0.2s ease',
                     display: 'flex',
                     flexDirection: 'column',
                     height: '100%',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--color-surface-hover)';
-                    (e.currentTarget as HTMLElement).style.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--color-surface)';
-                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
                   }}
                 >
                   {/* Warning if disk not found in discover */}
