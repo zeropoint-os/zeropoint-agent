@@ -5,11 +5,12 @@ from pathlib import Path
 # Ensure `src/` is on sys.path so we can import our package during development
 sys.path.insert(0, str(Path(__file__).resolve().parent.joinpath("src")))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime, timezone
 
 from zeropoint_agent.state_store import StateStore
+from zeropoint_agent.hw_probe import HWProbe
 
 app = FastAPI(title="Zeropoint Agent API", version="1.0.0")
 
@@ -30,6 +31,82 @@ async def health():
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+# Hardware Discovery Endpoints
+
+@app.get("/api/hw/disks")
+@app.get("/api/hw/disks/")
+async def get_disks():
+    """Get all available disks with partition information.
+    
+    Returns list of disks with stable ID basenames (from /dev/disk/by-id/).
+    """
+    try:
+        disks = HWProbe.get_disks()
+        return {
+            "ok": True,
+            "disks": [
+                {
+                    "id": disk.id,
+                    "device": disk.device,
+                    "size": disk.size,
+                    "sector_size": disk.sector_size,
+                    "partitions": [
+                        {
+                            "id": p.id,
+                            "device": p.device,
+                            "size": p.size,
+                            "filesystem": p.filesystem,
+                            "flags": p.flags,
+                        }
+                        for p in disk.partitions
+                    ],
+                }
+                for disk in disks
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/hw/disks/{disk_id}")
+async def get_disk(disk_id: str):
+    """Get a specific disk by ID.
+    
+    disk_id can be:
+    - ata-QEMU_HARDDISK_QM00001 (stable ID basename)
+    - /dev/sda (device path)
+    """
+    try:
+        disk = HWProbe.get_disk(disk_id)
+        
+        if not disk:
+            raise HTTPException(status_code=404, detail=f"Disk not found: {disk_id}")
+        
+        return {
+            "ok": True,
+            "disk": {
+                "id": disk.id,
+                "device": disk.device,
+                "size": disk.size,
+                "sector_size": disk.sector_size,
+                "partitions": [
+                    {
+                        "id": p.id,
+                        "device": p.device,
+                        "size": p.size,
+                        "filesystem": p.filesystem,
+                        "flags": p.flags,
+                    }
+                    for p in disk.partitions
+                ],
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Serve the built web UI from `webui/dist` at the application root.

@@ -146,7 +146,7 @@ class StateStore:
             exports_dir.mkdir(exist_ok=True)
             self._write_default_exports(exports_dir)
             
-            # Initial commit
+            # Initial commit (this creates master/main depending on git config)
             repo.index.add([".gitignore", self.EXPORTS_DIR])
             repo.index.commit("Initialize state repo with defaults")
             
@@ -155,13 +155,10 @@ class StateStore:
             import shutil
             shutil.rmtree(exports_dir)
         
-        # Ensure main branch exists
+        # Ensure main branch exists (rename master to main if needed)
         if "main" not in repo.heads:
             if "master" in repo.heads:
                 repo.heads.master.rename("main")
-            else:
-                # Create main from current HEAD
-                repo.create_head("main")
         
         # Ensure edit branch exists
         if "edit" not in repo.heads:
