@@ -51,12 +51,14 @@ async def get_disks():
                     "id": disk.id,
                     "device": disk.device,
                     "size": disk.size,
+                    "free": disk.free,
                     "sector_size": disk.sector_size,
                     "partitions": [
                         {
                             "id": p.id,
                             "device": p.device,
                             "size": p.size,
+                            "free": p.free,
                             "filesystem": p.filesystem,
                             "flags": p.flags,
                         }
@@ -90,12 +92,14 @@ async def get_disk(disk_id: str):
                 "id": disk.id,
                 "device": disk.device,
                 "size": disk.size,
+                "free": disk.free,
                 "sector_size": disk.sector_size,
                 "partitions": [
                     {
                         "id": p.id,
                         "device": p.device,
                         "size": p.size,
+                        "free": p.free,
                         "filesystem": p.filesystem,
                         "flags": p.flags,
                     }
