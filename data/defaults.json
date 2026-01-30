@@ -1,0 +1,51 @@
+{
+  "disks": [
+    {
+      "id": "boot",
+      "device": "/dev/sda",
+      "partition": "1",
+      "filesystem": "ext4"
+    }
+  ],
+  "mounts": [
+    {
+      "id": "boot",
+      "disk_id": "boot",
+      "mountpoint": "/",
+      "options": "defaults"
+    }
+  ],
+  "paths": [
+    {
+      "id": "root",
+      "mount_id": "boot",
+      "path": "/",
+      "mode": "0755"
+    },
+    {
+      "id": "home",
+      "mount_id": "boot",
+      "path": "/home",
+      "mode": "0755"
+    },
+    {
+      "id": "tmp",
+      "mount_id": "boot",
+      "path": "/tmp",
+      "mode": "1777"
+    }
+  ],
+  "vars": [
+    {
+      "id": "TZ",
+      "value": "UTC"
+    },
+    {
+      "id": "HOSTNAME",
+      "value": "zeropoint"
+    }
+  ],
+  "modules": [],
+  "links": [],
+  "exposures": []
+}

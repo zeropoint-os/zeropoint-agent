@@ -7,7 +7,9 @@
     "context": "..",
 	"overrideCommand": true,
 	"features": {
-		"ghcr.io/devcontainers/features/node:1": {},
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "18.17.0"
+		},
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	},
 	"customizations": {
@@ -24,8 +26,8 @@
 			]
         }
     },
-	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install --lts",
-	"postAttachCommand": "pip install -r requirements.txt && npm install --prefix webui",
+	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0",
+	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && pip install -r requirements.txt && npm install --prefix webui",
 	"mounts": [
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
 	],
