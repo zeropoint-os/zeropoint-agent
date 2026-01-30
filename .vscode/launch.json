@@ -1,42 +1,47 @@
 {
     "version": "0.2.0",
+    "compounds": [
+        {
+            "name": "Zeropoint Agent/WebUI",
+            "configurations": [
+                "Zeropoint Agent",
+                "WebUI"
+            ],
+            "stopAll": true
+        }
+    ],
     "configurations": [
         {
-            "name": "zeropoint-agent",
-            "type": "go",
+            "name": "Zeropoint Agent",
+            "type": "debugpy",            
             "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/cmd/zeropoint-agent",
+            "module": "uvicorn",
+            "args": [
+                "server:app",
+                "--host", "0.0.0.0",
+                "--port", "2370",
+                "--reload",
+                "--log-level", "info"
+            ],
+            "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
-            "env": {},
-            "buildFlags": "",
-            "preLaunchTask": "go: build"
+            "justMyCode": false,
+            "preLaunchTask": "build-npm" // Ensure WebUI is built before launching
         },
-        {           
-            "name": "webui: debug",
+        {
+            "name": "WebUI",
             "type": "chrome",
             "request": "launch",
-            "url": "http://localhost:2370",
-            "webRoot": "${workspaceFolder}",
-            "preLaunchTask": "waitForServer",
             "browserLaunchLocation": "ui",
             "runtimeExecutable": "stable",
+            "url": "http://localhost:2370",
+            "webRoot": "${workspaceFolder}/webui",
+            "preLaunchTask": "waitForServer",
             "userDataDir": "${workspaceFolder}/.vscode/cache",
             "sourceMaps": true,
             "outFiles": [
-                "${workspaceFolder}/web/**/*.js"
-            ],
-            "presentation": {
-                "hidden": true
-            }
+                "${workspaceFolder}/webui/dist/**/*.js"
+            ]
         }        
-    ],
-    "compounds": 
-    [
-        {
-            "name": "zeropoint-agent/webui",
-            "configurations": ["zeropoint-agent", "webui: debug"],
-            "stopAll": true
-        }
     ]
 }

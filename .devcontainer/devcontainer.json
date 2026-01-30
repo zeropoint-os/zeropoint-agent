@@ -1,47 +1,40 @@
 {
-	"name": "zeropoint-agent",
-	"build": {
-		"dockerfile": "../Dockerfile",
-		"context": ".."
-	},
+	"name": "Zeropoint Agent",
+    "dockerFile": "../Dockerfile",
+    "build": {
+        "target": "develop"
+    },
+    "context": "..",
 	"overrideCommand": true,
-	"postCreateCommand": "touch /etc/zeropoint/.zeropoint-boot-complete",
-	"postAttachCommand": "go mod download && npm install",
-	"forwardPorts": [80, 443, 2370],
-	"portsAttributes": {
-		"80": {
-			"label": "Envoy HTTP",
-			"onAutoForward": "notify"
-		},
-		"443": {
-			"label": "Envoy HTTPS",
-			"onAutoForward": "notify"
-		},
-		"2370": {
-			"label": "ZeroPoint Agent API",
-			"onAutoForward": "notify"
-		}
+	"features": {
+		"ghcr.io/devcontainers/features/node:1": {},
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	},
 	"customizations": {
-		"vscode": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash"
+			},
 			"extensions": [
-				"golang.Go",
-				"augustocdias.tasks-shell-input",
+				"ms-python.python",
 				"zaaack.markdown-editor",
-				"msjsdiag.debugger-for-chrome",
-				"idered.npm"
-			],
-			"settings": {
-				"terminal.integrated.defaultProfile.linux": "bash"
-			}
+				"ms-python.debugpy",
+				"idered.npm",
+				"msjsdiag.debugger-for-chrome"
+			]
+        }
+    },
+	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install --lts",
+	"postAttachCommand": "pip install -r requirements.txt && npm install --prefix webui",
+	"mounts": [
+		"source=/dev,target=/dev,type=bind,consistency=consistent"
+	],
+
+	"forwardPorts": [2370],
+	"portsAttributes": {
+		"2370": {
+			"label": "ZeroPoint Agent API + WebUI",
+			"onAutoForward": "notify"
 		}
-	},
-	"runArgs": [ 
-		"--privileged",
-		"--gpus", "all",
-		"--runtime", "nvidia"
- 	],
-	"features": {
-		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	}
 }
