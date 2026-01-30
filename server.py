@@ -113,6 +113,34 @@ async def get_disk(disk_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/hw/gpus")
+@app.get("/api/hw/gpus/")
+async def get_gpus():
+    """Get all available GPUs.
+    
+    Returns list of GPUs with memory and driver information.
+    """
+    try:
+        gpus = HWProbe.get_gpus()
+        return {
+            "ok": True,
+            "gpus": [
+                {
+                    "id": gpu.id,
+                    "device": gpu.device,
+                    "name": gpu.name,
+                    "memory_total": gpu.memory_total,
+                    "memory_free": gpu.memory_free,
+                    "driver_version": gpu.driver_version,
+                    "compute_capability": gpu.compute_capability,
+                }
+                for gpu in gpus
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve the built web UI from `webui/dist` at the application root.
 # If a file isn't found, StaticFiles will fall back to `index.html` when
 # `html=True`, enabling SPA client-side routing.

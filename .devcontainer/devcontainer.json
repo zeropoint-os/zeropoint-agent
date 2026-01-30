@@ -31,7 +31,9 @@
 	"mounts": [
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
 	],
-
+	"runArgs": [
+		"--gpus", "all"
+	],
 	"forwardPorts": [2370],
 	"portsAttributes": {
 		"2370": {

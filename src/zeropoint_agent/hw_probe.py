@@ -33,6 +33,18 @@ class Disk:
     partitions: List[Partition] = field(default_factory=list)
 
 
+@dataclass
+class GPU:
+    """GPU information."""
+    id: str  # Basename identifier (e.g. nvidia-0 or amd-0)
+    device: str  # Device path if available (e.g. /dev/nvidia0)
+    name: str  # GPU name (e.g. NVIDIA A100 PCIe 40GB)
+    memory_total: int  # Total memory in bytes
+    memory_free: Optional[int] = None  # Free memory in bytes
+    driver_version: Optional[str] = None  # Driver version (e.g. 535.104.05)
+    compute_capability: Optional[str] = None  # Compute capability (e.g. 8.0) for NVIDIA
+
+
 class HWProbe:
     """Hardware probing interface."""
 
@@ -207,4 +219,117 @@ class HWProbe:
             pass
         
         return None
+
+    @staticmethod
+    def get_gpus() -> List[GPU]:
+        """Get all available GPUs.
+        
+        Detects NVIDIA and AMD GPUs. Returns list of GPU objects.
+        """
+        gpus = []
+        
+        # Try NVIDIA GPUs first
+        try:
+            gpus.extend(HWProbe._get_nvidia_gpus())
+        except Exception:
+            pass
+        
+        # Try AMD GPUs
+        try:
+            gpus.extend(HWProbe._get_amd_gpus())
+        except Exception:
+            pass
+        
+        return gpus
+
+    @staticmethod
+    def _get_nvidia_gpus() -> List[GPU]:
+        """Get NVIDIA GPUs using nvidia-smi."""
+        gpus = []
+        
+        try:
+            # Query nvidia-smi for GPU info
+            output = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,name,memory.total,memory.free,driver_version,compute_cap",
+                    "--format=csv,noheader,nounits"
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            
+            for line in output.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 4:
+                    try:
+                        index = parts[0]
+                        name = parts[1] if len(parts) > 1 else f"NVIDIA GPU {index}"
+                        memory_total = int(float(parts[2]) * 1024 * 1024 * 1024) if len(parts) > 2 else 0  # GB to bytes
+                        memory_free = int(float(parts[3]) * 1024 * 1024 * 1024) if len(parts) > 3 else None  # GB to bytes
+                        driver_version = parts[4].strip() if len(parts) > 4 else None
+                        compute_capability = parts[5].strip() if len(parts) > 5 else None
+                        
+                        gpu = GPU(
+                            id=f"nvidia-{index}",
+                            device=f"/dev/nvidia{index}",
+                            name=name,
+                            memory_total=memory_total,
+                            memory_free=memory_free,
+                            driver_version=driver_version,
+                            compute_capability=compute_capability,
+                        )
+                        gpus.append(gpu)
+                    except (ValueError, IndexError):
+                        continue
+        
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        return gpus
+
+    @staticmethod
+    def _get_amd_gpus() -> List[GPU]:
+        """Get AMD GPUs using rocm-smi or lspci."""
+        gpus = []
+        
+        try:
+            # Try rocm-smi first
+            output = subprocess.run(
+                ["rocm-smi", "--showproductname", "--showmeminfo", "all"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            
+            # Parse rocm-smi output (format varies)
+            lines = output.stdout.strip().split("\n")
+            gpu_index = 0
+            
+            for line in lines:
+                if "GPU" in line and ":" in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        name = parts[1].strip()
+                        gpu = GPU(
+                            id=f"amd-{gpu_index}",
+                            device=f"/dev/kfd{gpu_index}",
+                            name=name,
+                            memory_total=0,  # Would need to parse separately
+                            memory_free=None,
+                        )
+                        gpus.append(gpu)
+                        gpu_index += 1
+        
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        return gpus
+
 
