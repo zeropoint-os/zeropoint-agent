@@ -9,6 +9,9 @@ from typing import List, Optional, Dict, Any
 import subprocess
 import json
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,6 +66,7 @@ class HWProbe:
         
         # Parse lsblk output for all block devices
         try:
+            logger.debug("Executing lsblk to enumerate block devices")
             output = subprocess.run(
                 ["lsblk", "-J", "-b", "-o", "NAME,SIZE,TYPE,FSTYPE"],
                 capture_output=True,
@@ -88,6 +92,7 @@ class HWProbe:
                     size=int(dev.get("size", 0)),
                     sector_size=512,  # TODO: read from sysfs
                 )
+                logger.debug(f"Discovered disk: {device_name} (ID: {id_basename}, size: {disk.size} bytes)")
                 
                 # Parse partitions and calculate free space
                 allocated_size = 0
@@ -110,6 +115,7 @@ class HWProbe:
                         
                         # Get free space for mounted filesystem
                         partition.free = HWProbe._get_filesystem_free(partition_device)
+                        logger.debug(f"  Partition: {partition_device} (ID: {partition_id_basename}, size: {partition_size}, fs: {partition.filesystem})")
                         
                         disk.partitions.append(partition)
                 
@@ -119,8 +125,10 @@ class HWProbe:
                 disks.append(disk)
         
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Failed to probe disks: {e}", exc_info=True)
             raise RuntimeError(f"Failed to probe disks: {e}")
         
+        logger.info(f"Disk discovery complete: found {len(disks)} disks")
         return disks
 
     @staticmethod
@@ -133,12 +141,15 @@ class HWProbe:
         Returns:
             Disk object or None if not found
         """
+        logger.debug(f"Looking up disk: {disk_id}")
         disks = HWProbe.get_disks()
         
         for disk in disks:
             if disk.id == disk_id or disk.device == disk_id:
+                logger.debug(f"Found disk {disk_id}: {disk.device}")
                 return disk
         
+        logger.warning(f"Disk not found: {disk_id}")
         return None
 
     @staticmethod
@@ -150,6 +161,7 @@ class HWProbe:
             
         Returns dict: {"/dev/sda": "/dev/disk/by-id/ata-QEMU_HARDDISK_QM00001"}
         """
+        logger.debug(f"Building {kind} ID mapping from /dev/disk/by-id/")
         mapping = {}
         
         try:
@@ -184,9 +196,11 @@ class HWProbe:
                 except Exception:
                     pass
         
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error building {kind} ID map: {e}")
             pass  # If by-id not available, fall back to device names
         
+        logger.debug(f"Built {kind} ID map with {len(mapping)} entries")
         return mapping
 
     @staticmethod
@@ -214,8 +228,13 @@ class HWProbe:
                 if len(lines) > 1:
                     parts = lines[1].split()
                     if len(parts) > 3:
-                        return int(parts[3])
-        except Exception:
+                        free_bytes = int(parts[3])
+                        logger.debug(f"Filesystem {device}: {free_bytes} bytes free")
+                        return free_bytes
+            else:
+                logger.debug(f"Filesystem {device}: not mounted (df returned {output.returncode})")
+        except Exception as e:
+            logger.debug(f"Failed to get free space for {device}: {e}")
             pass
         
         return None
@@ -226,20 +245,28 @@ class HWProbe:
         
         Detects NVIDIA and AMD GPUs. Returns list of GPU objects.
         """
+        logger.debug("Starting GPU discovery")
         gpus = []
         
         # Try NVIDIA GPUs first
         try:
-            gpus.extend(HWProbe._get_nvidia_gpus())
-        except Exception:
-            pass
+            nvidia_gpus = HWProbe._get_nvidia_gpus()
+            gpus.extend(nvidia_gpus)
+            if nvidia_gpus:
+                logger.info(f"Found {len(nvidia_gpus)} NVIDIA GPUs")
+        except Exception as e:
+            logger.debug(f"NVIDIA GPU detection failed: {e}")
         
         # Try AMD GPUs
         try:
-            gpus.extend(HWProbe._get_amd_gpus())
-        except Exception:
-            pass
+            amd_gpus = HWProbe._get_amd_gpus()
+            gpus.extend(amd_gpus)
+            if amd_gpus:
+                logger.info(f"Found {len(amd_gpus)} AMD GPUs")
+        except Exception as e:
+            logger.debug(f"AMD GPU detection failed: {e}")
         
+        logger.info(f"GPU discovery complete: found {len(gpus)} total GPUs")
         return gpus
 
     @staticmethod

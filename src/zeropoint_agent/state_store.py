@@ -3,10 +3,13 @@ from typing import Optional, List, Dict, Any
 import json
 import os
 import sqlite3
+import logging
 
 from git import Repo, InvalidGitRepositoryError
 
 from .json_utils import atomic_write_json
+
+logger = logging.getLogger(__name__)
 
 
 class StateStore:
@@ -102,6 +105,8 @@ class StateStore:
         self.path = Path(path or "state").resolve()
         self.db_path = Path(db_path or str(self.path / ".zeropoint.db"))
         
+        logger.info(f"Initializing StateStore at {self.path}")
+        
         # Worktree paths
         self.main_repo_path = self.path / ".worktree-main"
         self.edit_repo_path = self.path / ".worktree-edit"
@@ -117,23 +122,28 @@ class StateStore:
         self.defaults_file = Path(
             os.environ.get("ZEROPOINT_STORE_DEFAULTS_FILE", "./data/defaults.json")
         ).resolve()
+        logger.debug(f"Defaults file: {self.defaults_file}")
         
         self._init_repos()
         self._init_db()
+        logger.info("StateStore initialization complete")
 
     def _init_repos(self) -> None:
         """Initialize git repo and worktrees if missing."""
         self.path.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Initializing git repos at {self.path}")
         
         # Prune stale worktrees
         try:
             existing_repo = Repo(self.path)
             existing_repo.git.worktree("prune")
+            logger.debug("Pruned stale worktrees")
         except (InvalidGitRepositoryError, Exception):
             pass
         
         try:
             repo = Repo(self.path)
+            logger.debug(f"Found existing repo at {self.path}")
         except InvalidGitRepositoryError:
             # Initialize new repo
             repo = Repo.init(self.path)
