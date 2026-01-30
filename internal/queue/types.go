@@ -53,6 +53,7 @@ const (
 	CmdReleaseDisk     CommandType = "release_disk"     // Remove disk from managed pool
 	CmdCreateMount     CommandType = "create_mount"
 	CmdDeleteMount     CommandType = "delete_mount"
+	CmdEditMount       CommandType = "edit_mount"
 	CmdEditPath        CommandType = "edit_path"
 	CmdAddPath         CommandType = "add_path"
 	CmdDeletePath      CommandType = "delete_path"
@@ -142,6 +143,12 @@ func (c Command) ToExecutor(installer interface{}, uninstaller interface{}, expo
 			cmd:       c,
 			logger:    logger,
 			operation: "delete",
+		}
+	case CmdEditMount:
+		return &MountExecutor{
+			cmd:       c,
+			logger:    logger,
+			operation: "edit",
 		}
 	case CmdAddPath:
 		return &PathExecutor{

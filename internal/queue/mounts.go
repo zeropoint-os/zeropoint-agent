@@ -32,6 +32,16 @@ type EnqueueDeleteMountRequest struct {
 	DependsOn  []string `json:"depends_on,omitempty"`
 }
 
+// EnqueueEditMountRequest is the request to edit/update an existing mount
+//
+// swagger:model EnqueueEditMountRequest
+type EnqueueEditMountRequest struct {
+	MountPoint string   `json:"mount_point"` // Mount point to edit
+	Disk       string   `json:"disk"`        // New disk ID
+	Partition  int      `json:"partition"`   // New partition number
+	DependsOn  []string `json:"depends_on,omitempty"`
+}
+
 // readMountResultsINI reads the /etc/zeropoint/mounts.ini file and returns active mounts by sanitized mount ID
 // Returns map of sanitized mount ID -> mount data, matching the disk.ini format
 func readMountResultsINI() (map[string]map[string]string, error) {

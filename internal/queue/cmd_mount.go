@@ -70,17 +70,20 @@ func (e *MountExecutor) Execute(ctx context.Context, callback ProgressCallback, 
 
 // executeWritePending writes mount config to mounts.pending.ini (Phase 1)
 func (e *MountExecutor) executeWritePending(mountPoint string, callback ProgressCallback, metadata map[string]interface{}) ExecutionResult {
-	disk, ok := e.cmd.Args["disk"].(string)
-	if !ok || disk == "" {
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk is required"}
-	}
+	// For create and edit operations, disk and partition are required
+	if e.operation == "create" || e.operation == "edit" {
+		disk, ok := e.cmd.Args["disk"].(string)
+		if !ok || disk == "" {
+			return ExecutionResult{Status: StatusFailed, ErrorMsg: "disk is required"}
+		}
 
-	// Validate partition exists and is numeric
-	switch e.cmd.Args["partition"].(type) {
-	case int, float64:
-		// OK
-	default:
-		return ExecutionResult{Status: StatusFailed, ErrorMsg: "partition must be a number"}
+		// Validate partition exists and is numeric
+		switch e.cmd.Args["partition"].(type) {
+		case int, float64:
+			// OK
+		default:
+			return ExecutionResult{Status: StatusFailed, ErrorMsg: "partition must be a number"}
+		}
 	}
 
 	// Prevent root mount modification
@@ -99,8 +102,23 @@ func (e *MountExecutor) executeWritePending(mountPoint string, callback Progress
 
 	// Write to mounts.pending.ini
 	var writeErr error
-	if e.operation == "create" {
-		writeErr = writeMountPendingINI(id, e.cmd.Args)
+	if e.operation == "create" || e.operation == "edit" {
+		// Check if mount is active to determine if we need a modification marker
+		isActive := false
+		if e.operation == "edit" {
+			activeMounts, err := readMountResultsINI()
+			if err == nil && activeMounts != nil {
+				_, isActive = activeMounts[id]
+			}
+		}
+
+		if isActive {
+			// Mount is active, write [~id] marker to signal modification
+			writeErr = writeMountModificationMarker(id, e.cmd.Args)
+		} else {
+			// Mount is pending or new, write [id] normally (last operation wins)
+			writeErr = writeMountPendingINI(id, e.cmd.Args)
+		}
 	} else if e.operation == "delete" {
 		writeErr = markMountForDeletion(id)
 	}
@@ -198,6 +216,54 @@ func writeMountPendingINI(id string, args map[string]interface{}) error {
 	}
 
 	// Write all args as strings (like cmd_disk.go does)
+	for key, value := range args {
+		if key != "depends_on" { // Skip depends_on, it's for job manager
+			section.Key(key).SetValue(fmt.Sprintf("%v", value))
+		}
+	}
+
+	// Write file
+	if err := cfg.SaveTo(configFile); err != nil {
+		return fmt.Errorf("failed to write mounts.pending.ini: %w", err)
+	}
+
+	// Ensure proper file permissions
+	if err := os.Chmod(configFile, 0600); err != nil {
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	return nil
+}
+
+// writeMountModificationMarker writes mount modification marker to /etc/zeropoint/mounts.pending.ini
+// Uses [~id] marker to signal that an active mount should be modified at next boot
+func writeMountModificationMarker(id string, args map[string]interface{}) error {
+	configDir := "/etc/zeropoint"
+	configFile := MountsPendingConfigFile
+
+	// Create config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Load existing INI or create new
+	cfg := ini.Empty()
+	if _, err := os.Stat(configFile); err == nil {
+		var loadErr error
+		cfg, loadErr = ini.Load(configFile)
+		if loadErr != nil {
+			cfg = ini.Empty()
+		}
+	}
+
+	// Create or update modification marker section [~id]
+	sectionName := "~" + id
+	section, err := cfg.NewSection(sectionName)
+	if err != nil {
+		section, _ = cfg.GetSection(sectionName)
+	}
+
+	// Write all args as strings
 	for key, value := range args {
 		if key != "depends_on" { // Skip depends_on, it's for job manager
 			section.Key(key).SetValue(fmt.Sprintf("%v", value))

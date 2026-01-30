@@ -406,6 +406,87 @@ func (h *Handlers) EnqueueDeleteMount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+// EnqueueEditMount handles POST /jobs/enqueue_edit_mount
+// @ID enqueueEditMount
+// @Summary Enqueue a mount edit job
+// @Description Enqueue a mount edit operation to be executed at boot time. For pending mounts, the entry is updated in-place with new values (last operation wins). For active mounts, a modification marker [~mnt_id] is written to indicate the boot daemon should replace the active entry with new values.
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param body body EnqueueEditMountRequest true "Mount edit request"
+// @Success 201 {object} JobResponse "Job enqueued successfully (pending reboot)"
+// @Failure 400 {string} string "Bad request"
+// @Router /jobs/enqueue_edit_mount [post]
+func (h *Handlers) EnqueueEditMount(w http.ResponseWriter, r *http.Request) {
+	var req EnqueueEditMountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.MountPoint == "" || req.Disk == "" {
+		http.Error(w, "mount_point and disk are required", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent root mount modification
+	if req.MountPoint == "/" {
+		http.Error(w, "cannot create or modify root mount point", http.StatusBadRequest)
+		return
+	}
+
+	// Cancel any existing job on this mount (new operation supersedes the old one)
+	jobs, err := h.manager.ListAll()
+	if err == nil {
+		for _, job := range jobs {
+			// Check if job is active (queued or running)
+			if job.Status == StatusQueued || job.Status == StatusRunning {
+				if job.Command.Type == CmdCreateMount || job.Command.Type == CmdEditMount || job.Command.Type == CmdDeleteMount {
+					if mountPt, ok := job.Command.Args["mount_point"].(string); ok && mountPt == req.MountPoint {
+						// Cancel the old job
+						now := time.Now().UTC()
+						_ = h.manager.UpdateStatus(job.ID, StatusCancelled, nil, &now, nil, "Superseded by newer mount operation for same mount point")
+						_ = h.manager.AppendEvent(job.ID, Event{
+							Timestamp: time.Now().UTC(),
+							Type:      "info",
+							Message:   "Cancelled: superseded by newer mount operation for " + req.MountPoint,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	jobID, err := h.manager.Enqueue(Command{
+		Type: CmdEditMount,
+		Args: map[string]interface{}{
+			"mount_point": req.MountPoint,
+			"disk":        req.Disk,
+			"partition":   req.Partition,
+		},
+	}, req.DependsOn)
+
+	if err != nil {
+		h.logger.Error("failed to enqueue mount edit", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("mount edit job enqueued", "job_id", jobID)
+
+	job, err := h.manager.Get(jobID)
+	if err != nil {
+		h.logger.Error("failed to fetch enqueued job", "job_id", jobID, "error", err)
+		http.Error(w, "failed to fetch job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(job)
+}
+
 // EnqueueInstall handles POST /api/jobs/enqueue_install
 // @ID enqueueInstall
 // @Summary Enqueue a module installation job

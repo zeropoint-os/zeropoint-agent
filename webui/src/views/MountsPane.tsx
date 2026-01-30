@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StorageApi, Configuration, ApiMount, ApiDisk } from 'artifacts/clients/typescript';
+import { StorageApi, Configuration, ApiMount, ApiDisk, JobsApi } from 'artifacts/clients/typescript';
 import CreateLocalDiskMountDialog from './CreateLocalDiskMountDialog';
+import EditMountDialog from './EditMountDialog';
 import { LOADING_INDICATOR_DELAY } from '../constants';
 import './Views.css';
 
@@ -11,9 +12,11 @@ export default function MountsPane() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [selectedMountForEdit, setSelectedMountForEdit] = useState<ApiMount | null>(null);
   const loadingTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const storageApi = new StorageApi(new Configuration({ basePath: '' }));
+  const jobsApi = new JobsApi(new Configuration({ basePath: '/api' }));
 
   const fetchMounts = async () => {
     loadingTimeout.current = setTimeout(() => setLoading(true), LOADING_INDICATOR_DELAY);
@@ -64,6 +67,23 @@ export default function MountsPane() {
   const handleCreateSuccess = () => {
     setShowCreateDialog(false);
     fetchMounts();
+  };
+
+  const handleDeleteMount = async (mount: ApiMount) => {
+    if (!window.confirm(`Are you sure you want to delete mount ${mount.mountPoint}?`)) {
+      return;
+    }
+
+    try {
+      await jobsApi.enqueueDeleteMount({
+        queueEnqueueDeleteMountRequest: {
+          mountPoint: mount.mountPoint || '',
+        },
+      });
+      fetchMounts();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to delete mount');
+    }
   };
 
   return (
@@ -163,6 +183,56 @@ export default function MountsPane() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Action Buttons */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
+                      <button
+                        onClick={() => setSelectedMountForEdit(mount)}
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: 'var(--color-primary)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          transition: 'background-color var(--transition-normal)',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = 'var(--color-primary-hover)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'var(--color-primary)';
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteMount(mount)}
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem',
+                          fontSize: '0.8rem',
+                          backgroundColor: '#dc2626',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          transition: 'background-color var(--transition-normal)',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#b91c1c';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = '#dc2626';
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -191,6 +261,14 @@ export default function MountsPane() {
       {showCreateDialog && (
         <CreateLocalDiskMountDialog
           onClose={() => setShowCreateDialog(false)}
+          onSuccess={handleCreateSuccess}
+        />
+      )}
+
+      {selectedMountForEdit && (
+        <EditMountDialog
+          mount={selectedMountForEdit}
+          onClose={() => setSelectedMountForEdit(null)}
           onSuccess={handleCreateSuccess}
         />
       )}
