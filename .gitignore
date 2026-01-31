@@ -237,9 +237,8 @@ tmp/
 .env.test.local
 .env.production.local
 
-# Ignore our state folder
-data/state/
-data/defaults.json
+# Ignore our data folder
+data/
 
 # Ignore logs
 logs/
