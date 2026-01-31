@@ -239,3 +239,6 @@ tmp/
 
 # Ignore our state folder
 data/state/
+
+# Ignore logs
+logs/
