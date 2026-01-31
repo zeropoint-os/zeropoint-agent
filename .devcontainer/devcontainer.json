@@ -6,11 +6,15 @@
     },
     "context": "..",
 	"overrideCommand": true,
+	"remoteUser": "vscode",
 	"features": {
 		"ghcr.io/devcontainers/features/node:1": {
 			"version": "18.17.0"
 		},
-		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
+			"passwordLessSudo": true
+		}
 	},
 	"customizations": {
         "vscode": {
@@ -26,7 +30,7 @@
 			]
         }
     },
-	"initializeCommand": "scripts/generate-defaults.sh",
+	"initializeCommand": "scripts/generate-defaults.sh ${localWorkspaceFolder}",
 	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0",
 	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && pip install -r requirements.txt && npm install --prefix webui",
 	"mounts": [

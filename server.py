@@ -92,6 +92,8 @@ def _init_state_store():
         logger.info(f"Initializing StateStore at {store_dir}")
         # create state store (will initialize git repo if missing)
         state_store = StateStore(path=str(store_dir))
+        # Set as singleton for app-wide access
+        StateStore.set_instance(state_store)
         # attach for handlers and executors to use
         app.state.state_store = state_store
         logger.info("StateStore initialized successfully")
@@ -116,13 +118,21 @@ async def get_disks():
     """Get all available disks with partition information.
     
     Returns list of disks with stable ID basenames (from /dev/disk/by-id/).
+    Marks the boot disk and boot partition with "boot": true.
     """
     try:
         logger.debug("Fetching all disks")
         disks = HWProbe.get_disks()
         logger.info(f"Found {len(disks)} disks")
+        
+        # Get boot drive config
+        store = StateStore.get_instance()
+        boot_config = store.get_boot_drive_config()
+        logger.debug(f"Boot config: {boot_config}")
+        
         return {
             "ok": True,
+            "boot_config": boot_config,
             "disks": [
                 {
                     "id": disk.id,
@@ -130,6 +140,7 @@ async def get_disks():
                     "size": disk.size,
                     "free": disk.free,
                     "sector_size": disk.sector_size,
+                    "boot": disk.device == boot_config.get("disk_device") if boot_config else False,
                     "partitions": [
                         {
                             "id": p.id,
@@ -138,6 +149,7 @@ async def get_disks():
                             "free": p.free,
                             "filesystem": p.filesystem,
                             "flags": p.flags,
+                            "boot": p.device == boot_config.get("partition_device") if boot_config else False,
                         }
                         for p in disk.partitions
                     ],
@@ -167,14 +179,21 @@ async def get_disk(disk_id: str):
             raise HTTPException(status_code=404, detail=f"Disk not found: {disk_id}")
         
         logger.info(f"Found disk {disk_id}: {disk.device} ({disk.size} bytes)")
+        
+        # Get boot drive config
+        store = StateStore.get_instance()
+        boot_config = store.get_boot_drive_config()
+        
         return {
             "ok": True,
+            "boot_config": boot_config,
             "disk": {
                 "id": disk.id,
                 "device": disk.device,
                 "size": disk.size,
                 "free": disk.free,
                 "sector_size": disk.sector_size,
+                "boot": disk.device == boot_config.get("disk_device") if boot_config else False,
                 "partitions": [
                     {
                         "id": p.id,
@@ -183,6 +202,7 @@ async def get_disk(disk_id: str):
                         "free": p.free,
                         "filesystem": p.filesystem,
                         "flags": p.flags,
+                        "boot": p.device == boot_config.get("partition_device") if boot_config else False,
                     }
                     for p in disk.partitions
                 ],

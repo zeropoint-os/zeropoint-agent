@@ -22,12 +22,18 @@ class StateStore:
     
     Key invariant: exports/ are the single source of truth for Git history.
     DuckDB is derived and can be rebuilt from exports.
+    
+    Singleton: Only one instance should exist per process.
     """
+
+    # Singleton instance
+    _instance: Optional['StateStore'] = None
 
     # Export file paths (relative to worktree root)
     EXPORTS_DIR = "exports"
     EXPORT_FILES = {
         "disks": "disks.json",
+        "partitions": "partitions.json",
         "mounts": "mounts.json",
         "paths": "paths.json",
         "vars": "vars.json",
@@ -41,18 +47,24 @@ class StateStore:
         CREATE TABLE IF NOT EXISTS disks (
             id TEXT PRIMARY KEY,
             device TEXT NOT NULL,
-            partition TEXT,
-            filesystem TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE TABLE IF NOT EXISTS partitions (
+            id TEXT PRIMARY KEY,
+            disk_id TEXT NOT NULL,
+            device TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (disk_id) REFERENCES disks(id)
         );
         
         CREATE TABLE IF NOT EXISTS mounts (
             id TEXT PRIMARY KEY,
-            disk_id TEXT NOT NULL,
+            partition_id TEXT NOT NULL,
             mountpoint TEXT NOT NULL,
             options TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (disk_id) REFERENCES disks(id)
+            FOREIGN KEY (partition_id) REFERENCES partitions(id)
         );
         
         CREATE TABLE IF NOT EXISTS paths (
@@ -101,6 +113,8 @@ class StateStore:
         Args:
             path: Path to repo root (default: ./state)
             db_path: Path to DuckDB file (default: {path}/.zeropoint.db)
+        
+        Note: Use StateStore.get_instance() for singleton access.
         """
         self.path = Path(path or "state").resolve()
         self.db_path = Path(db_path or str(self.path / ".zeropoint.db"))
@@ -347,3 +361,67 @@ class StateStore:
             }
         except Exception as e:
             return {"error": str(e)}
+    @classmethod
+    def get_instance(cls) -> 'StateStore':
+        """Get the singleton StateStore instance.
+        
+        Returns the existing instance if available, or raises an error.
+        The instance should be created during app startup.
+        """
+        if cls._instance is None:
+            raise RuntimeError("StateStore not initialized. Call StateStore.set_instance() first.")
+        return cls._instance
+
+    @classmethod
+    def set_instance(cls, instance: 'StateStore') -> None:
+        """Set the singleton instance (called by app startup)."""
+        cls._instance = instance
+
+    def get_boot_drive_config(self) -> Optional[Dict[str, str]]:
+        """Get boot drive configuration from DuckDB.
+        
+        Returns:
+            {
+                "disk_device": "/dev/nvme0n1",
+                "partition_device": "/dev/nvme0n1p2"
+            }
+            or None if not configured.
+        """
+        try:
+            if not self.db:
+                return None
+            
+            cursor = self.db.cursor()
+            
+            # Look for the root mount in the mounts table, join with partitions to get device
+            cursor.execute("""
+                SELECT p.device FROM mounts m
+                JOIN partitions p ON m.partition_id = p.id
+                WHERE m.id = 'root' OR m.mountpoint = '/'
+                LIMIT 1
+            """)
+            
+            row = cursor.fetchone()
+            if not row:
+                logger.debug("No boot mount configured")
+                return None
+            
+            partition_device = row[0]
+            logger.debug(f"Boot partition device: {partition_device}")
+            
+            # Extract disk device by removing partition suffix
+            # /dev/nvme0n1p2 -> /dev/nvme0n1, /dev/sda2 -> /dev/sda
+            if "nvme" in partition_device:
+                disk_device = partition_device.rsplit("p", 1)[0]
+            else:
+                disk_device = partition_device.rstrip("0123456789")
+            
+            logger.debug(f"Boot disk device: {disk_device}")
+            
+            return {
+                "disk_device": disk_device,
+                "partition_device": partition_device,
+            }
+        except Exception as e:
+            logger.error(f"Error getting boot drive config: {e}", exc_info=True)
+            return None

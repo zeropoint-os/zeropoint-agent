@@ -151,11 +151,17 @@ cat > "$OUTPUT_FILE" << EOF
       "device": "$disk_device"
     }
   ],
+  "partitions": [
+    {
+      "id": "$partition_stable_id",
+      "disk_id": "$disk_stable_id",
+      "device": "$partition_device"
+    }
+  ],
   "mounts": [
     {
       "id": "root",
       "partition_id": "$partition_stable_id",
-      "partition_device": "$partition_device",
       "mountpoint": "/",
       "options": "defaults"
     }
