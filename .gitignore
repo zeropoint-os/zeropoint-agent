@@ -239,6 +239,7 @@ tmp/
 
 # Ignore our state folder
 data/state/
+data/defaults.json
 
 # Ignore logs
 logs/
