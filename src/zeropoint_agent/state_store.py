@@ -34,6 +34,7 @@ class StateStore:
     EXPORT_FILES = {
         "disks": "disks.json",
         "partitions": "partitions.json",
+        "formats": "formats.json",
         "mounts": "mounts.json",
         "paths": "paths.json",
         "vars": "vars.json",
@@ -51,20 +52,34 @@ class StateStore:
         );
         
         CREATE TABLE IF NOT EXISTS partitions (
-            id TEXT PRIMARY KEY,
             disk_id TEXT NOT NULL,
-            device TEXT,
+            "index" INTEGER NOT NULL,
+            size_mb INTEGER,
+            type TEXT DEFAULT 'primary',
+            label TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (disk_id, "index"),
             FOREIGN KEY (disk_id) REFERENCES disks(id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS formats (
+            disk_id TEXT NOT NULL,
+            partition_index INTEGER NOT NULL,
+            filesystem TEXT DEFAULT 'ext4',
+            confirm_wipe INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (disk_id, partition_index),
+            FOREIGN KEY (disk_id, partition_index) REFERENCES partitions(disk_id, "index")
         );
         
         CREATE TABLE IF NOT EXISTS mounts (
             id TEXT PRIMARY KEY,
-            partition_id TEXT NOT NULL,
+            disk_id TEXT NOT NULL,
+            partition_index INTEGER NOT NULL,
             mountpoint TEXT NOT NULL,
             options TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (partition_id) REFERENCES partitions(id)
+            FOREIGN KEY (disk_id, partition_index) REFERENCES partitions(disk_id, "index")
         );
         
         CREATE TABLE IF NOT EXISTS paths (
@@ -254,8 +269,14 @@ class StateStore:
         self.db = sqlite3.connect(str(self.db_path))
         self.db.row_factory = sqlite3.Row
         
+        # Always ensure schema exists (CREATE TABLE IF NOT EXISTS is safe)
+        for statement in self.SCHEMA.split(";"):
+            if statement.strip():
+                self.db.execute(statement)
+        self.db.commit()
+        
         if rebuild:
-            # Drop all tables
+            # Drop all tables and recreate
             cursor = self.db.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = cursor.fetchall()
@@ -425,3 +446,270 @@ class StateStore:
         except Exception as e:
             logger.error(f"Error getting boot drive config: {e}", exc_info=True)
             return None
+
+    # Managed Disk Methods
+    def get_managed_disks(self) -> List[str]:
+        """Get list of managed disk IDs (those defined in the disks table) from edit branch."""
+        self._import_from_branch("edit")
+        cursor = self.db.cursor()
+        cursor.execute("SELECT id FROM disks ORDER BY id")
+        return [row[0] for row in cursor.fetchall()]
+
+    def add_managed_disk(self, disk_id: str) -> None:
+        """Register a disk as managed in edit branch (just ensure it exists in disks table)."""
+        self._import_from_branch("edit")
+        
+        # Check if disk exists in reality
+        from .hw_probe import HWProbe
+        if not HWProbe.get_disk(disk_id):
+            raise ValueError(f"Disk not found: {disk_id}")
+        
+        disk = HWProbe.get_disk(disk_id)
+        
+        # Insert or update disk record
+        self.db.execute(
+            "INSERT OR REPLACE INTO disks (id, device) VALUES (?, ?)",
+            (disk_id, disk.device)
+        )
+        self.db.commit()
+        
+        # Export disks to edit branch
+        disks = self._get_table_data("disks")
+        self.write_to_edit("disks", disks, f"Add managed disk: {disk_id}")
+
+    def remove_managed_disk(self, disk_id: str) -> None:
+        """Unregister a disk from management in edit branch."""
+        self._import_from_branch("edit")
+        
+        # Remove disk and all related partitions, formats
+        self.db.execute("DELETE FROM formats WHERE disk_id = ?", (disk_id,))
+        self.db.execute("DELETE FROM partitions WHERE disk_id = ?", (disk_id,))
+        self.db.execute("DELETE FROM disks WHERE id = ?", (disk_id,))
+        self.db.commit()
+        
+        # Export updated tables to edit branch
+        for table in ["disks", "partitions", "formats"]:
+            data = self._get_table_data(table)
+            self.write_to_edit(table, data, f"Remove managed disk: {disk_id}")
+
+    # Partition Methods
+    def get_partitions(self, disk_id: str) -> List[Dict[str, Any]]:
+        """Get partitions for a disk from edit branch."""
+        self._import_from_branch("edit")
+        cursor = self.db.cursor()
+        cursor.execute(
+            "SELECT disk_id, \"index\", size_mb, type, label FROM partitions WHERE disk_id = ? ORDER BY \"index\"",
+            (disk_id,)
+        )
+        return [dict(zip(["disk_id", "index", "size_mb", "type", "label"], row)) 
+                for row in cursor.fetchall()]
+
+    def write_partitions(self, disk_id: str, partitions: List[Dict[str, Any]]) -> None:
+        """Write/update partition layout for a disk to edit branch."""
+        self._import_from_branch("edit")
+        
+        # Clear existing partitions for this disk
+        self.db.execute("DELETE FROM partitions WHERE disk_id = ?", (disk_id,))
+        
+        # Insert new partitions
+        for part in partitions:
+            self.db.execute(
+                """INSERT INTO partitions (disk_id, "index", size_mb, type, label)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (disk_id, part.get("index"), part.get("size_mb"), 
+                 part.get("type", "primary"), part.get("label"))
+            )
+        
+        self.db.commit()
+        
+        # Export to edit branch
+        partitions_data = self._get_table_data("partitions")
+        self.write_to_edit("partitions", partitions_data, 
+                          f"Set partitions for {disk_id}: {len(partitions)} partition(s)")
+
+    def update_partitions(self, disk_id: str, updates: Dict[int, Dict[str, Any]]) -> None:
+        """Merge updates into existing partitions (PATCH operation)."""
+        self._import_from_branch("edit")
+        
+        # Read current partitions
+        current = self.get_partitions(disk_id)
+        current_by_index = {p["index"]: p for p in current}
+        
+        # Apply updates
+        for index, update_data in updates.items():
+            if index in current_by_index:
+                current_by_index[index].update(update_data)
+        
+        # Write back all partitions
+        updated_partitions = list(current_by_index.values())
+        self.write_partitions(disk_id, updated_partitions)
+
+    # Format Methods
+    def get_formats(self, disk_id: str) -> Dict[int, Dict[str, Any]]:
+        """Get format configs for all partitions on a disk from edit branch."""
+        self._import_from_branch("edit")
+        cursor = self.db.cursor()
+        cursor.execute(
+            "SELECT partition_index, filesystem, confirm_wipe FROM formats WHERE disk_id = ? ORDER BY partition_index",
+            (disk_id,)
+        )
+        return {row[0]: {"filesystem": row[1], "confirm_wipe": bool(row[2])}
+                for row in cursor.fetchall()}
+
+    def write_format(self, disk_id: str, partition_index: int, 
+                    filesystem: str = "ext4", confirm_wipe: bool = False) -> None:
+        """Write format config for a partition to edit branch."""
+        self._import_from_branch("edit")
+        
+        # Verify partition exists
+        cursor = self.db.cursor()
+        cursor.execute(
+            "SELECT 1 FROM partitions WHERE disk_id = ? AND \"index\" = ?",
+            (disk_id, partition_index)
+        )
+        if not cursor.fetchone():
+            raise ValueError(f"Partition {disk_id}:{partition_index} does not exist")
+        
+        # Insert or replace format
+        self.db.execute(
+            """INSERT OR REPLACE INTO formats (disk_id, partition_index, filesystem, confirm_wipe)
+               VALUES (?, ?, ?, ?)""",
+            (disk_id, partition_index, filesystem, int(confirm_wipe))
+        )
+        self.db.commit()
+        
+        # Export to edit branch
+        formats_data = self._get_table_data("formats")
+        self.write_to_edit("formats", formats_data,
+                          f"Set format for {disk_id}:{partition_index} to {filesystem}")
+
+    def get_state(self) -> Dict[str, Any]:
+        """Get overall state comparing desired (edit) vs current (main).
+        
+        Returns structure: {
+            "disks": {
+                "disk_id": {
+                    "action": "added|removed|edited|unchanged",
+                    "state": "pending|current",
+                    "desired": {...},
+                    "current": {...}
+                }
+            },
+            "partitions": {...},
+            "formats": {...}
+        }
+        """
+        # Load all exports from both branches
+        desired = self._load_all_exports("edit")
+        current = self._load_all_exports("main")
+        
+        result = {}
+        
+        # Compare each table
+        for table in ["disks", "partitions", "formats", "mounts", "paths", "vars", "modules", "links", "exposures"]:
+            result[table] = {}
+            
+            desired_by_key = {self._get_resource_key(table, r): r for r in desired.get(table, [])}
+            current_by_key = {self._get_resource_key(table, r): r for r in current.get(table, [])}
+            
+            all_keys = set(desired_by_key.keys()) | set(current_by_key.keys())
+            
+            for key in all_keys:
+                desired_resource = desired_by_key.get(key)
+                current_resource = current_by_key.get(key)
+                
+                # Determine action and state
+                if desired_resource and current_resource:
+                    if desired_resource == current_resource:
+                        action = "unchanged"
+                    else:
+                        action = "edited"
+                    state = "current"
+                elif desired_resource and not current_resource:
+                    action = "added"
+                    state = "pending"
+                elif not desired_resource and current_resource:
+                    action = "removed"
+                    state = "pending"
+                else:
+                    continue  # Skip impossible case
+                
+                result[table][key] = {
+                    "action": action,
+                    "state": state,
+                    "desired": desired_resource,
+                    "current": current_resource
+                }
+        
+        return result
+    
+    def _load_all_exports(self, branch: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Load all exports from a branch into a dict."""
+        if branch == "main":
+            branch_path = self.main_repo_path
+        elif branch == "edit":
+            branch_path = self.edit_repo_path
+        else:
+            raise ValueError(f"Unknown branch: {branch}")
+        
+        result = {}
+        for table_name, export_file in self.EXPORT_FILES.items():
+            export_path = branch_path / self.EXPORTS_DIR / export_file
+            result[table_name] = []
+            
+            if not export_path.exists():
+                continue
+            
+            try:
+                with open(export_path) as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        result[table_name] = data
+            except (json.JSONDecodeError, IOError):
+                logger.warning(f"Failed to load {export_path}")
+        
+        return result
+    
+    def _get_resource_key(self, table: str, resource: Dict[str, Any]) -> str:
+        """Get unique key for a resource in a table."""
+        if table == "disks":
+            return resource.get("id", "")
+        elif table == "partitions":
+            return f"{resource.get('disk_id', '')}:{resource.get('index', '')}"
+        elif table == "formats":
+            return f"{resource.get('disk_id', '')}:{resource.get('partition_index', '')}"
+        elif table == "mounts":
+            return resource.get("id", "")
+        elif table == "paths":
+            return resource.get("id", "")
+        elif table == "vars":
+            return resource.get("id", "")
+        elif table == "modules":
+            return resource.get("id", "")
+        elif table == "links":
+            return resource.get("id", "")
+        elif table == "exposures":
+            return resource.get("id", "")
+        else:
+            return str(resource)
+    
+    # Helper method
+    def _get_table_data(self, table: str) -> List[Dict[str, Any]]:
+        """Get all rows from a table as list of dicts."""
+        cursor = self.db.cursor()
+        cursor.execute(f"SELECT * FROM {table} ORDER BY rowid")
+        
+        # Get column names
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        # Fetch and convert rows
+        cursor.execute(f"SELECT * FROM {table} ORDER BY rowid")
+        rows = []
+        for row in cursor.fetchall():
+            row_dict = {col: val for col, val in zip(columns, row)}
+            # Remove timestamps for export
+            row_dict.pop("created_at", None)
+            rows.append(row_dict)
+        
+        return rows

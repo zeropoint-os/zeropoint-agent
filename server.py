@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 
 from zeropoint_agent.state_store import StateStore
 from zeropoint_agent.hw_probe import HWProbe
+from zeropoint_agent.commands.disk import (
+    AddManagedDisk, RemoveManagedDisk, PartitionManagedDisk,
+    UpdatePartitionsManagedDisk, AutoPartitionManagedDisk,
+    ResetPartitionsManagedDisk, FormatManagedDisk
+)
 
 
 # Configure logging
@@ -143,7 +148,6 @@ async def get_disks():
                     "boot": disk.device == boot_config.get("disk_device") if boot_config else False,
                     "partitions": [
                         {
-                            "id": p.id,
                             "device": p.device,
                             "size": p.size,
                             "free": p.free,
@@ -246,7 +250,244 @@ async def get_gpus():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Serve the built web UI from `webui/dist` at the application root.
+# Managed Disk Management Endpoints
+
+@app.post("/api/managed-disks")
+async def add_managed_disk(body: dict):
+    """Register a disk for management.
+    
+    Body: {disk_id: "nvme-Samsung..."}
+    """
+    try:
+        disk_id = body.get("disk_id")
+        if not disk_id:
+            raise HTTPException(status_code=400, detail="disk_id is required")
+        
+        logger.info(f"Adding managed disk: {disk_id}")
+        cmd = AddManagedDisk()
+        result = cmd.execute({"disk_id": disk_id})
+        
+        return {
+            "ok": result.status.value == "applied",
+            "status": result.status.value,
+            "output": result.output,
+            "error": result.error,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add managed disk: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/managed-disks/{disk_id}")
+async def remove_managed_disk(disk_id: str):
+    """Unregister a disk from management."""
+    try:
+        logger.info(f"Removing managed disk: {disk_id}")
+        cmd = RemoveManagedDisk()
+        result = cmd.execute({"disk_id": disk_id})
+        
+        return {
+            "ok": result.status.value == "applied",
+            "status": result.status.value,
+            "output": result.output,
+            "error": result.error,
+        }
+    except Exception as e:
+        logger.error(f"Failed to remove managed disk: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Partition Management Endpoints
+
+@app.post("/api/managed-disks/{disk_id}/partitions")
+async def set_partitions(disk_id: str, body: dict):
+    """Set partition layout for a disk.
+    
+    Body: {partitions: [{index: 0, size_mb: 512, type: "primary", label: "boot"}, ...]}
+    """
+    try:
+        partitions = body.get("partitions", [])
+        if not partitions:
+            raise HTTPException(status_code=400, detail="partitions list is required")
+        
+        logger.info(f"Setting {len(partitions)} partition(s) for {disk_id}")
+        cmd = PartitionManagedDisk()
+        result = cmd.execute({"disk_id": disk_id, "partitions": partitions})
+        
+        return {
+            "ok": result.status.value in ["applied", "blocked"],
+            "status": result.status.value,
+            "reason": result.reason,
+            "output": result.output,
+            "error": result.error,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set partitions for {disk_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/managed-disks/{disk_id}/partitions")
+async def update_partitions(disk_id: str, body: dict):
+    """Update specific partitions.
+    
+    Body: {updates: {0: {size_mb: 1024}, 1: {label: "root"}}}
+    """
+    try:
+        updates = body.get("updates", {})
+        if not updates:
+            raise HTTPException(status_code=400, detail="updates dict is required")
+        
+        logger.info(f"Updating partitions for {disk_id}")
+        cmd = UpdatePartitionsManagedDisk()
+        result = cmd.execute({"disk_id": disk_id, "updates": updates})
+        
+        return {
+            "ok": result.status.value in ["applied", "blocked"],
+            "status": result.status.value,
+            "reason": result.reason,
+            "output": result.output,
+            "error": result.error,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update partitions for {disk_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/managed-disks/{disk_id}/partitions/auto")
+async def auto_partition(disk_id: str, body: dict = None):
+    """Auto-partition a disk with standard layout.
+    
+    Body: {boot_size_mb: 512} (optional)
+    """
+    try:
+        body = body or {}
+        boot_size = body.get("boot_size_mb", 512)
+        
+        logger.info(f"Auto-partitioning {disk_id}")
+        cmd = AutoPartitionManagedDisk()
+        result = cmd.execute({"disk_id": disk_id, "boot_size_mb": boot_size})
+        
+        return {
+            "ok": result.status.value in ["applied", "blocked"],
+            "status": result.status.value,
+            "reason": result.reason,
+            "output": result.output,
+            "error": result.error,
+        }
+    except Exception as e:
+        logger.error(f"Failed to auto-partition {disk_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/managed-disks/{disk_id}/partitions/reset")
+async def reset_partitions(disk_id: str):
+    """Reset to current physical partition layout."""
+    try:
+        logger.info(f"Resetting partitions for {disk_id} to current layout")
+        cmd = ResetPartitionsManagedDisk()
+        result = cmd.execute({"disk_id": disk_id})
+        
+        return {
+            "ok": result.status.value in ["applied", "blocked"],
+            "status": result.status.value,
+            "reason": result.reason,
+            "output": result.output,
+            "error": result.error,
+        }
+    except Exception as e:
+        logger.error(f"Failed to reset partitions for {disk_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Format Management Endpoints
+
+@app.post("/api/managed-disks/{disk_id}/partitions/{partition_index}/format")
+async def format_partition(disk_id: str, partition_index: int, body: dict):
+    """Set filesystem for a partition.
+    
+    Body: {filesystem: "ext4", confirm_wipe: false}
+    """
+    try:
+        filesystem = body.get("filesystem", "ext4")
+        confirm_wipe = body.get("confirm_wipe", False)
+        
+        logger.info(f"Setting format for {disk_id}:{partition_index} to {filesystem}")
+        cmd = FormatManagedDisk()
+        result = cmd.execute({
+            "disk_id": disk_id,
+            "partition_index": partition_index,
+            "filesystem": filesystem,
+            "confirm_wipe": confirm_wipe
+        })
+        
+        return {
+            "ok": result.status.value in ["applied", "blocked"],
+            "status": result.status.value,
+            "reason": result.reason,
+            "output": result.output,
+            "error": result.error,
+        }
+    except Exception as e:
+        logger.error(f"Failed to format {disk_id}:{partition_index}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# State Endpoints
+
+@app.get("/api/state")
+async def get_state():
+    """Get overall state comparing desired (edit) vs applied (main).
+    
+    Returns resources grouped by table with action (added/removed/edited/unchanged)
+    and state (pending/current).
+    """
+    try:
+        store = StateStore.get_instance()
+        state = store.get_state()
+        return {
+            "ok": True,
+            "data": state
+        }
+    except Exception as e:
+        logger.error(f"Failed to get state: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/state/{resource_type}/{resource_id}")
+async def get_resource_status(resource_type: str, resource_id: str):
+    """Get status of a specific resource.
+    
+    Returns: {
+        "action": "added|removed|edited|unchanged",
+        "state": "pending|current",
+        "desired": {...} or null,
+        "current": {...} or null
+    }
+    """
+    try:
+        store = StateStore.get_instance()
+        state = store.get_state()
+        
+        if resource_type not in state:
+            raise HTTPException(status_code=404, detail=f"Unknown resource type: {resource_type}")
+        
+        if resource_id not in state[resource_type]:
+            raise HTTPException(status_code=404, detail=f"Resource not found: {resource_type}/{resource_id}")
+        
+        return state[resource_type][resource_id]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get status for {resource_type}/{resource_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # If a file isn't found, StaticFiles will fall back to `index.html` when
 # `html=True`, enabling SPA client-side routing.
 app.mount("/", StaticFiles(directory="webui/dist", html=True), name="webui")

@@ -26,7 +26,8 @@
 				"zaaack.markdown-editor",
 				"ms-python.debugpy",
 				"idered.npm",
-				"msjsdiag.debugger-for-chrome"
+				"msjsdiag.debugger-for-chrome",
+				"qwtel.sqlite-viewer"
 			]
         }
     },
