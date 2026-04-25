@@ -2,11 +2,14 @@
 
 dag.add() is the compiler — validates I/O types at edge creation.
 dag.resolve() is the runtime — topo-walks and propagates values.
+
+Optionally backed by GraphStore (RyuGraph) for persistence across restarts.
 """
 
+import json
 import logging
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, get_args
-from dataclasses import dataclass
 
 from zeropoint_agent.inode import INode
 from zeropoint_agent.entities import NodeStatus
@@ -29,9 +32,9 @@ def _get_io_types(node: INode) -> tuple:
 class NodeEntry:
     """A node in the graph with its metadata."""
     node: INode
-    parents: List[str]         # parent node IDs
+    parents: List[str]
     status: NodeStatus = NodeStatus.PENDING
-    output: Any = None         # resolved O value
+    output: Any = None
     error: Optional[str] = None
     input_type: type = type(None)
     output_type: type = type(None)
@@ -42,18 +45,21 @@ class DAG:
     The graph — compiler + runtime.
 
     add() type-checks edges. resolve() propagates values.
+    Optionally persists to RyuGraph via GraphStore.
     """
 
-    def __init__(self):
+    def __init__(self, store=None):
+        """
+        Args:
+            store: Optional GraphStore for persistence. If None, in-memory only.
+        """
         self._nodes: Dict[str, NodeEntry] = {}
-        self._order: List[str] = []  # insertion order (valid topo order if added correctly)
+        self._order: List[str] = []
+        self._store = store
 
     def add(self, node_id: str, node: INode, parents: Optional[List[str]] = None) -> str:
         """
         Add a node to the graph with type-checked edges.
-
-        This is the compiler — if parent.O doesn't match node.I,
-        it's a type error and the edge is rejected.
 
         Args:
             node_id: Unique identifier for this node
@@ -95,13 +101,28 @@ class DAG:
                 f"got I={i_type.__name__}"
             )
 
-        self._nodes[node_id] = NodeEntry(
+        entry = NodeEntry(
             node=node,
             parents=parents,
             input_type=i_type,
             output_type=o_type,
         )
+        self._nodes[node_id] = entry
         self._order.append(node_id)
+
+        # Persist to store
+        if self._store:
+            from zeropoint_agent.graph_store import StoredNode
+            # Extract config from node's __dict__ (constructor params = desired state)
+            config = {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
+            self._store.add_node(StoredNode(
+                id=node_id,
+                node_type=type(node).__name__,
+                node_class=f"{type(node).__module__}.{type(node).__name__}",
+                config=config,
+            ))
+            for parent_id in parents:
+                self._store.add_edge(parent_id, node_id)
 
         logger.debug(
             f"Added {node_id}: {type(node).__name__} "
@@ -112,11 +133,6 @@ class DAG:
     def resolve(self) -> Dict[str, NodeStatus]:
         """
         Run the graph — propagate values through I → O edges.
-
-        Walks nodes in topological order. For each node:
-        - Collects parent output as input
-        - Calls node.resolve(input)
-        - Stores output for children
 
         Returns:
             Dict of node_id → final status
@@ -141,6 +157,7 @@ class DAG:
 
                 if blocked:
                     results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
                     continue
 
                 # Gather input from parent(s)
@@ -149,7 +166,7 @@ class DAG:
                 elif len(entry.parents) == 1:
                     input_val = self._nodes[entry.parents[0]].output
                 else:
-                    # Multiple parents — for now, pass first parent's output
+                    # Multiple parents — pass first parent's output for now
                     # TODO: multi-input projection for union types
                     input_val = self._nodes[entry.parents[0]].output
 
@@ -174,8 +191,23 @@ class DAG:
                 entry.error = str(e)
 
             results[node_id] = entry.status
+            self._persist_status(node_id, entry)
 
         return results
+
+    def _persist_status(self, node_id: str, entry: NodeEntry) -> None:
+        """Persist node status and output to store."""
+        if not self._store:
+            return
+        output_dict = None
+        if entry.output is not None:
+            output_dict = asdict(entry.output) if hasattr(entry.output, "__dataclass_fields__") else None
+        self._store.update_status(
+            node_id,
+            status=entry.status.value,
+            output=output_dict,
+            error=entry.error,
+        )
 
     def get(self, node_id: str) -> NodeEntry:
         """Get a node entry by ID."""
