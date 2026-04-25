@@ -1,5 +1,30 @@
 """Zeropoint Agent Python package."""
 
-from .state_store import StateStore
+from .entities import (
+    NodeStatus, NodeOperation,
+    DiskDesired, DiskResult,
+    PartitionDesired, PartitionResult,
+    FormatDesired, FormatResult,
+    MountDesired, MountResult,
+    PathDesired, PathResult,
+    VarDesired, VarResult,
+    ModuleDesired, ModuleResult,
+    LinkDesired, LinkResult,
+    ExposureDesired, ExposureResult,
+)
+from .inode import INode
+from .inputs import Inputs
 
-__all__ = ["StateStore"]
+__all__ = [
+    "NodeStatus", "NodeOperation",
+    "DiskDesired", "DiskResult",
+    "PartitionDesired", "PartitionResult",
+    "FormatDesired", "FormatResult",
+    "MountDesired", "MountResult",
+    "PathDesired", "PathResult",
+    "VarDesired", "VarResult",
+    "ModuleDesired", "ModuleResult",
+    "LinkDesired", "LinkResult",
+    "ExposureDesired", "ExposureResult",
+    "INode", "Inputs",
+]
