@@ -1,94 +1,63 @@
-"""INode — typed interface for DAG nodes.
+"""INode — the fundamental unit of the graph-based language.
 
-Each node type implements this interface with its own Desired/Result
-dataclass pair. The executor calls verify() to check convergence,
-add() to apply, and remove() to tear down.
+A node is a typed I → O expression. The output type O is the contract —
+the shape of what this node produces. Edges are type-checked bindings:
+parent.O must match child.I.
 
-Type validation happens in two phases:
-  Phase 1 (edge creation): accepted_inputs ⊆ union(incoming result types)
-  Phase 2 (execution): concrete values validated when flowing through edges
+dag.add() is the compiler — validates types at construction time.
+dag.resolve() is the runtime — propagates values through the graph.
 """
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, Set, Type, ClassVar
+from typing import Generic, TypeVar
 
-from zeropoint_agent.inputs import Inputs
-
-D = TypeVar("D")  # Desired type
-R = TypeVar("R")  # Result type
+I = TypeVar("I")  # Input type (parent's output contract)
+O = TypeVar("O")  # Output type (this node's contract)
 
 
-class INode(ABC, Generic[D, R]):
+class INode(ABC, Generic[I, O]):
     """
-    Interface for DAG nodes.
+    A typed transform in the graph: I → O.
 
-    Subclasses declare:
-        accepted_inputs: Set of result types this node can consume
-        desired_type: The dataclass type for desired state
-        result_type: The dataclass type for produced results
-
-    The executor provides an Inputs projection containing parent results.
+    - resolve(): produce O from I (runtime, may have side effects)
+    - verify(): does the actual state match desired? (probe reality)
+    - remove(): tear down what this node created
     """
-
-    accepted_inputs: ClassVar[Set[Type]] = set()
 
     @abstractmethod
-    def verify(self, desired: D) -> bool:
+    def resolve(self, input: I) -> O:
         """
-        Check if actual state matches desired state.
+        Produce output from input.
 
-        Called on every reconcile pass. If True, node is converged (SUCCESS).
-        Should probe real system state — not just return cached values.
-
-        Args:
-            desired: The desired state declaration
+        Called by the executor during dag.resolve(). The parent's
+        resolved output flows in as `input`. This node's config
+        (its own fields) is the desired state.
 
         Returns:
-            True if actual matches desired (no action needed)
+            The resolved output value (contract O filled with runtime values)
         """
         ...
 
     @abstractmethod
-    def add(self, inputs: Inputs, desired: D) -> R:
+    def verify(self) -> bool:
         """
-        Create or apply a resource to match desired state.
+        Does actual system state match this node's desired state?
 
-        Called when verify() returns False. Parent results are available
-        via the typed Inputs projection.
-
-        Args:
-            inputs: Typed projection of parent node results
-            desired: The desired state to achieve
+        Probes reality (disk exists? partition formatted? container running?)
+        and compares against self. The node knows its own domain — the
+        executor just asks "are you done?"
 
         Returns:
-            Result object (made available to child nodes)
-
-        Raises:
-            Exception on failure (node goes to ERROR status)
+            True if actual matches desired (converged)
         """
         ...
 
     @abstractmethod
-    def remove(self, desired: D) -> bool:
+    def remove(self) -> bool:
         """
-        Remove/destroy a resource.
-
-        Args:
-            desired: The desired state (for identifying what to remove)
+        Tear down what this node represents.
 
         Returns:
             True if successfully removed
         """
         ...
-
-    def move(self, source: D, dest: D) -> bool:
-        """Migrate resource. Override if supported."""
-        raise NotImplementedError(
-            f"move() not supported for {type(self).__name__}"
-        )
-
-    def copy(self, source: D, dest: D) -> bool:
-        """Duplicate resource. Override if supported."""
-        raise NotImplementedError(
-            f"copy() not supported for {type(self).__name__}"
-        )

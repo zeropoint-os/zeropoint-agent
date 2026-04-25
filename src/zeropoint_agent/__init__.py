@@ -1,30 +1,21 @@
-"""Zeropoint Agent Python package."""
+"""Zeropoint Agent — graph-based infrastructure language."""
 
-from .entities import (
-    NodeStatus, NodeOperation,
-    DiskDesired, DiskResult,
-    PartitionDesired, PartitionResult,
-    FormatDesired, FormatResult,
-    MountDesired, MountResult,
-    PathDesired, PathResult,
-    VarDesired, VarResult,
-    ModuleDesired, ModuleResult,
-    LinkDesired, LinkResult,
-    ExposureDesired, ExposureResult,
-)
 from .inode import INode
-from .inputs import Inputs
+from .entities import (
+    NodeStatus,
+    DiskResult, PartitionResult, FormatResult, MountResult,
+    PathResult, VarResult, ModuleResult, LinkResult, ExposureResult,
+)
+from .dag import DAG
+from .nodes import (
+    DiskNode, PartitionNode, FormatNode, MountNode,
+    PathNode, VarNode, ModuleNode, LinkNode, ExposureNode,
+)
 
 __all__ = [
-    "NodeStatus", "NodeOperation",
-    "DiskDesired", "DiskResult",
-    "PartitionDesired", "PartitionResult",
-    "FormatDesired", "FormatResult",
-    "MountDesired", "MountResult",
-    "PathDesired", "PathResult",
-    "VarDesired", "VarResult",
-    "ModuleDesired", "ModuleResult",
-    "LinkDesired", "LinkResult",
-    "ExposureDesired", "ExposureResult",
-    "INode", "Inputs",
+    "INode", "DAG", "NodeStatus",
+    "DiskResult", "PartitionResult", "FormatResult", "MountResult",
+    "PathResult", "VarResult", "ModuleResult", "LinkResult", "ExposureResult",
+    "DiskNode", "PartitionNode", "FormatNode", "MountNode",
+    "PathNode", "VarNode", "ModuleNode", "LinkNode", "ExposureNode",
 ]
