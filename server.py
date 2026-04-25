@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from urllib.parse import unquote
 from datetime import datetime, timezone
 
 from zeropoint_agent.dag import DAG
@@ -133,6 +134,12 @@ def _init():
     app.state.store = GraphStore(db_path)
     app.state.dag = DAG(store=app.state.store)
     logger.info("Graph store initialized")
+
+    # Mount static files LAST so API routes take priority
+    webui_dist = Path("webui/dist")
+    if webui_dist.exists():
+        app.mount("/", StaticFiles(directory=str(webui_dist), html=True), name="webui")
+        logger.info("WebUI mounted at /")
 
 
 # --- Health ---
@@ -324,6 +331,7 @@ def _node_to_dict(nid: str, entry) -> dict:
 @app.get("/api/dag/query/{pattern:path}")
 async def query_graph(pattern: str, status: Optional[str] = None,
                       type: Optional[str] = None):
+    pattern = unquote(pattern)
     """Query the graph with a glob-style path pattern.
 
     Examples:
@@ -351,6 +359,7 @@ async def query_graph(pattern: str, status: Optional[str] = None,
 
 @app.get("/api/dag/health/{pattern:path}")
 async def graph_health(pattern: str):
+    pattern = unquote(pattern)
     """Health check via glob pattern.
 
     Returns verify() status for matched nodes.
@@ -449,6 +458,7 @@ async def update_node(node_id: str, config: Dict[str, Any]):
 
 @app.post("/api/dag/resolve/{pattern:path}")
 async def resolve_subgraph(pattern: str, request: ResolveRequest):
+    pattern = unquote(pattern)
     """Resolve only the matched subgraph.
 
     Examples:
@@ -509,6 +519,7 @@ async def resolve_subgraph(pattern: str, request: ResolveRequest):
 
 @app.delete("/api/dag/{pattern:path}")
 async def delete_nodes(pattern: str):
+    pattern = unquote(pattern)
     """Remove nodes matching the glob pattern.
 
     Removes in reverse topo order (children first), calling
@@ -579,17 +590,8 @@ async def get_gpus():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- Static files (WebUI) ---
-
-webui_dist = Path("webui/dist")
-if webui_dist.exists():
-    app.mount("/", StaticFiles(directory=str(webui_dist), html=True), name="webui")
-    logger.info("WebUI mounted at /")
-else:
-    logger.warning(f"WebUI not found at {webui_dist}, skipping mount")
-
-
 if __name__ == "__main__":
     import uvicorn
+
     logger.info("Starting Zeropoint Agent on 0.0.0.0:2370")
     uvicorn.run(app, host="0.0.0.0", port=2370, log_config=None)
