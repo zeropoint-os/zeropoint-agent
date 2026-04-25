@@ -255,6 +255,115 @@ class DAG:
             error=entry.error,
         )
 
+    def resolve_subset(self, node_ids: list, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
+        """Resolve only the specified nodes, in topo order.
+
+        Nodes not in node_ids are skipped but their outputs are still
+        available as inputs to matched nodes.
+        """
+        logger.info(f"Resolving subset ({len(node_ids)} nodes, mode={mode.value})")
+        results = {}
+
+        # Filter to only requested nodes, in topo order
+        ordered = [nid for nid in self._order if nid in node_ids]
+
+        for node_id in ordered:
+            entry = self._nodes[node_id]
+            node = entry.node
+
+            try:
+                # Check parents (any parent, not just matched ones)
+                allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
+                if mode == ResolveMode.DRY_RUN:
+                    allowed.add(NodeStatus.PENDING)
+
+                blocked = False
+                for parent_id in entry.parents:
+                    parent_status = self._nodes[parent_id].status
+                    if parent_status not in allowed:
+                        entry.status = NodeStatus.BLOCKED
+                        blocked = True
+                        break
+
+                if blocked:
+                    results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
+                    continue
+
+                # Gather input
+                if not entry.parents:
+                    input_val = None
+                elif len(entry.parents) == 1:
+                    input_val = self._nodes[entry.parents[0]].output
+                else:
+                    input_val = self._nodes[entry.parents[0]].output
+
+                # Verify
+                if mode == ResolveMode.MOCK:
+                    converged = node.mock_verify()
+                else:
+                    converged = node.verify()
+
+                if converged:
+                    entry.status = NodeStatus.SUCCESS
+                    results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
+                    continue
+
+                if mode == ResolveMode.DRY_RUN:
+                    entry.status = NodeStatus.PENDING
+                    entry.output = node.mock_resolve(input_val)
+                    results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
+                    continue
+
+                # Resolve
+                entry.status = NodeStatus.RUNNING
+                if mode == ResolveMode.MOCK:
+                    output = node.mock_resolve(input_val)
+                else:
+                    output = node.resolve(input_val)
+                entry.output = output
+
+                if mode == ResolveMode.MOCK:
+                    post_converged = node.mock_verify()
+                else:
+                    post_converged = node.verify()
+
+                if post_converged:
+                    entry.status = NodeStatus.SUCCESS
+                else:
+                    entry.status = NodeStatus.PENDING_REBOOT
+                    unit_content = node.systemd_unit(node_id, entry.parents)
+                    if unit_content:
+                        self._write_systemd_unit(node_id, unit_content)
+
+            except Exception as e:
+                logger.error(f"✗ {node_id} — failed: {e}")
+                entry.status = NodeStatus.ERROR
+                entry.error = str(e)
+
+            results[node_id] = entry.status
+            self._persist_status(node_id, entry)
+
+        return results
+
+    def remove(self, node_id: str) -> None:
+        """Remove a node from the graph."""
+        if node_id in self._nodes:
+            del self._nodes[node_id]
+            self._order = [nid for nid in self._order if nid != node_id]
+            # Remove as parent from any children
+            for entry in self._nodes.values():
+                if node_id in entry.parents:
+                    entry.parents.remove(node_id)
+            # Persist
+            if self._store:
+                self._store.remove_node(node_id)
+            logger.info(f"Removed node: {node_id}")
+        else:
+            raise KeyError(f"Node not found: {node_id}")
+
     def _write_systemd_unit(self, node_id: str, content: str) -> None:
         """Write a systemd unit file for a deferred node."""
         unit_dir = FilePath("/etc/systemd/system")
