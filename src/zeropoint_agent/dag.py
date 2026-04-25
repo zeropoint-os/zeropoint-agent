@@ -9,6 +9,7 @@ Optionally backed by GraphStore (RyuGraph) for persistence across restarts.
 import json
 import logging
 from dataclasses import dataclass, asdict
+from pathlib import Path as FilePath
 from typing import Any, Dict, List, Optional, get_args
 
 from zeropoint_agent.inode import INode, ResolveMode
@@ -225,6 +226,11 @@ class DAG:
                     entry.status = NodeStatus.PENDING_REBOOT
                     logger.info(f"⏳ {node_id} — applied, pending verification")
 
+                    # Emit systemd unit if the node supports it
+                    unit_content = node.systemd_unit(node_id, entry.parents)
+                    if unit_content:
+                        self._write_systemd_unit(node_id, unit_content)
+
             except Exception as e:
                 logger.error(f"✗ {node_id} — failed: {e}")
                 entry.status = NodeStatus.ERROR
@@ -248,6 +254,19 @@ class DAG:
             output=output_dict,
             error=entry.error,
         )
+
+    def _write_systemd_unit(self, node_id: str, content: str) -> None:
+        """Write a systemd unit file for a deferred node."""
+        unit_dir = FilePath("/etc/systemd/system")
+        unit_path = unit_dir / f"zeropoint-{node_id}.service"
+        try:
+            unit_path.write_text(content)
+            logger.info(f"Wrote systemd unit: {unit_path}")
+        except PermissionError:
+            # In dev/mock mode, log but don't fail
+            logger.debug(f"Would write systemd unit: zeropoint-{node_id}.service")
+        except Exception as e:
+            logger.warning(f"Failed to write systemd unit for {node_id}: {e}")
 
     def get(self, node_id: str) -> NodeEntry:
         """Get a node entry by ID."""

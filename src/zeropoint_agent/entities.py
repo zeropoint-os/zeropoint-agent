@@ -26,6 +26,33 @@ class NodeStatus(Enum):
 
 # --- Output Contracts ---
 
+# --- System / Read-only ---
+
+@dataclass
+class NetworkResult:
+    """Contract for a network interface node."""
+    interface: str
+    ip: Optional[str] = None
+    up: bool = False
+
+
+@dataclass
+class DockerResult:
+    """Contract for a Docker daemon node."""
+    running: bool = False
+    version: Optional[str] = None
+
+
+@dataclass
+class DriverResult:
+    """Contract for a driver node."""
+    driver: str
+    version: Optional[str] = None
+    loaded: bool = False
+
+
+
+
 @dataclass
 class DiskResult:
     """Contract for a disk node."""

@@ -10,7 +10,7 @@ dag.resolve() is the runtime — propagates values through the graph.
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, Optional
 
 I = TypeVar("I")  # Input type (parent's output contract)
 O = TypeVar("O")  # Output type (this node's contract)
@@ -32,6 +32,7 @@ class INode(ABC, Generic[I, O]):
     - verify(): probe reality, does actual match desired?
     - mock_verify(): simulated verify for testing
     - remove(): tear down
+    - systemd_unit(): emit a systemd unit file for deferred execution
     """
 
     @abstractmethod
@@ -57,3 +58,16 @@ class INode(ABC, Generic[I, O]):
     def remove(self) -> bool:
         """Tear down what this node represents."""
         ...
+
+    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
+        """
+        Emit a systemd unit file for deferred execution.
+
+        Called when a node goes PENDING_REBOOT — the node can't converge
+        in this pass and needs work done on the next boot.
+
+        Returns:
+            Unit file contents as a string, or None if this node
+            doesn't need a systemd unit (converges in-process).
+        """
+        return None
