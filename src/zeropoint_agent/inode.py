@@ -9,55 +9,51 @@ dag.resolve() is the runtime — propagates values through the graph.
 """
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Generic, TypeVar
 
 I = TypeVar("I")  # Input type (parent's output contract)
 O = TypeVar("O")  # Output type (this node's contract)
 
 
+class ResolveMode(Enum):
+    """How to execute the graph."""
+    LIVE = "live"          # real verify + real resolve, side effects
+    DRY_RUN = "dry_run"    # real verify, skip resolve, no side effects
+    MOCK = "mock"          # simulated verify + resolve, no side effects
+
+
 class INode(ABC, Generic[I, O]):
     """
     A typed transform in the graph: I → O.
 
-    - resolve(): produce O from I (runtime, may have side effects)
-    - verify(): does the actual state match desired? (probe reality)
-    - remove(): tear down what this node created
+    - resolve(): produce O from I (runtime, side effects in live mode)
+    - mock_resolve(): produce plausible O without side effects
+    - verify(): probe reality, does actual match desired?
+    - mock_verify(): simulated verify for testing
+    - remove(): tear down
     """
 
     @abstractmethod
     def resolve(self, input: I) -> O:
-        """
-        Produce output from input.
-
-        Called by the executor during dag.resolve(). The parent's
-        resolved output flows in as `input`. This node's config
-        (its own fields) is the desired state.
-
-        Returns:
-            The resolved output value (contract O filled with runtime values)
-        """
+        """Produce output from input. Called in live mode. May have side effects."""
         ...
 
     @abstractmethod
     def verify(self) -> bool:
-        """
-        Does actual system state match this node's desired state?
-
-        Probes reality (disk exists? partition formatted? container running?)
-        and compares against self. The node knows its own domain — the
-        executor just asks "are you done?"
-
-        Returns:
-            True if actual matches desired (converged)
-        """
+        """Probe reality — does actual state match desired? Called in live and dry_run modes."""
         ...
 
     @abstractmethod
-    def remove(self) -> bool:
-        """
-        Tear down what this node represents.
+    def mock_resolve(self, input: I) -> O:
+        """Produce a plausible output without side effects. Called in mock mode."""
+        ...
 
-        Returns:
-            True if successfully removed
-        """
+    def mock_verify(self) -> bool:
+        """Simulated verify for mock mode. Default: False (not converged yet)."""
+        return False
+
+    @abstractmethod
+    def remove(self) -> bool:
+        """Tear down what this node represents."""
         ...

@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, get_args
 
-from zeropoint_agent.inode import INode
+from zeropoint_agent.inode import INode, ResolveMode
 from zeropoint_agent.entities import NodeStatus
 
 logger = logging.getLogger(__name__)
@@ -130,14 +130,20 @@ class DAG:
         )
         return node_id
 
-    def resolve(self) -> Dict[str, NodeStatus]:
+    def resolve(self, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
         """
         Run the graph — propagate values through I → O edges.
+
+        Args:
+            mode:
+                LIVE     — real verify + real resolve, side effects
+                DRY_RUN  — real verify, skip resolve, no side effects
+                MOCK     — simulated verify + resolve, no side effects
 
         Returns:
             Dict of node_id → final status
         """
-        logger.info(f"Resolving DAG ({len(self._nodes)} nodes)")
+        logger.info(f"Resolving DAG ({len(self._nodes)} nodes, mode={mode.value})")
         results = {}
 
         for node_id in self._order:
@@ -146,10 +152,15 @@ class DAG:
 
             try:
                 # Check if any parent failed/blocked
+                # In dry_run, PENDING parents are OK (they "would change" but have mock output)
+                allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
+                if mode == ResolveMode.DRY_RUN:
+                    allowed.add(NodeStatus.PENDING)
+
                 blocked = False
                 for parent_id in entry.parents:
                     parent_status = self._nodes[parent_id].status
-                    if parent_status not in (NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT):
+                    if parent_status not in allowed:
                         logger.info(f"Blocking {node_id}: parent {parent_id} is {parent_status.value}")
                         entry.status = NodeStatus.BLOCKED
                         blocked = True
@@ -166,19 +177,48 @@ class DAG:
                 elif len(entry.parents) == 1:
                     input_val = self._nodes[entry.parents[0]].output
                 else:
-                    # Multiple parents — pass first parent's output for now
-                    # TODO: multi-input projection for union types
                     input_val = self._nodes[entry.parents[0]].output
 
-                # Resolve
+                # Verify first (real in live/dry_run, simulated in mock)
+                if mode == ResolveMode.MOCK:
+                    converged = node.mock_verify()
+                else:
+                    converged = node.verify()
+
+                if converged:
+                    entry.status = NodeStatus.SUCCESS
+                    logger.info(f"✓ {node_id} — already converged")
+                    results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
+                    continue
+
+                # Dry run: report what would change, use mock output for propagation
+                if mode == ResolveMode.DRY_RUN:
+                    entry.status = NodeStatus.PENDING
+                    entry.output = node.mock_resolve(input_val)
+                    logger.info(f"~ {node_id} — would change (dry run)")
+                    results[node_id] = entry.status
+                    self._persist_status(node_id, entry)
+                    continue
+
+                # Resolve (real in live, simulated in mock)
                 entry.status = NodeStatus.RUNNING
                 logger.info(f"Resolving {node_id} ({type(node).__name__})")
 
-                output = node.resolve(input_val)
+                if mode == ResolveMode.MOCK:
+                    output = node.mock_resolve(input_val)
+                else:
+                    output = node.resolve(input_val)
+
                 entry.output = output
 
-                # Verify convergence
-                if node.verify():
+                # Post-resolve verify
+                if mode == ResolveMode.MOCK:
+                    post_converged = node.mock_verify()
+                else:
+                    post_converged = node.verify()
+
+                if post_converged:
                     entry.status = NodeStatus.SUCCESS
                     logger.info(f"✓ {node_id} — converged")
                 else:

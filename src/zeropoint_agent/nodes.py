@@ -2,11 +2,11 @@
 
 Each node is a typed I → O transform. The node's constructor fields
 are the desired state. resolve() produces the runtime output.
-verify() probes reality against desired. remove() tears down.
+verify() probes reality. mock_resolve() produces plausible output
+without side effects.
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
 from zeropoint_agent.inode import INode
@@ -18,10 +18,8 @@ from zeropoint_agent.entities import (
 logger = logging.getLogger(__name__)
 
 
-# --- Root node (no input) ---
-
 class DiskNode(INode[None, DiskResult]):
-    """Discovers/registers a disk. Root node — no parent input."""
+    """Discovers/registers a disk. Root node."""
 
     def __init__(self, device: str):
         self.device = device
@@ -31,16 +29,17 @@ class DiskNode(INode[None, DiskResult]):
         # TODO: probe via HWProbe
         return DiskResult(device=self.device)
 
+    def mock_resolve(self, input: None) -> DiskResult:
+        return DiskResult(device=self.device, id=f"mock-{self.device}",
+                          size=1000000000, free=500000000)
+
     def verify(self) -> bool:
-        # TODO: check device exists
+        # TODO: check device exists via lsblk
         return False
 
     def remove(self) -> bool:
-        logger.info(f"DiskNode.remove() — unmanaging {self.device}")
         return True
 
-
-# --- Infra chain: Disk → Partition → Format → Mount → Path ---
 
 class PartitionNode(INode[DiskResult, PartitionResult]):
     """Creates a partition on a parent disk."""
@@ -54,10 +53,14 @@ class PartitionNode(INode[DiskResult, PartitionResult]):
         logger.info(f"PartitionNode.resolve() — partition {self.number} on {input.device}")
         # TODO: sfdisk
         return PartitionResult(
-            number=self.number,
-            size_mb=self.size_mb,
-            device=f"{input.device}{self.number}",
-            type=self.type,
+            number=self.number, size_mb=self.size_mb,
+            device=f"{input.device}{self.number}", type=self.type,
+        )
+
+    def mock_resolve(self, input: DiskResult) -> PartitionResult:
+        return PartitionResult(
+            number=self.number, size_mb=self.size_mb,
+            device=f"{input.device}{self.number}", type=self.type,
         )
 
     def verify(self) -> bool:
@@ -65,7 +68,6 @@ class PartitionNode(INode[DiskResult, PartitionResult]):
         return False
 
     def remove(self) -> bool:
-        logger.info(f"PartitionNode.remove() — deleting partition {self.number}")
         return True
 
 
@@ -79,18 +81,17 @@ class FormatNode(INode[PartitionResult, FormatResult]):
     def resolve(self, input: PartitionResult) -> FormatResult:
         logger.info(f"FormatNode.resolve() — mkfs.{self.filesystem} on {input.device}")
         # TODO: mkfs
-        return FormatResult(
-            filesystem=self.filesystem,
-            device=input.device,
-            label=self.label,
-        )
+        return FormatResult(filesystem=self.filesystem, device=input.device,
+                            label=self.label)
+
+    def mock_resolve(self, input: PartitionResult) -> FormatResult:
+        return FormatResult(filesystem=self.filesystem, device=input.device,
+                            label=self.label, uuid="mock-uuid-1234")
 
     def verify(self) -> bool:
-        # TODO: blkid to check filesystem
         return False
 
     def remove(self) -> bool:
-        logger.info(f"FormatNode.remove() — wiping filesystem")
         return True
 
 
@@ -104,18 +105,17 @@ class MountNode(INode[FormatResult, MountResult]):
     def resolve(self, input: FormatResult) -> MountResult:
         logger.info(f"MountNode.resolve() — mounting {input.device} at {self.mountpoint}")
         # TODO: mount
-        return MountResult(
-            mountpoint=self.mountpoint,
-            device=input.device,
-            options=self.options,
-        )
+        return MountResult(mountpoint=self.mountpoint, device=input.device,
+                           options=self.options)
+
+    def mock_resolve(self, input: FormatResult) -> MountResult:
+        return MountResult(mountpoint=self.mountpoint, device=input.device,
+                           options=self.options)
 
     def verify(self) -> bool:
-        # TODO: check /proc/mounts
         return False
 
     def remove(self) -> bool:
-        logger.info(f"MountNode.remove() — unmounting {self.mountpoint}")
         return True
 
 
@@ -131,19 +131,18 @@ class PathNode(INode[MountResult, PathResult]):
         # TODO: os.makedirs
         return PathResult(path=self.path, mode=self.mode)
 
+    def mock_resolve(self, input: MountResult) -> PathResult:
+        return PathResult(path=self.path, mode=self.mode)
+
     def verify(self) -> bool:
-        # TODO: os.path.exists + stat
         return False
 
     def remove(self) -> bool:
-        logger.info(f"PathNode.remove() — removing {self.path}")
         return True
 
 
-# --- Config / Variables ---
-
 class VarNode(INode[None, VarResult]):
-    """Sets a variable/config value. Root node — no parent input."""
+    """Sets a variable/config value. Root node."""
 
     def __init__(self, name: str, value: str):
         self.name = name
@@ -153,16 +152,15 @@ class VarNode(INode[None, VarResult]):
         logger.info(f"VarNode.resolve() — setting {self.name}")
         return VarResult(name=self.name, value=self.value)
 
+    def mock_resolve(self, input: None) -> VarResult:
+        return VarResult(name=self.name, value=self.value)
+
     def verify(self) -> bool:
-        # TODO: check config file / env
         return False
 
     def remove(self) -> bool:
-        logger.info(f"VarNode.remove() — unsetting {self.name}")
         return True
 
-
-# --- Module (Terraform-managed container) ---
 
 class ModuleNode(INode[PathResult, ModuleResult]):
     """Manages a containerized module via Terraform."""
@@ -176,22 +174,24 @@ class ModuleNode(INode[PathResult, ModuleResult]):
     def resolve(self, input: PathResult) -> ModuleResult:
         logger.info(f"ModuleNode.resolve() — terraform apply {self.module_id}")
         # TODO: write tfvars, terraform apply
+        return ModuleResult(source=self.source, module_id=self.module_id,
+                            variables=self.variables)
+
+    def mock_resolve(self, input: PathResult) -> ModuleResult:
         return ModuleResult(
-            source=self.source,
-            module_id=self.module_id,
+            source=self.source, module_id=self.module_id,
             variables=self.variables,
+            container_id="mock-container-abc123",
+            container_ip="172.17.0.5",
+            ports={"11434": 11434},
         )
 
     def verify(self) -> bool:
-        # TODO: terraform plan -detailed-exitcode
         return False
 
     def remove(self) -> bool:
-        logger.info(f"ModuleNode.remove() — terraform destroy {self.module_id}")
         return True
 
-
-# --- Link (inter-module variable binding) ---
 
 class LinkNode(INode[ModuleResult, LinkResult]):
     """Binds outputs from one module as inputs to another."""
@@ -204,23 +204,21 @@ class LinkNode(INode[ModuleResult, LinkResult]):
 
     def resolve(self, input: ModuleResult) -> LinkResult:
         logger.info(f"LinkNode.resolve() — linking {self.from_module} → {self.to_module}")
-        # TODO: resolve bindings from input.outputs, write tfvars, reapply target
-        return LinkResult(
-            from_module=self.from_module,
-            to_module=self.to_module,
-            bindings=self.bindings,
-        )
+        # TODO: resolve bindings, write tfvars, reapply target
+        return LinkResult(from_module=self.from_module, to_module=self.to_module,
+                          bindings=self.bindings)
+
+    def mock_resolve(self, input: ModuleResult) -> LinkResult:
+        resolved = {k: f"mock-{v}" for k, v in self.bindings.items()}
+        return LinkResult(from_module=self.from_module, to_module=self.to_module,
+                          bindings=self.bindings, resolved_bindings=resolved)
 
     def verify(self) -> bool:
-        # TODO: check bindings are current
         return False
 
     def remove(self) -> bool:
-        logger.info(f"LinkNode.remove() — unlinking {self.from_module} → {self.to_module}")
         return True
 
-
-# --- Exposure (Envoy xDS route) ---
 
 class ExposureNode(INode[ModuleResult, ExposureResult]):
     """Exposes a module's port via Envoy reverse proxy."""
@@ -237,18 +235,21 @@ class ExposureNode(INode[ModuleResult, ExposureResult]):
     def resolve(self, input: ModuleResult) -> ExposureResult:
         logger.info(f"ExposureNode.resolve() — exposing {self.module_id}:{self.port}")
         # TODO: push xDS config to Envoy
+        return ExposureResult(module_id=self.module_id, port=self.port,
+                              protocol=self.protocol, path_prefix=self.path_prefix,
+                              description=self.description)
+
+    def mock_resolve(self, input: ModuleResult) -> ExposureResult:
         return ExposureResult(
-            module_id=self.module_id,
-            port=self.port,
-            protocol=self.protocol,
-            path_prefix=self.path_prefix,
+            module_id=self.module_id, port=self.port,
+            protocol=self.protocol, path_prefix=self.path_prefix,
             description=self.description,
+            route_name=f"mock-route-{self.module_id}",
+            external_url=f"http://localhost/{self.module_id}",
         )
 
     def verify(self) -> bool:
-        # TODO: check Envoy route exists
         return False
 
     def remove(self) -> bool:
-        logger.info(f"ExposureNode.remove() — unexposing {self.module_id}:{self.port}")
         return True
