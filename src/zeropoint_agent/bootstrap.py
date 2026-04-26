@@ -97,12 +97,18 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
         description="Install AMD ROCm drivers",
         timeout=600,
     ), parents=["amd"])
+    add("amd-reboot", ShellScriptNode(
+        exec="echo 'ROCm kernel module requires reboot'",
+        verify="lsmod | grep -q amdgpu",
+        description="Reboot for AMD kernel module",
+        timeout=30,
+    ), parents=["amd-install"])
     add("amd-verify", ShellScriptNode(
         exec="rocm-smi",
         verify="rocm-smi > /dev/null 2>&1",
         description="Verify AMD ROCm drivers",
         timeout=300,
-    ), parents=["amd-install"])
+    ), parents=["amd-reboot"])
 
 
 
