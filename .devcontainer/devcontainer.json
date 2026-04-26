@@ -14,6 +14,9 @@
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
 		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
 			"passwordLessSudo": true
+		},
+		"ghcr.io/schlich/devcontainer-features/playwright:0": {
+			"browsers": "chromium"
 		}
 	},
 	"customizations": {
@@ -32,7 +35,7 @@
         }
     },
 	"initializeCommand": "scripts/generate-defaults.sh ${localWorkspaceFolder}",
-	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0 && playwright install --with-deps chromium",
+	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0",
 	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && pip install -r requirements.txt && npm install --prefix webui",
 	"mounts": [
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
