@@ -25,11 +25,11 @@ from datetime import datetime, timezone
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.entities import NodeStatus
+from zeropoint_agent.inode import NodeStatus
 from zeropoint_agent.graph_store import GraphStore
 from zeropoint_agent.hw_probe import HWProbe
 from zeropoint_agent.query import query_dag
-from zeropoint_agent.nodes import (
+from zeropoint_agent import (
     NetworkNode, DockerNode, DriverNode,
     DiskNode, PartitionNode, FormatNode, MountNode,
     PathNode, VarNode, ModuleNode, LinkNode, ExposureNode,

@@ -23,6 +23,16 @@ class ResolveMode(Enum):
     MOCK = "mock"          # simulated verify + resolve, no side effects
 
 
+class NodeStatus(Enum):
+    """Status of a node in the graph."""
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    ERROR = "error"
+    BLOCKED = "blocked"
+    PENDING_REBOOT = "pending_reboot"
+
+
 class INode(ABC, Generic[I, O]):
     """
     A typed transform in the graph: I → O.

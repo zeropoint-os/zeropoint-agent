@@ -13,7 +13,7 @@ from pathlib import Path as FilePath
 from typing import Any, Dict, List, Optional, get_args
 
 from zeropoint_agent.inode import INode, ResolveMode
-from zeropoint_agent.entities import NodeStatus
+from zeropoint_agent.inode import NodeStatus
 
 logger = logging.getLogger(__name__)
 
