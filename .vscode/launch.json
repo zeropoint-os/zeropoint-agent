@@ -22,7 +22,7 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
-                "ZEROPOINT_MODE": "mock",
+                "ZEROPOINT_MODE": "live",
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
             },
@@ -39,7 +39,7 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
-                "ZEROPOINT_MODE": "mock",
+                "ZEROPOINT_MODE": "live",
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
             }
