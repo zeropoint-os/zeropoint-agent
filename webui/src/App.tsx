@@ -47,7 +47,7 @@ export function App() {
 
     const navigate = (id: string) => {
         currentIdRef.current = id;
-        navigate(id);
+        setCurrentId(id);
     };
 
     const load = async () => {
