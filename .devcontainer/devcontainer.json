@@ -39,8 +39,7 @@
 	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && pip install -r requirements.txt && npm install --prefix webui",
 	"containerEnv": {
 		"ZP_MODULE_STORAGE": "/workspaces/zeropoint-agent/data/modules",
-		"ZP_MARKER_DIR": "/workspaces/zeropoint-agent/data/markers",
-		"ZEROPOINT_MODE": "mock"
+		"ZP_MARKER_DIR": "/workspaces/zeropoint-agent/data/markers"
 	},
 	"mounts": [
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
