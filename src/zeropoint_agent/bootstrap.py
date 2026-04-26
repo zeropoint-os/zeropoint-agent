@@ -114,7 +114,7 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
 
     # --- Storage ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
-    add("storage", VarNode(name="ZP_MODULE_STORAGE", value=storage_path))
+    add("module-storage", VarNode(name="ZP_MODULE_STORAGE", value=storage_path))
     os.makedirs(storage_path, exist_ok=True)
 
     # --- Marker directory ---
