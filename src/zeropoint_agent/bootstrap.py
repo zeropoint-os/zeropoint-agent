@@ -17,6 +17,7 @@ from zeropoint_agent.nodes.system.network import NetworkNode
 from zeropoint_agent.nodes.system.docker import DockerNode
 from zeropoint_agent.nodes.system.driver import DriverNode
 from zeropoint_agent.nodes.config.var import VarNode
+from zeropoint_agent.nodes.core.shell_script import ShellScriptNode
 
 logger = logging.getLogger(__name__)
 
@@ -112,18 +113,44 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     else:
         actions["docker"] = "exists"
 
-    # --- NVIDIA GPU (conditional) ---
-    if "nvidia" not in existing:
+    # --- NVIDIA GPU (conditional: detect → install → verify) ---
+    if "nvidia-detect" not in existing:
         has_gpu = detect_nvidia_gpu() if mode != ResolveMode.MOCK else False
         if has_gpu:
-            dag.add("nvidia", DriverNode(driver="nvidia"))
-            actions["nvidia"] = "added"
-            logger.info("Bootstrap: added nvidia driver node (GPU detected)")
+            dag.add("nvidia-detect", DriverNode(driver="nvidia"))
+            actions["nvidia-detect"] = "added (GPU detected)"
+            logger.info("Bootstrap: added nvidia-detect node (GPU detected)")
+
+            if "nvidia-install" not in existing:
+                dag.add("nvidia-install", ShellScriptNode(
+                    exec="/usr/local/bin/zeropoint-setup-nvidia-drivers.sh",
+                    verify="test -f /etc/zeropoint/.zeropoint-setup-nvidia-drivers",
+                    description="Install NVIDIA drivers + container toolkit",
+                    timeout=600,
+                    marker=".zeropoint-nvidia-install",
+                ))
+                actions["nvidia-install"] = "added"
+                logger.info("Bootstrap: added nvidia-install node")
+
+            if "nvidia-verify" not in existing:
+                dag.add("nvidia-verify", ShellScriptNode(
+                    exec="/usr/local/bin/zeropoint-setup-nvidia-post-reboot.sh",
+                    verify="nvidia-smi > /dev/null 2>&1",
+                    description="Verify NVIDIA drivers post-reboot",
+                    timeout=300,
+                    marker=".zeropoint-nvidia-verify",
+                ))
+                actions["nvidia-verify"] = "added"
+                logger.info("Bootstrap: added nvidia-verify node")
         else:
-            actions["nvidia"] = "skipped (no GPU)"
+            actions["nvidia-detect"] = "skipped (no GPU)"
             logger.info("Bootstrap: skipping nvidia (no GPU detected)")
     else:
-        actions["nvidia"] = "exists"
+        actions["nvidia-detect"] = "exists"
+        if "nvidia-install" in existing:
+            actions["nvidia-install"] = "exists"
+        if "nvidia-verify" in existing:
+            actions["nvidia-verify"] = "exists"
 
     # --- Storage (disk chain or env var fallback) ---
     if "storage" not in existing:
