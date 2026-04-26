@@ -1,7 +1,9 @@
 """Bootstrap — ensures core nodes exist in the graph on startup.
 
-Runs every time the agent starts. Idempotent — if nodes already exist,
-they're skipped. If hardware isn't available, falls back to env vars.
+Runs every time the agent starts. Idempotent — dag.add() skips
+existing nodes. All nodes are always added — resolve handles
+skipping (e.g. DriverNode returns SKIPPED if no GPU, children
+auto-skip).
 
 This IS the boot process. There's no separate boot command.
 """
@@ -12,7 +14,7 @@ import subprocess
 from typing import Optional
 
 from zeropoint_agent.dag import DAG
-from zeropoint_agent.inode import ResolveMode, NodeStatus
+from zeropoint_agent.inode import ResolveMode
 from zeropoint_agent.nodes.system.network import NetworkNode
 from zeropoint_agent.nodes.system.docker import DockerNode
 from zeropoint_agent.nodes.system.driver import DriverNode
@@ -30,7 +32,6 @@ def detect_default_interface() -> str:
             capture_output=True, text=True, timeout=5
         )
         if out.returncode == 0 and "dev" in out.stdout:
-            # "default via 172.17.0.1 dev eth0" → extract "eth0"
             parts = out.stdout.strip().split()
             dev_idx = parts.index("dev")
             return parts[dev_idx + 1]
@@ -39,171 +40,55 @@ def detect_default_interface() -> str:
     return "eth0"
 
 
-def detect_nvidia_gpu() -> bool:
-    """Check if an NVIDIA GPU is present."""
-    try:
-        out = subprocess.run(
-            ["lspci"], capture_output=True, text=True, timeout=5
-        )
-        return "NVIDIA" in out.stdout
-    except Exception:
-        return False
-
-
-def detect_boot_disk() -> Optional[str]:
-    """Detect boot disk stable ID from /dev/disk/by-id/."""
-    try:
-        # Find the device mounted at /
-        out = subprocess.run(
-            ["findmnt", "-n", "-o", "SOURCE", "/"],
-            capture_output=True, text=True, timeout=5
-        )
-        if out.returncode != 0:
-            return None
-
-        root_device = os.path.realpath(out.stdout.strip())
-
-        # Find its stable ID in /dev/disk/by-id/
-        by_id_dir = "/dev/disk/by-id"
-        if not os.path.isdir(by_id_dir):
-            return None
-
-        for link in os.listdir(by_id_dir):
-            full_path = os.path.join(by_id_dir, link)
-            if os.path.islink(full_path):
-                target = os.path.realpath(full_path)
-                # Match the parent disk, not the partition
-                # Strip partition suffix to get the disk
-                if target == root_device or root_device.startswith(target):
-                    if "-part" not in link:
-                        return link
-
-        return None
-    except Exception as e:
-        logger.debug(f"Failed to detect boot disk: {e}")
-        return None
-
-
 def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     """
     Ensure core nodes exist in the graph.
 
-    Runs every startup. Idempotent — skips existing nodes.
-    Probes hardware, falls back to env vars.
+    All nodes are always added — dag.add() skips duplicates.
+    Nodes that aren't relevant return SKIPPED at resolve time,
+    which auto-skips their children.
 
-    Returns dict of node_id → action taken ("exists", "added", "skipped")
+    Returns dict of node_id → action ("added" or "exists")
     """
     actions = {}
-    existing = set(dag.nodes.keys())
+
+    def add(node_id, node, parents=None):
+        before = len(dag.nodes)
+        dag.add(node_id, node, parents=parents)
+        actions[node_id] = "added" if len(dag.nodes) > before else "exists"
 
     # --- Network ---
-    if "network" not in existing:
-        interface = os.environ.get("ZP_NETWORK_INTERFACE", detect_default_interface())
-        dag.add("network", NetworkNode(interface=interface))
-        actions["network"] = "added"
-        logger.info(f"Bootstrap: added network node (interface={interface})")
-    else:
-        actions["network"] = "exists"
+    interface = os.environ.get("ZP_NETWORK_INTERFACE", detect_default_interface())
+    add("network", NetworkNode(interface=interface))
 
     # --- Docker ---
-    if "docker" not in existing:
-        dag.add("docker", DockerNode(), parents=["network"])
-        actions["docker"] = "added"
-        logger.info("Bootstrap: added docker node")
-    else:
-        actions["docker"] = "exists"
+    add("docker", DockerNode(), parents=["network"])
 
-    # --- NVIDIA GPU (conditional: detect → install → verify) ---
-    if "nvidia-detect" not in existing:
-        has_gpu = detect_nvidia_gpu() if mode != ResolveMode.MOCK else False
-        if has_gpu:
-            dag.add("nvidia-detect", DriverNode(driver="nvidia"))
-            actions["nvidia-detect"] = "added (GPU detected)"
-            logger.info("Bootstrap: added nvidia-detect node (GPU detected)")
+    # --- NVIDIA GPU (always added — returns SKIPPED if no GPU) ---
+    add("nvidia-detect", DriverNode(driver="nvidia"))
+    add("nvidia-install", ShellScriptNode(
+        exec="/usr/local/bin/zeropoint-setup-nvidia-drivers.sh",
+        verify="test -f /etc/zeropoint/.zeropoint-setup-nvidia-drivers",
+        description="Install NVIDIA drivers + container toolkit",
+        timeout=600,
+        marker=".zeropoint-nvidia-install",
+    ), parents=["nvidia-detect"])
+    add("nvidia-verify", ShellScriptNode(
+        exec="/usr/local/bin/zeropoint-setup-nvidia-post-reboot.sh",
+        verify="nvidia-smi > /dev/null 2>&1",
+        description="Verify NVIDIA drivers post-reboot",
+        timeout=300,
+        marker=".zeropoint-nvidia-verify",
+    ), parents=["nvidia-install"])
 
-            if "nvidia-install" not in existing:
-                dag.add("nvidia-install", ShellScriptNode(
-                    exec="/usr/local/bin/zeropoint-setup-nvidia-drivers.sh",
-                    verify="test -f /etc/zeropoint/.zeropoint-setup-nvidia-drivers",
-                    description="Install NVIDIA drivers + container toolkit",
-                    timeout=600,
-                    marker=".zeropoint-nvidia-install",
-                ))
-                actions["nvidia-install"] = "added"
-                logger.info("Bootstrap: added nvidia-install node")
-
-            if "nvidia-verify" not in existing:
-                dag.add("nvidia-verify", ShellScriptNode(
-                    exec="/usr/local/bin/zeropoint-setup-nvidia-post-reboot.sh",
-                    verify="nvidia-smi > /dev/null 2>&1",
-                    description="Verify NVIDIA drivers post-reboot",
-                    timeout=300,
-                    marker=".zeropoint-nvidia-verify",
-                ))
-                actions["nvidia-verify"] = "added"
-                logger.info("Bootstrap: added nvidia-verify node")
-        else:
-            actions["nvidia-detect"] = "skipped (no GPU)"
-            logger.info("Bootstrap: skipping nvidia (no GPU detected)")
-    else:
-        actions["nvidia-detect"] = "exists"
-        if "nvidia-install" in existing:
-            actions["nvidia-install"] = "exists"
-        if "nvidia-verify" in existing:
-            actions["nvidia-verify"] = "exists"
-
-    # --- Storage (disk chain or env var fallback) ---
-    if "storage" not in existing:
-        storage_path = os.environ.get("ZP_MODULE_STORAGE")
-
-        if storage_path:
-            # Env var set — use it directly (devcontainer, existing Linux)
-            dag.add("storage", VarNode(name="ZP_MODULE_STORAGE", value=storage_path))
-            actions["storage"] = f"added (env var: {storage_path})"
-            logger.info(f"Bootstrap: added storage var from env (ZP_MODULE_STORAGE={storage_path})")
-        else:
-            # Try to detect boot disk for the full chain
-            boot_disk = detect_boot_disk() if mode != ResolveMode.MOCK else None
-
-            if boot_disk:
-                # TODO: add full disk chain (disk → partition → format → mount → path → var)
-                # For now, just add the var with default path
-                dag.add("storage", VarNode(
-                    name="ZP_MODULE_STORAGE", value="/var/lib/zeropoint"))
-                actions["storage"] = f"added (boot disk: {boot_disk}, default path)"
-                logger.info(f"Bootstrap: added storage var (boot disk={boot_disk})")
-            else:
-                # Absolute fallback
-                dag.add("storage", VarNode(
-                    name="ZP_MODULE_STORAGE", value="/var/lib/zeropoint"))
-                actions["storage"] = "added (fallback: /var/lib/zeropoint)"
-                logger.info("Bootstrap: added storage var (fallback path)")
-
-        # Ensure the storage directory exists
-        storage_val = dag.get("storage").node.value if hasattr(dag.get("storage").node, "value") else "/var/lib/zeropoint"
-        os.makedirs(storage_val, exist_ok=True)
-    else:
-        actions["storage"] = "exists"
-
-    # --- Docker data root (depends on storage) ---
-    if "docker-data" not in existing:
-        docker_data = os.environ.get("ZP_DOCKER_DATA")
-        if docker_data:
-            dag.add("docker-data", VarNode(name="ZP_DOCKER_DATA", value=docker_data))
-            actions["docker-data"] = f"added (env var: {docker_data})"
-        else:
-            actions["docker-data"] = "skipped (no ZP_DOCKER_DATA)"
-    else:
-        actions["docker-data"] = "exists"
+    # --- Storage ---
+    storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
+    add("storage", VarNode(name="ZP_MODULE_STORAGE", value=storage_path))
+    os.makedirs(storage_path, exist_ok=True)
 
     # --- Marker directory ---
-    if "marker-dir" not in existing:
-        marker_dir = os.environ.get("ZP_MARKER_DIR", "/etc/zeropoint")
-        dag.add("marker-dir", VarNode(name="ZP_MARKER_DIR", value=marker_dir))
-        os.makedirs(marker_dir, exist_ok=True)
-        actions["marker-dir"] = f"added ({marker_dir})"
-        logger.info(f"Bootstrap: added marker-dir var ({marker_dir})")
-    else:
-        actions["marker-dir"] = "exists"
+    marker_dir = os.environ.get("ZP_MARKER_DIR", "/etc/zeropoint")
+    add("marker-dir", VarNode(name="ZP_MARKER_DIR", value=marker_dir))
+    os.makedirs(marker_dir, exist_ok=True)
 
     return actions

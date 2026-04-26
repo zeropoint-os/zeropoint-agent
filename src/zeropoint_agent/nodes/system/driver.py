@@ -25,6 +25,18 @@ class DriverNode(INode[None, DriverResult]):
         self.driver = driver
         self.version = version
 
+    def _detect_hardware(self) -> bool:
+        """Check if the hardware this driver supports is present."""
+        try:
+            if self.driver == "nvidia":
+                out = subprocess.run(
+                    ["lspci"], capture_output=True, text=True, timeout=5)
+                return "NVIDIA" in out.stdout
+            # Generic: check if driver module exists
+            return True
+        except Exception:
+            return False
+
     def _is_loaded(self) -> bool:
         try:
             out = subprocess.run(
@@ -39,6 +51,10 @@ class DriverNode(INode[None, DriverResult]):
         if mode == ResolveMode.MOCK:
             result.loaded = True
             return NodeResult.success(result)
+
+        # Check if hardware is present
+        if not self._detect_hardware():
+            return NodeResult.skipped(f"No {self.driver} hardware detected")
 
         if self._is_loaded():
             result.loaded = True

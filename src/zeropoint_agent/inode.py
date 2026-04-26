@@ -36,6 +36,7 @@ class NodeStatus(Enum):
     SUCCESS = "success"
     ERROR = "error"
     BLOCKED = "blocked"
+    SKIPPED = "skipped"
     PENDING_REBOOT = "pending_reboot"
 
 
@@ -104,6 +105,14 @@ class NodeResult(Generic[O]):
         r = NodeResult()
         r.output = output
         r.status = NodeStatus.SUCCESS
+        return r
+
+    @staticmethod
+    def skipped(reason: str = "") -> "NodeResult[O]":
+        """Node is not relevant — children will be skipped too."""
+        r = NodeResult()
+        r.status = NodeStatus.SKIPPED
+        r.error = reason or None
         return r
 
     @staticmethod

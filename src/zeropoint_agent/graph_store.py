@@ -92,6 +92,14 @@ class GraphStore:
         )
         logger.debug(f"Stored node: {node.id} ({node.node_type})")
 
+    def has_node(self, node_id: str) -> bool:
+        """Check if a node exists in the store."""
+        result = self._conn.execute(
+            "MATCH (n:Node {id: $id}) RETURN n.id",
+            parameters={"id": node_id},
+        )
+        return result.has_next()
+
     def add_edge(self, parent_id: str, child_id: str) -> None:
         """Add a DEPENDS_ON edge between nodes."""
         self._conn.execute(

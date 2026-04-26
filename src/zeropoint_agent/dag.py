@@ -54,22 +54,38 @@ class DAG:
         self._store = store
 
     def add(self, node_id: str, node: INode, parents: Optional[List[str]] = None) -> str:
-        """Add a node with type-checked edges."""
+        """Add a node with type-checked edges. Skips if already in graph or store."""
         parents = parents or []
+
+        # Already in memory — skip
+        if node_id in self._nodes:
+            return node_id
+
+        # Already in store (from previous run) — skip
+        if self._store and self._store.has_node(node_id):
+            # Re-add to in-memory graph without persisting
+            i_type, o_type = _get_io_types(node)
+            entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
+            self._nodes[node_id] = entry
+            self._order.append(node_id)
+            logger.debug(f"Loaded {node_id} from store")
+            return node_id
+
         i_type, o_type = _get_io_types(node)
 
         for parent_id in parents:
             if parent_id not in self._nodes:
                 raise KeyError(f"Parent node not found: {parent_id}")
             parent_o = self._nodes[parent_id].output_type
-            if i_type is type(None):
-                raise TypeError(f"Node {node_id} declares no input (I=None) but has parents")
-            if not issubclass(parent_o, i_type):
-                raise TypeError(
-                    f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
-                    f"does not match {node_id}.I ({i_type.__name__})")
+            # I=None or I=object means "don't care about input type" — skip check
+            if i_type is not type(None) and i_type is not object:
+                if not issubclass(parent_o, i_type):
+                    raise TypeError(
+                        f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
+                        f"does not match {node_id}.I ({i_type.__name__})")
 
-        if not parents and i_type is not type(None):
+        # Root nodes with typed input still need parents (unless I=None)
+        if not parents and i_type is not type(None) and i_type is not object:
             raise TypeError(f"Root node {node_id} must have I=None, got I={i_type.__name__}")
 
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
@@ -117,13 +133,22 @@ class DAG:
         node = entry.node
 
         try:
-            # Check parents
+            # Check parents — BLOCKED, ERROR, or SKIPPED parents block children
             allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
             if mode == ResolveMode.DRY_RUN:
                 allowed.add(NodeStatus.PENDING)
 
             for parent_id in entry.parents:
                 parent_status = self._nodes[parent_id].status
+
+                # SKIPPED parent → skip children too
+                if parent_status == NodeStatus.SKIPPED:
+                    entry.status = NodeStatus.SKIPPED
+                    self._persist_status(node_id, entry)
+                    r = NodeResult.skipped(f"parent {parent_id} skipped")
+                    logger.info(f"⊘ {node_id} — skipped (parent {parent_id} skipped)")
+                    return r
+
                 if parent_status not in allowed:
                     entry.status = NodeStatus.BLOCKED
                     self._persist_status(node_id, entry)
