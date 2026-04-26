@@ -310,58 +310,14 @@ html, body, #root {
 .content {
     flex: 1;
     overflow-y: auto;
+    max-width: 720px;
 }
 
-/* Desktop: master-detail split */
-@media (min-width: 768px) {
-    .content {
-        display: flex;
-    }
-    .master {
-        width: 420px;
-        min-width: 420px;
-        border-right: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
-        overflow-y: auto;
-        height: 100%;
-    }
-    .detail-panel {
-        flex: 1;
-        overflow-y: auto;
-        height: 100%;
-    }
-}
-
-/* Mobile: stack */
 @media (max-width: 767px) {
-    .master { width: 100%; }
-    .detail-panel {
-        position: fixed;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        left: 0;
-        background: var(--bg);
-        z-index: 10;
-        overflow-y: auto;
-    }
-    .detail-back {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 16px 24px;
-        font-size: 14px;
-        color: var(--accent);
-        cursor: pointer;
-    }
     .title { font-size: 32px; padding: 24px 20px 8px; }
     .subtitle { padding: 0 20px 16px; }
     .pivot { padding: 0 20px; gap: 20px; }
-    .node-list { padding: 12px 20px; }
     .detail { padding: 20px; }
-    .node-item.selected {
-        margin: 0 -20px;
-        padding: 14px 20px;
-    }
 }
 
 /* --- Status bar --- */

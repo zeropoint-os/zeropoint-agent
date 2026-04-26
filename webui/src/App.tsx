@@ -1,75 +1,48 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
 import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
-import { NodeList } from './NodeList';
 import { NodeDetail } from './NodeDetail';
 
-/** Build a depth map from edges for indentation. */
-function buildDepthMap(nodes: DagNode[], edges: DagEdge[]): Map<string, number> {
-    const children = new Map<string, string[]>();
-    const parentSet = new Set<string>();
+/** Build parent→children map from edges. */
+function childrenMap(edges: DagEdge[]): Map<string, string[]> {
+    const m = new Map<string, string[]>();
     for (const e of edges) {
-        const list = children.get(e.source) || [];
+        const list = m.get(e.source) || [];
         list.push(e.target);
-        children.set(e.source, list);
-        parentSet.add(e.target);
+        m.set(e.source, list);
     }
-
-    const roots = nodes.filter(n => !parentSet.has(n.id)).map(n => n.id);
-    const depths = new Map<string, number>();
-
-    const walk = (id: string, depth: number) => {
-        if (depths.has(id)) return;
-        depths.set(id, depth);
-        for (const child of children.get(id) || []) {
-            walk(child, depth + 1);
-        }
-    };
-    for (const r of roots) walk(r, 0);
-    return depths;
+    return m;
 }
 
-/** Order nodes by topo sort (parents before children). */
-function topoOrder(nodes: DagNode[], edges: DagEdge[]): DagNode[] {
-    const depths = buildDepthMap(nodes, edges);
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+/** Find root node IDs (no incoming edges). */
+function findRoots(nodes: DagNode[], edges: DagEdge[]): string[] {
+    const hasParent = new Set(edges.map(e => e.target));
+    return nodes.filter(n => !hasParent.has(n.id)).map(n => n.id);
+}
 
-    // Walk depth-first from roots preserving chain order
-    const parentSet = new Set(edges.map(e => e.target));
-    const roots = nodes.filter(n => !parentSet.has(n.id));
-    const children = new Map<string, string[]>();
+/** Build path from a root to the given node. */
+function buildPath(targetId: string, edges: DagEdge[], nodeMap: Map<string, DagNode>): string[] {
+    const parentMap = new Map<string, string>();
     for (const e of edges) {
-        const list = children.get(e.source) || [];
-        list.push(e.target);
-        children.set(e.source, list);
-    }
-
-    const ordered: DagNode[] = [];
-    const visited = new Set<string>();
-    const walk = (id: string) => {
-        if (visited.has(id)) return;
-        visited.add(id);
-        const node = nodeMap.get(id);
-        if (node) ordered.push(node);
-        for (const child of children.get(id) || []) {
-            walk(child);
+        // First parent wins (for path building)
+        if (!parentMap.has(e.target)) {
+            parentMap.set(e.target, e.source);
         }
-    };
-    for (const r of roots) walk(r.id);
-
-    // Add any unvisited nodes
-    for (const n of nodes) {
-        if (!visited.has(n.id)) ordered.push(n);
     }
-    return ordered;
+    const path: string[] = [];
+    let current: string | undefined = targetId;
+    while (current) {
+        path.unshift(current);
+        current = parentMap.get(current);
+    }
+    return path;
 }
 
 export function App() {
     const [nodes, setNodes] = useState<DagNode[]>([]);
     const [edges, setEdges] = useState<DagEdge[]>([]);
     const [health, setHealth] = useState<HealthResponse | null>(null);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [showDetail, setShowDetail] = useState(false);
+    const [currentId, setCurrentId] = useState<string | null>(null);
 
     const load = async () => {
         try {
@@ -77,6 +50,11 @@ export function App() {
             setNodes(dag.nodes || []);
             setEdges(dag.edges || []);
             setHealth(h);
+            // Auto-select first root if nothing selected
+            if (!currentId && dag.nodes?.length > 0) {
+                const roots = findRoots(dag.nodes, dag.edges || []);
+                if (roots.length > 0) setCurrentId(roots[0]);
+            }
         } catch (e) {
             console.error('Failed to load DAG:', e);
         }
@@ -88,17 +66,22 @@ export function App() {
         return () => clearInterval(interval);
     }, []);
 
-    const ordered = topoOrder(nodes, edges);
-    const depths = buildDepthMap(nodes, edges);
-    const selected = nodes.find(n => n.id === selectedId) || null;
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const children = childrenMap(edges);
+    const roots = findRoots(nodes, edges);
+    const current = currentId ? nodeMap.get(currentId) || null : null;
 
-    const handleSelect = (id: string) => {
-        setSelectedId(id);
-        setShowDetail(true);
-    };
+    // Build the pivot path from root to current node
+    const pivotPath = currentId ? buildPath(currentId, edges, nodeMap) : [];
 
-    const handleBack = () => {
-        setShowDetail(false);
+    // Siblings: nodes at the same level (same parent, or all roots)
+    const currentParents = edges.filter(e => e.target === currentId).map(e => e.source);
+    const siblings = currentParents.length > 0
+        ? (children.get(currentParents[0]) || [])
+        : roots;
+
+    const handleNavigate = (id: string) => {
+        setCurrentId(id);
     };
 
     const handleResolve = async () => {
@@ -112,59 +95,78 @@ export function App() {
         await load();
     };
 
-    const handleNavigate = (id: string) => {
-        setSelectedId(id);
-        setShowDetail(true);
-    };
-
-    const statusSummary = health?.graph?.statuses || {};
     const total = health?.graph?.nodes || 0;
     const mode = health?.mode || 'mock';
+    const statusSummary = health?.graph?.statuses || {};
+
+    // Empty state
+    if (nodes.length === 0) {
+        return (
+            <div class="app">
+                <div class="title">zeropo<span style="color: var(--fg-dim)">int</span></div>
+                <div class="content" style="display: flex; align-items: center; justify-content: center; flex: 1;">
+                    <div style="text-align: center; color: var(--fg-dim);">
+                        <div style="font-size: 18px; font-weight: 300; margin-bottom: 12px;">
+                            no nodes
+                        </div>
+                        <div style="font-size: 13px; margin-bottom: 24px;">
+                            build a graph via the API or load a demo
+                        </div>
+                        <button class="btn primary" onClick={handleLoadDemo}>
+                            load demo graph
+                        </button>
+                    </div>
+                </div>
+                <div class="status-bar">
+                    <span>0 nodes</span>
+                    <span class="mode">{mode}</span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div class="app">
             <div class="title">zeropo<span style="color: var(--fg-dim)">int</span></div>
             <div class="subtitle">
-                {total > 0
-                    ? `${total} nodes — ${Object.entries(statusSummary).map(([s, c]) => `${c} ${s.replace('_', ' ')}`).join(', ')}`
-                    : 'no graph loaded'}
+                {Object.entries(statusSummary).map(([s, c]) => `${c} ${s.replace('_', ' ')}`).join(' · ')}
             </div>
 
+            {/* Pivot breadcrumb — path from root to current */}
+            <div class="pivot">
+                {pivotPath.map((id, i) => (
+                    <button
+                        key={id}
+                        class={`pivot-tab ${id === currentId ? 'active' : ''}`}
+                        onClick={() => handleNavigate(id)}
+                    >
+                        {id}
+                    </button>
+                ))}
+
+                {/* Show siblings of current node that aren't in the path */}
+                {siblings
+                    .filter(id => id !== currentId && !pivotPath.includes(id))
+                    .map(id => (
+                        <button
+                            key={id}
+                            class="pivot-tab"
+                            onClick={() => handleNavigate(id)}
+                        >
+                            {id}
+                        </button>
+                    ))}
+            </div>
+
+            {/* Current node's card */}
             <div class="content">
-                <div class="master" style={showDetail && window.innerWidth < 768 ? 'display:none' : ''}>
-                    <NodeList
-                        nodes={ordered}
-                        depths={depths}
-                        selectedId={selectedId}
-                        onSelect={handleSelect}
-                        onLoadDemo={handleLoadDemo}
+                {current && (
+                    <NodeDetail
+                        node={current}
+                        allNodes={nodes}
+                        edges={edges}
+                        onNavigate={handleNavigate}
                     />
-                </div>
-
-                {selected && showDetail && (
-                    <div class="detail-panel">
-                        {window.innerWidth < 768 && (
-                            <div class="detail-back" onClick={handleBack}>
-                                ← back
-                            </div>
-                        )}
-                        <NodeDetail
-                            node={selected}
-                            allNodes={nodes}
-                            edges={edges}
-                            onNavigate={handleNavigate}
-                        />
-                    </div>
-                )}
-
-                {!selected && !showDetail && window.innerWidth >= 768 && (
-                    <div class="detail-panel">
-                        <div class="detail">
-                            <div class="detail-name" style="color: var(--fg-dim)">
-                                select a node
-                            </div>
-                        </div>
-                    </div>
                 )}
             </div>
 
