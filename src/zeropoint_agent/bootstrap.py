@@ -68,18 +68,11 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     add("nvidia-detect", DriverNode(driver="nvidia"))
     add("nvidia-install", ShellScriptNode(
         exec="/usr/local/bin/zeropoint-setup-nvidia-drivers.sh",
-        verify="test -f /etc/zeropoint/.zeropoint-setup-nvidia-drivers",
-        description="Install NVIDIA drivers + container toolkit",
+        verify="nvidia-smi > /dev/null 2>&1",
+        description="Install NVIDIA drivers",
         timeout=600,
         marker=".zeropoint-nvidia-install",
     ), parents=["nvidia-detect"])
-    add("nvidia-verify", ShellScriptNode(
-        exec="/usr/local/bin/zeropoint-setup-nvidia-post-reboot.sh",
-        verify="nvidia-smi > /dev/null 2>&1",
-        description="Verify NVIDIA drivers post-reboot",
-        timeout=300,
-        marker=".zeropoint-nvidia-verify",
-    ), parents=["nvidia-install"])
 
     # --- Storage ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
