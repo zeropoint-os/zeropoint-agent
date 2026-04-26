@@ -5,6 +5,7 @@ interface Props {
     depths: Map<string, number>;
     selectedId: string | null;
     onSelect: (id: string) => void;
+    onLoadDemo?: () => void;
 }
 
 /** Get a short display value from a node's config or output. */
@@ -32,16 +33,21 @@ function truncate(s: string, n: number): string {
     return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
-export function NodeList({ nodes, depths, selectedId, onSelect }: Props) {
+export function NodeList({ nodes, depths, selectedId, onSelect, onLoadDemo }: Props) {
     if (nodes.length === 0) {
         return (
             <div class="node-list" style="color: var(--fg-dim); padding-top: 48px; text-align: center;">
-                <div style="font-size: 18px; font-weight: 300; margin-bottom: 8px;">
+                <div style="font-size: 18px; font-weight: 300; margin-bottom: 12px;">
                     no nodes
                 </div>
-                <div style="font-size: 13px;">
-                    build a graph via the API
+                <div style="font-size: 13px; margin-bottom: 24px;">
+                    build a graph via the API or load a demo
                 </div>
+                {onLoadDemo && (
+                    <button class="btn primary" onClick={onLoadDemo}>
+                        load demo graph
+                    </button>
+                )}
             </div>
         );
     }

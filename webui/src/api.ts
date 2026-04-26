@@ -64,3 +64,22 @@ export async function buildDag(nodes: any[]): Promise<any> {
     });
     return r.json();
 }
+
+
+export const DEMO_GRAPH = [
+    { id: "network", type: "network", config: { interface: "eth0" } },
+    { id: "docker", type: "docker", config: {}, parents: ["network"] },
+    { id: "nvidia", type: "driver", config: { driver: "nvidia", version: "535" } },
+    { id: "disk-sda", type: "disk", config: { stable_id: "ata-QEMU_HARDDISK_QM00001" } },
+    { id: "part-sda1", type: "partition", config: { number: 1, size_mb: 500 }, parents: ["disk-sda"] },
+    { id: "fmt-sda1", type: "format", config: { filesystem: "ext4" }, parents: ["part-sda1"] },
+    { id: "mnt-data", type: "mount", config: { mountpoint: "/mnt/data" }, parents: ["fmt-sda1"] },
+    { id: "path-modules", type: "path", config: { path: "/mnt/data/modules" }, parents: ["mnt-data"] },
+    { id: "ollama", type: "module", config: { source: "zp/ollama", module_id: "ollama" }, parents: ["path-modules"] },
+    { id: "expose-ollama", type: "exposure", config: { module_id: "ollama", port: 11434 }, parents: ["ollama"] },
+];
+
+export async function loadDemoGraph(): Promise<any> {
+    await buildDag(DEMO_GRAPH);
+    return resolve("mock");
+}

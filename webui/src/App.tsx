@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
-import { fetchDag, fetchHealth, resolve } from './api';
+import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
 import { NodeList } from './NodeList';
 import { NodeDetail } from './NodeDetail';
 
@@ -107,6 +107,11 @@ export function App() {
         await load();
     };
 
+    const handleLoadDemo = async () => {
+        await loadDemoGraph();
+        await load();
+    };
+
     const handleNavigate = (id: string) => {
         setSelectedId(id);
         setShowDetail(true);
@@ -132,6 +137,7 @@ export function App() {
                         depths={depths}
                         selectedId={selectedId}
                         onSelect={handleSelect}
+                        onLoadDemo={handleLoadDemo}
                     />
                 </div>
 
