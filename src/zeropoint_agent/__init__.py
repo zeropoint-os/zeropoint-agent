@@ -6,7 +6,7 @@ from .dag import DAG
 # Node types — re-exported from nodes package
 from .nodes import (
     ShellScriptNode,
-    NetworkNode, DockerNode, DriverNode,
+    NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
     DiskNode, PartitionNode, FormatNode, MountNode, PathNode,
     VarNode,
     ModuleNode, LinkNode, ExposureNode,
@@ -14,7 +14,7 @@ from .nodes import (
 
 # Result contracts — re-exported from each node module
 from .nodes.core import ShellScriptResult
-from .nodes.system import NetworkResult, DockerResult, DriverResult
+from .nodes.system import NetworkResult, DockerResult, NvidiaGpuResult, AmdGpuResult
 from .nodes.hw import DiskResult, PartitionResult, FormatResult, MountResult, PathResult
 from .nodes.config import VarResult
 from .nodes.user import ModuleResult, LinkResult, ExposureResult
@@ -22,11 +22,11 @@ from .nodes.user import ModuleResult, LinkResult, ExposureResult
 __all__ = [
     "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
     "ShellScriptNode", "ShellScriptResult",
-    "NetworkNode", "DockerNode", "DriverNode",
+    "NetworkNode", "DockerNode", "NvidiaGpuNode", "AmdGpuNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "PathNode",
     "VarNode",
     "ModuleNode", "LinkNode", "ExposureNode",
-    "NetworkResult", "DockerResult", "DriverResult",
+    "NetworkResult", "DockerResult", "NvidiaGpuResult", "AmdGpuResult",
     "DiskResult", "PartitionResult", "FormatResult", "MountResult", "PathResult",
     "VarResult",
     "ModuleResult", "LinkResult", "ExposureResult",

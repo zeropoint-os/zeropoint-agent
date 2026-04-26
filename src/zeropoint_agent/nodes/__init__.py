@@ -9,14 +9,14 @@ Organized by concern:
 """
 
 from zeropoint_agent.nodes.core import ShellScriptNode
-from zeropoint_agent.nodes.system import NetworkNode, DockerNode, DriverNode
+from zeropoint_agent.nodes.system import NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode
 from zeropoint_agent.nodes.hw import DiskNode, PartitionNode, FormatNode, MountNode, PathNode
 from zeropoint_agent.nodes.config import VarNode
 from zeropoint_agent.nodes.user import ModuleNode, LinkNode, ExposureNode
 
 __all__ = [
     "ShellScriptNode",
-    "NetworkNode", "DockerNode", "DriverNode",
+    "NetworkNode", "DockerNode", "NvidiaGpuNode", "AmdGpuNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "PathNode",
     "VarNode",
     "ModuleNode", "LinkNode", "ExposureNode",

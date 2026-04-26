@@ -17,7 +17,8 @@ from zeropoint_agent.dag import DAG
 from zeropoint_agent.inode import ResolveMode
 from zeropoint_agent.nodes.system.network import NetworkNode
 from zeropoint_agent.nodes.system.docker import DockerNode
-from zeropoint_agent.nodes.system.driver import DriverNode
+from zeropoint_agent.nodes.system.nvidia import NvidiaGpuNode
+from zeropoint_agent.nodes.system.amd import AmdGpuNode
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.core.shell_script import ShellScriptNode
 
@@ -64,30 +65,11 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     # --- Docker ---
     add("docker", DockerNode(), parents=["network"])
 
-    # --- NVIDIA GPU chain: detect → install → reboot → verify ---
-    # Each node independently verifies itself. SKIPPED cascades if no GPU.
-    add("nvidia-detect", DriverNode(driver="nvidia"))
+    # --- GPU detection (both vendors, SKIPPED if not present) ---
+    add("nvidia", NvidiaGpuNode())
+    add("amd", AmdGpuNode())
 
-    add("nvidia-install", ShellScriptNode(
-        exec="apt-get install -y nvidia-driver nvidia-container-toolkit && nvidia-ctk runtime configure --runtime=docker",
-        verify="dpkg -l nvidia-driver > /dev/null 2>&1",
-        description="Install NVIDIA driver + container toolkit",
-        timeout=600,
-    ), parents=["nvidia-detect"])
 
-    add("nvidia-reboot", ShellScriptNode(
-        exec="echo 'Reboot required for NVIDIA kernel module'",
-        verify="lsmod | grep -q nvidia",
-        description="Reboot for NVIDIA kernel module",
-        timeout=30,
-    ), parents=["nvidia-install"])
-
-    add("nvidia-verify", ShellScriptNode(
-        exec="nvidia-smi && docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi",
-        verify="nvidia-smi > /dev/null 2>&1",
-        description="Verify NVIDIA driver + Docker GPU runtime",
-        timeout=300,
-    ), parents=["nvidia-reboot"])
 
     # --- Storage ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")

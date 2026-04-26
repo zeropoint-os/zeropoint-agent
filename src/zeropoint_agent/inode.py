@@ -34,6 +34,7 @@ class NodeStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
+    SUCCESS_SKIP = "success_skip"   # succeeded, children can skip
     ERROR = "error"
     BLOCKED = "blocked"
     SKIPPED = "skipped"
@@ -105,6 +106,14 @@ class NodeResult(Generic[O]):
         r = NodeResult()
         r.output = output
         r.status = NodeStatus.SUCCESS
+        return r
+
+    @staticmethod
+    def success_skip(output: O = None) -> "NodeResult[O]":
+        """Succeeded, but children can skip — the goal is already met."""
+        r = NodeResult()
+        r.output = output
+        r.status = NodeStatus.SUCCESS_SKIP
         return r
 
     @staticmethod

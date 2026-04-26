@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from zeropoint_agent import (
     ShellScriptNode,
-    NetworkNode, DockerNode, DriverNode,
+    NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
     DiskNode, PartitionNode, FormatNode, MountNode,
     PathNode, VarNode, ModuleNode, LinkNode, ExposureNode,
 )
@@ -17,7 +17,8 @@ NODE_REGISTRY = {
     "shell": ShellScriptNode,
     "network": NetworkNode,
     "docker": DockerNode,
-    "driver": DriverNode,
+    "nvidia": NvidiaGpuNode,
+    "amd": AmdGpuNode,
     "disk": DiskNode,
     "partition": PartitionNode,
     "format": FormatNode,

@@ -141,12 +141,12 @@ class DAG:
             for parent_id in entry.parents:
                 parent_status = self._nodes[parent_id].status
 
-                # SKIPPED parent → skip children too
-                if parent_status == NodeStatus.SKIPPED:
+                # SKIPPED or SUCCESS_SKIP parent → skip children too
+                if parent_status in (NodeStatus.SKIPPED, NodeStatus.SUCCESS_SKIP):
                     entry.status = NodeStatus.SKIPPED
                     self._persist_status(node_id, entry)
-                    r = NodeResult.skipped(f"parent {parent_id} skipped")
-                    logger.info(f"⊘ {node_id} — skipped (parent {parent_id} skipped)")
+                    r = NodeResult.skipped(f"parent {parent_id} {parent_status.value}")
+                    logger.info(f"⊘ {node_id} — skipped (parent {parent_id} {parent_status.value})")
                     return r
 
                 if parent_status not in allowed:
