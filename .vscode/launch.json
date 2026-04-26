@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "compounds": [
         {
-            "name": "Zeropoint Agent/WebUI",
+            "name": "Zeropoint Agent + WebUI",
             "configurations": [
                 "Zeropoint Agent",
                 "WebUI"
@@ -13,20 +13,30 @@
     "configurations": [
         {
             "name": "Zeropoint Agent",
-            "type": "debugpy",            
+            "type": "debugpy",
             "request": "launch",
-            "module": "uvicorn",
-            "args": [
-                "server:app",
-                "--host", "0.0.0.0",
-                "--port", "2370",
-                "--reload",
-                "--log-level", "info"
-            ],
+            "module": "zeropoint_agent",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "justMyCode": false,
-            "preLaunchTask": "build-npm" // Ensure WebUI is built before launching
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src",
+                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}"
+            },
+            "preLaunchTask": "build-npm"
+        },
+        {
+            "name": "Zeropoint Agent (no WebUI)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "zeropoint_agent",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src",
+                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}"
+            }
         },
         {
             "name": "WebUI",
@@ -42,6 +52,6 @@
             "outFiles": [
                 "${workspaceFolder}/webui/dist/**/*.js"
             ]
-        }        
+        }
     ]
 }
