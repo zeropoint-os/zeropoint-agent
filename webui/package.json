@@ -4,15 +4,10 @@
     "dev": "webpack --mode development --config webpack.config.js --watch"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "dotenv-webpack": "^8.1.0",
-    "webpack": "^5.99.9"
+    "preact": "^10.25.0"
   },
   "devDependencies": {
     "@types/http-server": "^0.12.4",
-    "@types/react": "^18.2.21",
-    "@types/react-dom": "^18.2.7",
     "copy-webpack-plugin": "^13.0.0",
     "css-loader": "^7.1.2",
     "html-webpack-plugin": "^5.6.3",
@@ -20,6 +15,7 @@
     "mini-css-extract-plugin": "^2.8.0",
     "ts-loader": "^9.5.2",
     "typescript": "^5.7.2",
+    "webpack": "^5.99.9",
     "webpack-cli": "^6.0.1"
   }
 }
