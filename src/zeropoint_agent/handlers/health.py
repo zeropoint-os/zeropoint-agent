@@ -18,5 +18,6 @@ async def health(request: Request):
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": getattr(request.app.state, "default_mode", "mock"),
         "graph": {"nodes": node_count, "statuses": statuses},
     }

@@ -31,6 +31,28 @@ def _parse_mode(mode_str: str) -> ResolveMode:
     return mode
 
 
+def _effective_mode(requested: str, request: Request) -> ResolveMode:
+    """Resolve the effective mode, respecting the global default.
+
+    If ZEROPOINT_MODE=mock, live requests are blocked.
+    If no mode specified in request, use the global default.
+    """
+    default = getattr(request.app.state, "default_mode", "mock")
+
+    # Use global default if request doesn't specify
+    mode_str = requested or default
+
+    # Block live mode when global is mock (safety)
+    if mode_str == "live" and default == "mock":
+        raise HTTPException(
+            status_code=403,
+            detail="Live mode blocked: server is running in mock mode "
+                   "(set ZEROPOINT_MODE=live to enable)"
+        )
+
+    return _parse_mode(mode_str)
+
+
 def _results_to_response(dag, results, mode_str, pattern=None):
     nodes = []
     for nid, status in results.items():
@@ -63,12 +85,15 @@ def _results_to_response(dag, results, mode_str, pattern=None):
 
 @router.post("/resolve")
 async def resolve_graph(body: ResolveRequest, request: Request):
-    """Resolve the entire graph."""
+    """Resolve the entire graph.
+
+    Mode defaults to ZEROPOINT_MODE env var. Live mode blocked in mock mode.
+    """
     try:
-        mode = _parse_mode(body.mode)
+        mode = _effective_mode(body.mode, request)
         dag = request.app.state.dag
         results = dag.resolve(mode=mode)
-        return _results_to_response(dag, results, body.mode)
+        return _results_to_response(dag, results, mode.value)
     except HTTPException:
         raise
     except Exception as e:
@@ -81,7 +106,7 @@ async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request)
     """Resolve only the matched subgraph."""
     pattern = unquote(pattern)
     try:
-        mode = _parse_mode(body.mode)
+        mode = _effective_mode(body.mode, request)
         dag = request.app.state.dag
         matched_ids = query_dag(dag, pattern)
 
@@ -89,7 +114,7 @@ async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request)
             raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
 
         results = dag.resolve_subset(matched_ids, mode=mode)
-        return _results_to_response(dag, results, body.mode, pattern)
+        return _results_to_response(dag, results, mode.value, pattern)
     except HTTPException:
         raise
     except Exception as e:

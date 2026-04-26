@@ -82,6 +82,11 @@ def create_app() -> FastAPI:
         app.state.dag = DAG(store=app.state.store)
         logger.info("Graph store initialized")
 
+        # Global resolve mode: ZEROPOINT_MODE=mock|dry_run|live (default: mock)
+        mode_str = os.environ.get("ZEROPOINT_MODE", "mock")
+        app.state.default_mode = mode_str
+        logger.info(f"Default resolve mode: {mode_str}")
+
         webui_dist = Path("webui/dist")
         if webui_dist.exists():
             app.mount("/", StaticFiles(directory=str(webui_dist), html=True), name="webui")

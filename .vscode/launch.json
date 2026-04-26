@@ -21,7 +21,8 @@
             "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
-                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}"
+                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
+                "ZEROPOINT_MODE": "mock"
             },
             "preLaunchTask": "build-npm"
         },
@@ -35,7 +36,8 @@
             "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
-                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}"
+                "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
+                "ZEROPOINT_MODE": "mock"
             }
         },
         {
