@@ -41,7 +41,17 @@ class GraphStore:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._db = ryugraph.Database(db_path)
+        try:
+            self._db = ryugraph.Database(db_path)
+        except RuntimeError as e:
+            if "wal" in str(e).lower() or "temporary file" in str(e).lower():
+                logger.warning(f"Stale WAL file detected, cleaning up: {e}")
+                import glob
+                for f in glob.glob(f"{db_path}*"):
+                    os.remove(f)
+                self._db = ryugraph.Database(db_path)
+            else:
+                raise
         self._conn = ryugraph.Connection(self._db)
         self._ensure_schema()
 
