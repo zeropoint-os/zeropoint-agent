@@ -6,28 +6,27 @@
     --fg-muted: #666666;
     --fg-dim: #999999;
     --accent: #0078d4;
+    --tile-bg: #f2f2f2;
     --status-success: #107c10;
     --status-pending: #ca5010;
     --status-error: #d13438;
     --status-blocked: #8a8886;
     --status-running: #0078d4;
     --font: 'Inter', -apple-system, system-ui, sans-serif;
-    --pivot-height: 48px;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bg: #000000;
-        --fg: #ffffff;
-        --fg-muted: #a0a0a0;
-        --fg-dim: #666666;
-        --accent: #4cc2ff;
-        --status-success: #6ccb5f;
-        --status-pending: #f7a93b;
-        --status-error: #ff6b6b;
-        --status-blocked: #666666;
-        --status-running: #4cc2ff;
-    }
+html.dark {
+    --bg: #000000;
+    --fg: #ffffff;
+    --fg-muted: #a0a0a0;
+    --fg-dim: #666666;
+    --accent: #4cc2ff;
+    --tile-bg: #1a1a1a;
+    --status-success: #6ccb5f;
+    --status-pending: #f7a93b;
+    --status-error: #ff6b6b;
+    --status-blocked: #666666;
+    --status-running: #4cc2ff;
 }
 
 * {
@@ -53,8 +52,6 @@ html, body, #root {
     font-weight: 200;
     letter-spacing: -1px;
     padding: 32px 24px 8px;
-    overflow: hidden;
-    white-space: nowrap;
 }
 
 .subtitle {
@@ -79,18 +76,17 @@ html, body, #root {
 .pivot::-webkit-scrollbar { display: none; }
 
 .pivot-tab {
+    font-family: var(--font);
     font-size: 15px;
     font-weight: 400;
     color: var(--fg-dim);
     padding: 12px 0;
     cursor: pointer;
     white-space: nowrap;
+    border: none;
     border-bottom: 2px solid transparent;
-    transition: color 0.15s, border-color 0.15s;
     background: none;
-    border-top: none;
-    border-left: none;
-    border-right: none;
+    transition: color 0.15s, border-color 0.15s;
 }
 
 .pivot-tab:hover { color: var(--fg-muted); }
@@ -100,36 +96,60 @@ html, body, #root {
     border-bottom-color: var(--accent);
 }
 
-/* --- Node list --- */
+/* --- Tiles --- */
 
-.node-list {
-    padding: 16px 24px;
-}
-
-.node-item {
-    display: flex;
-    align-items: center;
+.tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
-    padding: 14px 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
-    cursor: pointer;
-    transition: opacity 0.15s;
+    padding: 20px 24px;
 }
 
-.node-item:hover { opacity: 0.7; }
-.node-item:last-child { border-bottom: none; }
+.tile {
+    background: var(--tile-bg);
+    padding: 16px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    position: relative;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
 
-.node-indent {
+.tile:hover { opacity: 0.8; }
+.tile:active { transform: scale(0.98); }
+
+.tile-header {
     display: flex;
     align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
 }
 
-.node-indent-line {
-    width: 20px;
-    height: 1px;
-    background: var(--fg-dim);
-    margin-right: 4px;
+.tile-name {
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
+
+.tile-value {
+    font-size: 12px;
+    font-weight: 300;
+    color: var(--fg-muted);
+    line-height: 1.4;
+}
+
+.tile-status {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--fg-dim);
+    margin-top: 8px;
+}
+
+/* --- Status dot --- */
 
 .status-dot {
     width: 10px;
@@ -150,48 +170,23 @@ html, body, #root {
     50% { opacity: 0.3; }
 }
 
-.node-name {
-    font-size: 15px;
-    font-weight: 500;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.node-value {
-    font-size: 13px;
-    font-weight: 300;
-    color: var(--fg-muted);
-    text-align: right;
-    white-space: nowrap;
-}
-
-.node-item.selected {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    margin: 0 -24px;
-    padding: 14px 24px;
-    border-radius: 0;
-}
-
-/* --- Detail panel --- */
+/* --- Detail view --- */
 
 .detail {
     padding: 24px;
-    animation: slideIn 0.2s ease-out;
+    animation: fadeIn 0.15s ease-out;
 }
 
-@keyframes slideIn {
-    from { opacity: 0; transform: translateX(16px); }
-    to { opacity: 1; transform: translateX(0); }
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .detail-header {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 .detail-name {
@@ -216,7 +211,7 @@ html, body, #root {
     text-transform: uppercase;
     letter-spacing: 1px;
     color: var(--fg-dim);
-    margin-bottom: 8px;
+    margin-bottom: 12px;
 }
 
 .detail-field {
@@ -255,16 +250,6 @@ html, body, #root {
     padding: 12px 0;
     line-height: 1.5;
 }
-
-.detail-parent, .detail-child {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 0;
-    cursor: pointer;
-}
-
-.detail-parent:hover, .detail-child:hover { opacity: 0.7; }
 
 /* --- Actions --- */
 
@@ -313,13 +298,6 @@ html, body, #root {
     max-width: 720px;
 }
 
-@media (max-width: 767px) {
-    .title { font-size: 32px; padding: 24px 20px 8px; }
-    .subtitle { padding: 0 20px 16px; }
-    .pivot { padding: 0 20px; gap: 20px; }
-    .detail { padding: 20px; }
-}
-
 /* --- Status bar --- */
 
 .status-bar {
@@ -338,6 +316,34 @@ html, body, #root {
     letter-spacing: 1px;
 }
 
+/* --- Theme toggle --- */
+
+.theme-toggle {
+    font-family: var(--font);
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px 8px;
+    transition: color 0.15s;
+}
+
+.theme-toggle:hover { color: var(--fg); }
+
+.title-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-right: 24px;
+}
+
 @media (max-width: 767px) {
+    .title { font-size: 32px; padding: 24px 20px 8px; }
+    .subtitle { padding: 0 20px 16px; }
+    .pivot { padding: 0 20px; gap: 20px; }
+    .detail { padding: 20px; }
+    .tiles { padding: 16px 20px; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
     .status-bar { padding: 8px 20px; }
+    .title-bar { padding-right: 20px; }
 }

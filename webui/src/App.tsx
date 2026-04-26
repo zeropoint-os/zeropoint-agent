@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
 import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
 import { NodeDetail } from './NodeDetail';
+import { Tile } from './Tile';
 
-/** Build parent→children map from edges. */
 function childrenMap(edges: DagEdge[]): Map<string, string[]> {
     const m = new Map<string, string[]>();
     for (const e of edges) {
@@ -14,20 +14,15 @@ function childrenMap(edges: DagEdge[]): Map<string, string[]> {
     return m;
 }
 
-/** Find root node IDs (no incoming edges). */
 function findRoots(nodes: DagNode[], edges: DagEdge[]): string[] {
     const hasParent = new Set(edges.map(e => e.target));
     return nodes.filter(n => !hasParent.has(n.id)).map(n => n.id);
 }
 
-/** Build path from a root to the given node. */
-function buildPath(targetId: string, edges: DagEdge[], nodeMap: Map<string, DagNode>): string[] {
+function buildPath(targetId: string, edges: DagEdge[]): string[] {
     const parentMap = new Map<string, string>();
     for (const e of edges) {
-        // First parent wins (for path building)
-        if (!parentMap.has(e.target)) {
-            parentMap.set(e.target, e.source);
-        }
+        if (!parentMap.has(e.target)) parentMap.set(e.target, e.source);
     }
     const path: string[] = [];
     let current: string | undefined = targetId;
@@ -43,9 +38,20 @@ export function App() {
     const [edges, setEdges] = useState<DagEdge[]>([]);
     const [health, setHealth] = useState<HealthResponse | null>(null);
     const [currentId, setCurrentId] = useState<string | null>(null);
+    const [isDark, setIsDark] = useState(() => {
+        const saved = localStorage.getItem('zp-theme');
+        if (saved) return saved === 'dark';
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    });
     const currentIdRef = useRef<string | null>(null);
 
-    const navigate = (id: string) => {
+    // Apply theme
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+        localStorage.setItem('zp-theme', isDark ? 'dark' : 'light');
+    }, [isDark]);
+
+    const navigate = (id: string | null) => {
         currentIdRef.current = id;
         setCurrentId(id);
     };
@@ -61,40 +67,26 @@ export function App() {
         }
     };
 
-    // Initial load + auto-select first root
     useEffect(() => {
-        (async () => {
-            const [dag, h] = await Promise.all([fetchDag(), fetchHealth()]);
-            setNodes(dag.nodes || []);
-            setEdges(dag.edges || []);
-            setHealth(h);
-            if (dag.nodes?.length > 0) {
-                const roots = findRoots(dag.nodes, dag.edges || []);
-                if (roots.length > 0) navigate(roots[0]);
-            }
-        })();
-        // Poll — data only, no navigation
+        load();
         const interval = setInterval(load, 5000);
         return () => clearInterval(interval);
     }, []);
 
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const children = childrenMap(edges);
+    const cm = childrenMap(edges);
     const roots = findRoots(nodes, edges);
     const current = currentId ? nodeMap.get(currentId) || null : null;
+    const isHome = currentId === null;
 
-    // Build the pivot path from root to current node
-    const pivotPath = currentId ? buildPath(currentId, edges, nodeMap) : [];
+    // Pivot path
+    const pivotPath = currentId ? buildPath(currentId, edges) : [];
 
-    // Siblings: nodes at the same level (same parent, or all roots)
+    // Siblings at current level
     const currentParents = edges.filter(e => e.target === currentId).map(e => e.source);
     const siblings = currentParents.length > 0
-        ? (children.get(currentParents[0]) || [])
+        ? (cm.get(currentParents[0]) || [])
         : roots;
-
-    const handleNavigate = (id: string) => {
-        navigate(id);
-    };
 
     const handleResolve = async () => {
         const mode = health?.mode || 'mock';
@@ -115,14 +107,16 @@ export function App() {
     if (nodes.length === 0) {
         return (
             <div class="app">
-                <div class="title">zeropo<span style="color: var(--fg-dim)">int</span></div>
+                <div class="title-bar">
+                    <div class="title">zeropoint</div>
+                    <button class="theme-toggle" onClick={() => setIsDark(!isDark)}>
+                        {isDark ? '☀' : '☾'}
+                    </button>
+                </div>
                 <div class="content" style="display: flex; align-items: center; justify-content: center; flex: 1;">
                     <div style="text-align: center; color: var(--fg-dim);">
                         <div style="font-size: 18px; font-weight: 300; margin-bottom: 12px;">
                             no nodes
-                        </div>
-                        <div style="font-size: 13px; margin-bottom: 24px;">
-                            build a graph via the API or load a demo
                         </div>
                         <button class="btn primary" onClick={handleLoadDemo}>
                             load demo graph
@@ -139,45 +133,74 @@ export function App() {
 
     return (
         <div class="app">
-            <div class="title">zeropo<span style="color: var(--fg-dim)">int</span></div>
+            <div class="title-bar">
+                <div class="title">zeropoint</div>
+                <button class="theme-toggle" onClick={() => setIsDark(!isDark)}>
+                    {isDark ? '☀' : '☾'}
+                </button>
+            </div>
             <div class="subtitle">
                 {Object.entries(statusSummary).map(([s, c]) => `${c} ${s.replace('_', ' ')}`).join(' · ')}
             </div>
 
-            {/* Pivot breadcrumb — path from root to current */}
+            {/* Pivot — home or path through graph */}
             <div class="pivot">
-                {pivotPath.map((id, i) => (
+                <button
+                    class={`pivot-tab ${isHome ? 'active' : ''}`}
+                    onClick={() => navigate(null)}
+                >
+                    home
+                </button>
+                {pivotPath.map(id => (
                     <button
                         key={id}
                         class={`pivot-tab ${id === currentId ? 'active' : ''}`}
-                        onClick={() => handleNavigate(id)}
+                        onClick={() => navigate(id)}
                     >
                         {id}
                     </button>
                 ))}
-
-                {/* Show siblings of current node that aren't in the path */}
-                {siblings
+                {/* Siblings not in path */}
+                {!isHome && siblings
                     .filter(id => id !== currentId && !pivotPath.includes(id))
                     .map(id => (
                         <button
                             key={id}
                             class="pivot-tab"
-                            onClick={() => handleNavigate(id)}
+                            onClick={() => navigate(id)}
                         >
                             {id}
                         </button>
                     ))}
             </div>
 
-            {/* Current node's card */}
             <div class="content">
+                {/* Home: live tiles for root nodes */}
+                {isHome && (
+                    <div class="tiles">
+                        {roots.map(rootId => {
+                            const node = nodeMap.get(rootId);
+                            if (!node) return null;
+                            const descendants = countDescendants(rootId, cm);
+                            return (
+                                <Tile
+                                    key={rootId}
+                                    node={node}
+                                    onClick={() => navigate(rootId)}
+                                    childCount={descendants}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Node detail + children tiles */}
                 {current && (
                     <NodeDetail
                         node={current}
                         allNodes={nodes}
                         edges={edges}
-                        onNavigate={handleNavigate}
+                        onNavigate={(id) => navigate(id)}
                     />
                 )}
             </div>
@@ -189,4 +212,18 @@ export function App() {
             </div>
         </div>
     );
+}
+
+function countDescendants(id: string, cm: Map<string, string[]>): number {
+    let count = 0;
+    const queue = cm.get(id) || [];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+        const child = queue.shift()!;
+        if (visited.has(child)) continue;
+        visited.add(child);
+        count++;
+        queue.push(...(cm.get(child) || []));
+    }
+    return count;
 }

@@ -1,4 +1,5 @@
 import type { DagNode, DagEdge } from './api';
+import { Tile } from './Tile';
 
 interface Props {
     node: DagNode;
@@ -9,17 +10,8 @@ interface Props {
 
 export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
     const nodeMap = new Map(allNodes.map(n => [n.id, n]));
-
-    // Find parents and children from edges
-    const parents = edges
-        .filter(e => e.target === node.id)
-        .map(e => nodeMap.get(e.source))
-        .filter(Boolean) as DagNode[];
-
-    const children = edges
-        .filter(e => e.source === node.id)
-        .map(e => nodeMap.get(e.target))
-        .filter(Boolean) as DagNode[];
+    const childrenOf = (id: string) => edges.filter(e => e.source === id).map(e => nodeMap.get(e.target)).filter(Boolean) as DagNode[];
+    const children = childrenOf(node.id);
 
     const config = node.config || {};
     const output = node.output || {};
@@ -34,15 +26,12 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                 {node.type} · {node.status.replace('_', ' ')}
             </div>
 
-            {/* Error */}
             {node.error && (
                 <div class="detail-section">
-                    <div class="detail-section-title">error</div>
                     <div class="detail-error">{node.error}</div>
                 </div>
             )}
 
-            {/* Config */}
             {Object.keys(config).length > 0 && (
                 <div class="detail-section">
                     <div class="detail-section-title">config</div>
@@ -57,7 +46,6 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                 </div>
             )}
 
-            {/* Output */}
             {Object.keys(output).length > 0 && (
                 <div class="detail-section">
                     <div class="detail-section-title">output</div>
@@ -70,35 +58,22 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                 </div>
             )}
 
-            {/* Parents */}
-            {parents.length > 0 && (
-                <div class="detail-section">
-                    <div class="detail-section-title">parents</div>
-                    {parents.map(p => (
-                        <div class="detail-parent" key={p.id} onClick={() => onNavigate(p.id)}>
-                            <div class={`status-dot ${p.status}`} />
-                            <span class="node-name">{p.id}</span>
-                            <span class="node-value">{p.status.replace('_', ' ')}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {/* Children */}
             {children.length > 0 && (
                 <div class="detail-section">
                     <div class="detail-section-title">children</div>
-                    {children.map(c => (
-                        <div class="detail-child" key={c.id} onClick={() => onNavigate(c.id)}>
-                            <div class={`status-dot ${c.status}`} />
-                            <span class="node-name">{c.id}</span>
-                            <span class="node-value">{c.status.replace('_', ' ')}</span>
-                        </div>
-                    ))}
+                    <div class="tiles" style="padding: 0;">
+                        {children.map(c => (
+                            <Tile
+                                key={c.id}
+                                node={c}
+                                onClick={() => onNavigate(c.id)}
+                                childCount={childrenOf(c.id).length}
+                            />
+                        ))}
+                    </div>
                 </div>
             )}
 
-            {/* Actions */}
             <div class="actions">
                 <button class="btn">edit</button>
                 <button class="btn">retry</button>
