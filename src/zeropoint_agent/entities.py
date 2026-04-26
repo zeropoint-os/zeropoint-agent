@@ -55,9 +55,14 @@ class DriverResult:
 
 @dataclass
 class DiskResult:
-    """Contract for a disk node."""
-    device: str           # /dev/sda, /dev/nvme0n1
-    id: str = ""          # stable ID from /dev/disk/by-id/
+    """Contract for a disk node.
+
+    Keyed by stable ID from /dev/disk/by-id/ — survives reboot,
+    disk reordering, and controller changes. device_path is resolved
+    at runtime from the stable ID.
+    """
+    stable_id: str        # KEY: ata-QEMU_HARDDISK_QM00001, nvme-eui.0025385c2140105d
+    device_path: str = "" # /dev/sda — resolved at runtime, may change across boots
     size: int = 0         # bytes
     free: int = 0         # unallocated bytes
     sector_size: int = 512
@@ -65,28 +70,41 @@ class DiskResult:
 
 @dataclass
 class PartitionResult:
-    """Contract for a partition node."""
+    """Contract for a partition node.
+
+    Keyed by stable partition ID from /dev/disk/by-id/ (e.g. ata-...-part1).
+    """
     number: int
     size_mb: int
-    device: str = ""      # /dev/sda1 (filled at resolve time)
+    stable_id: str = ""   # KEY: ata-QEMU_HARDDISK_QM00001-part1
+    device_path: str = "" # /dev/sda1 — resolved at runtime
     type: str = "83"
     label: Optional[str] = None
 
 
 @dataclass
 class FormatResult:
-    """Contract for a filesystem format node."""
+    """Contract for a filesystem format node.
+
+    Uses the partition's stable ID to locate the device at runtime.
+    UUID is filled after mkfs.
+    """
     filesystem: str = "ext4"
-    device: str = ""      # from parent partition
+    stable_id: str = ""   # partition stable ID (from parent)
+    device_path: str = "" # resolved from stable_id at runtime
     label: Optional[str] = None
     uuid: Optional[str] = None
 
 
 @dataclass
 class MountResult:
-    """Contract for a mount node."""
+    """Contract for a mount node.
+
+    Mounts by stable ID or UUID, not device path.
+    """
     mountpoint: str
-    device: str = ""      # from parent format
+    stable_id: str = ""   # from parent format/partition
+    device_path: str = "" # resolved at runtime
     options: str = "defaults"
 
 

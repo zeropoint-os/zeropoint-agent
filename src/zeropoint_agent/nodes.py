@@ -137,24 +137,32 @@ class DriverNode(INode[None, DriverResult]):
 
 
 # --- Infra chain: Disk → Partition → Format → Mount → Path ---
+# All keyed by stable IDs from /dev/disk/by-id/
 
 class DiskNode(INode[None, DiskResult]):
-    """Discovers/registers a disk. Root node."""
+    """Discovers/registers a disk by stable ID. Root node.
 
-    def __init__(self, device: str):
-        self.device = device
+    Takes a stable ID (e.g. ata-QEMU_HARDDISK_QM00001) as the key.
+    Resolves the actual device path (/dev/sda) at runtime via HWProbe.
+    """
+
+    def __init__(self, stable_id: str):
+        self.stable_id = stable_id
 
     def resolve(self, input: None) -> DiskResult:
-        logger.info(f"DiskNode.resolve() — discovering {self.device}")
-        # TODO: probe via HWProbe
-        return DiskResult(device=self.device)
+        logger.info(f"DiskNode.resolve() — discovering {self.stable_id}")
+        # TODO: resolve stable_id → device_path via HWProbe
+        #   disk = HWProbe.get_disk(self.stable_id)
+        #   return DiskResult(stable_id=self.stable_id, device_path=disk.device, ...)
+        return DiskResult(stable_id=self.stable_id)
 
     def mock_resolve(self, input: None) -> DiskResult:
-        return DiskResult(device=self.device, id=f"mock-{self.device}",
+        return DiskResult(stable_id=self.stable_id,
+                          device_path=f"/dev/disk/by-id/{self.stable_id}",
                           size=1000000000, free=500000000)
 
     def verify(self) -> bool:
-        # TODO: check device exists via lsblk
+        # TODO: check /dev/disk/by-id/{stable_id} exists
         return False
 
     def remove(self) -> bool:
@@ -162,15 +170,19 @@ class DiskNode(INode[None, DiskResult]):
 
     def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
         return _systemd_unit(
-            node_id, f"Discover disk {self.device}",
+            node_id, f"Discover disk {self.stable_id}",
             parent_ids,
-            exec_start=f"/usr/bin/lsblk {self.device}",
-            exec_verify=f"/usr/bin/test -b {self.device}",
+            exec_start=f"/usr/bin/test -e /dev/disk/by-id/{self.stable_id}",
+            exec_verify=f"/usr/bin/test -e /dev/disk/by-id/{self.stable_id}",
         )
 
 
 class PartitionNode(INode[DiskResult, PartitionResult]):
-    """Creates a partition on a parent disk."""
+    """Creates a partition on a parent disk.
+
+    The partition's stable ID is derived from the parent disk's stable ID
+    (e.g. ata-QEMU_HARDDISK_QM00001-part1). device_path is resolved at runtime.
+    """
 
     def __init__(self, number: int, size_mb: int, type: str = "83"):
         self.number = number
@@ -178,21 +190,27 @@ class PartitionNode(INode[DiskResult, PartitionResult]):
         self.type = type
 
     def resolve(self, input: DiskResult) -> PartitionResult:
-        logger.info(f"PartitionNode.resolve() — partition {self.number} on {input.device}")
-        # TODO: sfdisk
+        stable_id = f"{input.stable_id}-part{self.number}"
+        logger.info(f"PartitionNode.resolve() — partition {self.number} on {input.stable_id}")
+        # TODO: resolve device_path, sfdisk to create
         return PartitionResult(
             number=self.number, size_mb=self.size_mb,
-            device=f"{input.device}{self.number}", type=self.type,
+            stable_id=stable_id,
+            device_path=f"{input.device_path}{self.number}" if input.device_path else "",
+            type=self.type,
         )
 
     def mock_resolve(self, input: DiskResult) -> PartitionResult:
+        stable_id = f"{input.stable_id}-part{self.number}"
         return PartitionResult(
             number=self.number, size_mb=self.size_mb,
-            device=f"{input.device}{self.number}", type=self.type,
+            stable_id=stable_id,
+            device_path=f"/dev/disk/by-id/{stable_id}",
+            type=self.type,
         )
 
     def verify(self) -> bool:
-        # TODO: probe partition table
+        # TODO: check /dev/disk/by-id/{stable_id} exists
         return False
 
     def remove(self) -> bool:
@@ -208,20 +226,27 @@ class PartitionNode(INode[DiskResult, PartitionResult]):
 
 
 class FormatNode(INode[PartitionResult, FormatResult]):
-    """Creates a filesystem on a parent partition."""
+    """Creates a filesystem on a parent partition.
+
+    Inherits the partition's stable ID. device_path resolved at runtime.
+    """
 
     def __init__(self, filesystem: str = "ext4", label: Optional[str] = None):
         self.filesystem = filesystem
         self.label = label
 
     def resolve(self, input: PartitionResult) -> FormatResult:
-        logger.info(f"FormatNode.resolve() — mkfs.{self.filesystem} on {input.device}")
-        # TODO: mkfs
-        return FormatResult(filesystem=self.filesystem, device=input.device,
+        logger.info(f"FormatNode.resolve() — mkfs.{self.filesystem} on {input.stable_id}")
+        # TODO: mkfs on resolved device_path
+        return FormatResult(filesystem=self.filesystem,
+                            stable_id=input.stable_id,
+                            device_path=input.device_path,
                             label=self.label)
 
     def mock_resolve(self, input: PartitionResult) -> FormatResult:
-        return FormatResult(filesystem=self.filesystem, device=input.device,
+        return FormatResult(filesystem=self.filesystem,
+                            stable_id=input.stable_id,
+                            device_path=input.device_path,
                             label=self.label, uuid="mock-uuid-1234")
 
     def verify(self) -> bool:
@@ -240,20 +265,28 @@ class FormatNode(INode[PartitionResult, FormatResult]):
 
 
 class MountNode(INode[FormatResult, MountResult]):
-    """Mounts a formatted partition at a mountpoint."""
+    """Mounts a formatted partition at a mountpoint.
+
+    Uses the stable ID from the parent format/partition to mount,
+    not the raw device path.
+    """
 
     def __init__(self, mountpoint: str, options: str = "defaults"):
         self.mountpoint = mountpoint
         self.options = options
 
     def resolve(self, input: FormatResult) -> MountResult:
-        logger.info(f"MountNode.resolve() — mounting {input.device} at {self.mountpoint}")
-        # TODO: mount
-        return MountResult(mountpoint=self.mountpoint, device=input.device,
+        logger.info(f"MountNode.resolve() — mounting {input.stable_id} at {self.mountpoint}")
+        # TODO: mount /dev/disk/by-id/{stable_id} {mountpoint}
+        return MountResult(mountpoint=self.mountpoint,
+                           stable_id=input.stable_id,
+                           device_path=input.device_path,
                            options=self.options)
 
     def mock_resolve(self, input: FormatResult) -> MountResult:
-        return MountResult(mountpoint=self.mountpoint, device=input.device,
+        return MountResult(mountpoint=self.mountpoint,
+                           stable_id=input.stable_id,
+                           device_path=input.device_path,
                            options=self.options)
 
     def verify(self) -> bool:
