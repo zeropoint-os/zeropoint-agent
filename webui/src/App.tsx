@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
 import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
 import { NodeDetail } from './NodeDetail';
@@ -43,6 +43,12 @@ export function App() {
     const [edges, setEdges] = useState<DagEdge[]>([]);
     const [health, setHealth] = useState<HealthResponse | null>(null);
     const [currentId, setCurrentId] = useState<string | null>(null);
+    const currentIdRef = useRef<string | null>(null);
+
+    const navigate = (id: string) => {
+        currentIdRef.current = id;
+        navigate(id);
+    };
 
     const load = async () => {
         try {
@@ -50,18 +56,24 @@ export function App() {
             setNodes(dag.nodes || []);
             setEdges(dag.edges || []);
             setHealth(h);
-            // Auto-select first root if nothing selected
-            if (!currentId && dag.nodes?.length > 0) {
-                const roots = findRoots(dag.nodes, dag.edges || []);
-                if (roots.length > 0) setCurrentId(roots[0]);
-            }
         } catch (e) {
             console.error('Failed to load DAG:', e);
         }
     };
 
+    // Initial load + auto-select first root
     useEffect(() => {
-        load();
+        (async () => {
+            const [dag, h] = await Promise.all([fetchDag(), fetchHealth()]);
+            setNodes(dag.nodes || []);
+            setEdges(dag.edges || []);
+            setHealth(h);
+            if (dag.nodes?.length > 0) {
+                const roots = findRoots(dag.nodes, dag.edges || []);
+                if (roots.length > 0) navigate(roots[0]);
+            }
+        })();
+        // Poll — data only, no navigation
         const interval = setInterval(load, 5000);
         return () => clearInterval(interval);
     }, []);
@@ -81,7 +93,7 @@ export function App() {
         : roots;
 
     const handleNavigate = (id: string) => {
-        setCurrentId(id);
+        navigate(id);
     };
 
     const handleResolve = async () => {
