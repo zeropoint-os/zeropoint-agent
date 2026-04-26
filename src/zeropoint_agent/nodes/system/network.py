@@ -1,5 +1,6 @@
 """NetworkNode — observes network interface state."""
 
+import json
 import logging
 import subprocess
 from dataclasses import dataclass
@@ -34,7 +35,6 @@ class NetworkNode(INode[None, NetworkResult]):
             if out.returncode != 0:
                 return NetworkResult(interface=self.interface, up=False)
 
-            import json
             data = json.loads(out.stdout)
             if not data:
                 return NetworkResult(interface=self.interface, up=False)
@@ -73,5 +73,4 @@ class NetworkNode(INode[None, NetworkResult]):
         return NodeResult.pending_reboot(result)
 
     def remove(self, mode: ResolveMode) -> NodeResult[NetworkResult]:
-        # Can't remove a network interface
         return NodeResult.success()

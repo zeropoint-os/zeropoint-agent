@@ -2,11 +2,10 @@
 
 import logging
 import subprocess
-import json
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode, ResolveMode, NodeResult, SystemdUnit
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 from zeropoint_agent.nodes.system.network import NetworkResult
 
 logger = logging.getLogger(__name__)
@@ -58,14 +57,3 @@ class DockerNode(INode[NetworkResult, DockerResult]):
 
     def remove(self, mode: ResolveMode) -> NodeResult[DockerResult]:
         return NodeResult.success()
-
-    def systemd_unit(self, node_id: str, parent_ids: list, operation: str) -> Optional[SystemdUnit]:
-        if operation == "verify":
-            return SystemdUnit(
-                name=f"zeropoint-{node_id}",
-                description="Wait for Docker daemon",
-                exec_start="/usr/bin/docker info",
-                after=["docker.service"] + [f"zeropoint-{p}.service" for p in parent_ids],
-                requires=["docker.service"],
-            )
-        return None

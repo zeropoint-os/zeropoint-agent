@@ -19,7 +19,6 @@ from zeropoint_agent.nodes.system.network import NetworkNode
 from zeropoint_agent.nodes.system.docker import DockerNode
 from zeropoint_agent.nodes.system.driver import DriverNode
 from zeropoint_agent.nodes.config.var import VarNode
-from zeropoint_agent.nodes.core.shell_script import ShellScriptNode
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +64,7 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     add("docker", DockerNode(), parents=["network"])
 
     # --- NVIDIA GPU (always added — returns SKIPPED if no GPU) ---
-    add("nvidia-detect", DriverNode(driver="nvidia"))
-    add("nvidia-install", ShellScriptNode(
-        exec="/usr/local/bin/zeropoint-setup-nvidia-drivers.sh",
-        verify="nvidia-smi > /dev/null 2>&1",
-        description="Install NVIDIA drivers",
-        timeout=600,
-        marker=".zeropoint-nvidia-install",
-    ), parents=["nvidia-detect"])
+    add("nvidia", DriverNode(driver="nvidia"))
 
     # --- Storage ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
