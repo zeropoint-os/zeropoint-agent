@@ -74,7 +74,9 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def _init():
         store_path = os.environ.get("ZEROPOINT_ROOT_PATH", ".")
-        db_path = str(Path(store_path) / "data" / "graph.db")
+        data_dir = Path(store_path) / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = str(data_dir / "graph.db")
         logger.info(f"Initializing graph store at {db_path}")
         app.state.store = GraphStore(db_path)
         app.state.dag = DAG(store=app.state.store)
