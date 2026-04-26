@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
 import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
 import { NodeDetail } from './NodeDetail';
@@ -37,13 +37,19 @@ export function App() {
     const [nodes, setNodes] = useState<DagNode[]>([]);
     const [edges, setEdges] = useState<DagEdge[]>([]);
     const [health, setHealth] = useState<HealthResponse | null>(null);
-    const [currentId, setCurrentId] = useState<string | null>(null);
     const [isDark, setIsDark] = useState(() => {
         const saved = localStorage.getItem('zp-theme');
         if (saved) return saved === 'dark';
         return window.matchMedia('(prefers-color-scheme: dark)').matches;
     });
-    const currentIdRef = useRef<string | null>(null);
+
+    // Hash-based routing: read node ID from URL hash
+    const getHashId = (): string | null => {
+        const hash = window.location.hash.replace(/^#\/?/, '');
+        return hash || null;
+    };
+
+    const [currentId, setCurrentId] = useState<string | null>(getHashId);
 
     // Apply theme
     useEffect(() => {
@@ -51,9 +57,16 @@ export function App() {
         localStorage.setItem('zp-theme', isDark ? 'dark' : 'light');
     }, [isDark]);
 
+    // Sync hash → state on popstate (back/forward)
+    useEffect(() => {
+        const onHashChange = () => setCurrentId(getHashId());
+        window.addEventListener('hashchange', onHashChange);
+        return () => window.removeEventListener('hashchange', onHashChange);
+    }, []);
+
     const navigate = (id: string | null) => {
-        currentIdRef.current = id;
         setCurrentId(id);
+        window.location.hash = id ? `/${id}` : '/';
     };
 
     const load = async () => {
