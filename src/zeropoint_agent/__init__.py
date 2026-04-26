@@ -5,6 +5,7 @@ from .dag import DAG
 
 # Node types — re-exported from nodes package
 from .nodes import (
+    ShellScriptNode,
     NetworkNode, DockerNode, DriverNode,
     DiskNode, PartitionNode, FormatNode, MountNode, PathNode,
     VarNode,
@@ -12,6 +13,7 @@ from .nodes import (
 )
 
 # Result contracts — re-exported from each node module
+from .nodes.core import ShellScriptResult
 from .nodes.system import NetworkResult, DockerResult, DriverResult
 from .nodes.hw import DiskResult, PartitionResult, FormatResult, MountResult, PathResult
 from .nodes.config import VarResult
@@ -19,6 +21,7 @@ from .nodes.user import ModuleResult, LinkResult, ExposureResult
 
 __all__ = [
     "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
+    "ShellScriptNode", "ShellScriptResult",
     "NetworkNode", "DockerNode", "DriverNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "PathNode",
     "VarNode",

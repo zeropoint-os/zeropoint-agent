@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from zeropoint_agent import (
+    ShellScriptNode,
     NetworkNode, DockerNode, DriverNode,
     DiskNode, PartitionNode, FormatNode, MountNode,
     PathNode, VarNode, ModuleNode, LinkNode, ExposureNode,
@@ -13,6 +14,7 @@ from zeropoint_agent import (
 
 
 NODE_REGISTRY = {
+    "shell": ShellScriptNode,
     "network": NetworkNode,
     "docker": DockerNode,
     "driver": DriverNode,
