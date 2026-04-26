@@ -156,14 +156,22 @@ html, body, #root {
     height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
+    background: transparent;
+    border: 2px solid transparent;
+    box-sizing: border-box;
 }
 
+/* Filled = active state */
 .status-dot.success { background: var(--status-success); }
 .status-dot.pending_reboot { background: var(--status-pending); }
-.status-dot.pending { background: var(--status-pending); opacity: 0.5; }
 .status-dot.error { background: var(--status-error); }
 .status-dot.blocked { background: var(--status-blocked); }
 .status-dot.running { background: var(--status-running); animation: pulse 1s infinite; }
+
+/* Ring = passive state */
+.status-dot.success_skip { border-color: var(--status-success); }
+.status-dot.pending { border-color: var(--status-pending); }
+.status-dot.skipped { border-color: var(--status-blocked); }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
