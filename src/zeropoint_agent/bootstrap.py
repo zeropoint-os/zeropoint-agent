@@ -65,9 +65,44 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     # --- Docker ---
     add("docker", DockerNode(), parents=["network"])
 
-    # --- GPU detection (both vendors, SKIPPED if not present) ---
+    # --- GPU detection + install chains ---
+    # detect returns SUCCESS_SKIP if driver working → children skip
+    # detect returns SUCCESS if GPU found but no driver → children run
+    # detect returns SKIPPED if no GPU → children skip
+
     add("nvidia", NvidiaGpuNode())
+    add("nvidia-install", ShellScriptNode(
+        exec="apt-get install -y nvidia-driver nvidia-container-toolkit && nvidia-ctk runtime configure --runtime=docker",
+        verify="nvidia-smi > /dev/null 2>&1",
+        description="Install NVIDIA driver + container toolkit",
+        timeout=600,
+    ), parents=["nvidia"])
+    add("nvidia-reboot", ShellScriptNode(
+        exec="echo 'NVIDIA kernel module requires reboot'",
+        verify="lsmod | grep -q nvidia",
+        description="Reboot for NVIDIA kernel module",
+        timeout=30,
+    ), parents=["nvidia-install"])
+    add("nvidia-verify", ShellScriptNode(
+        exec="nvidia-smi && docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi",
+        verify="nvidia-smi > /dev/null 2>&1",
+        description="Verify NVIDIA driver + Docker GPU runtime",
+        timeout=300,
+    ), parents=["nvidia-reboot"])
+
     add("amd", AmdGpuNode())
+    add("amd-install", ShellScriptNode(
+        exec="apt-get install -y rocm-dkms",
+        verify="rocm-smi > /dev/null 2>&1",
+        description="Install AMD ROCm drivers",
+        timeout=600,
+    ), parents=["amd"])
+    add("amd-verify", ShellScriptNode(
+        exec="rocm-smi",
+        verify="rocm-smi > /dev/null 2>&1",
+        description="Verify AMD ROCm drivers",
+        timeout=300,
+    ), parents=["amd-install"])
 
 
 
