@@ -1,11 +1,11 @@
 """NetworkNode — observes network interface state."""
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +19,59 @@ class NetworkResult:
 
 
 class NetworkNode(INode[None, NetworkResult]):
-    """Observes network interface state. Read-only."""
+    """Observes network interface state. Read-only root node."""
 
     def __init__(self, interface: str = "eth0"):
         self.interface = interface
 
-    def resolve(self, input: None) -> NetworkResult:
-        logger.info(f"NetworkNode.resolve() — probing {self.interface}")
-        return NetworkResult(interface=self.interface)
+    def _probe(self) -> NetworkResult:
+        """Probe the real interface state."""
+        try:
+            out = subprocess.run(
+                ["ip", "-j", "addr", "show", self.interface],
+                capture_output=True, text=True, timeout=5
+            )
+            if out.returncode != 0:
+                return NetworkResult(interface=self.interface, up=False)
 
-    def mock_resolve(self, input: None) -> NetworkResult:
-        return NetworkResult(interface=self.interface, ip="192.168.1.10", up=True)
+            import json
+            data = json.loads(out.stdout)
+            if not data:
+                return NetworkResult(interface=self.interface, up=False)
 
-    def verify(self) -> bool:
-        return False
+            iface = data[0]
+            up = "UP" in iface.get("flags", [])
+            ip = None
+            for addr in iface.get("addr_info", []):
+                if addr.get("family") == "inet":
+                    ip = addr.get("local")
+                    break
 
-    def remove(self) -> bool:
-        return True
+            return NetworkResult(interface=self.interface, ip=ip, up=up)
+        except Exception as e:
+            logger.debug(f"Failed to probe {self.interface}: {e}")
+            return NetworkResult(interface=self.interface, up=False)
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, f"Wait for network interface {self.interface}",
-            parent_ids,
-            exec_start=f"/usr/bin/ip link show {self.interface} up",
-            exec_verify=f"/usr/bin/ip link show {self.interface}",
-        )
+    def resolve(self, input: None, mode: ResolveMode) -> NodeResult[NetworkResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(
+                NetworkResult(interface=self.interface, ip="192.168.1.10", up=True))
+
+        result = self._probe()
+        if result.up:
+            return NodeResult.success(result)
+        return NodeResult.failed(f"Interface {self.interface} is down", result)
+
+    def verify(self, mode: ResolveMode) -> NodeResult[NetworkResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(
+                NetworkResult(interface=self.interface, ip="192.168.1.10", up=True))
+
+        result = self._probe()
+        if result.up:
+            return NodeResult.success(result)
+        return NodeResult.pending_reboot(result)
+
+    def remove(self, mode: ResolveMode) -> NodeResult[NetworkResult]:
+        # Can't remove a network interface
+        return NodeResult.success()

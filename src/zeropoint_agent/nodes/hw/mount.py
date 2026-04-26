@@ -1,11 +1,10 @@
-"""MountNode — mounts a formatted partition at a mountpoint."""
+"""MountNode — mounts a formatted partition."""
 
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult, SystemdUnit
 from zeropoint_agent.nodes.hw.format import FormatResult
 
 logger = logging.getLogger(__name__)
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MountResult:
-    """Contract for a mount node. Uses stable ID to mount."""
+    """Contract for a mount node."""
     mountpoint: str
     stable_id: str = ""
     device_path: str = ""
@@ -27,29 +26,25 @@ class MountNode(INode[FormatResult, MountResult]):
         self.mountpoint = mountpoint
         self.options = options
 
-    def resolve(self, input: FormatResult) -> MountResult:
-        logger.info(f"MountNode.resolve() — mounting {input.stable_id} at {self.mountpoint}")
-        return MountResult(mountpoint=self.mountpoint,
-                           stable_id=input.stable_id,
-                           device_path=input.device_path,
-                           options=self.options)
+    def resolve(self, input: FormatResult, mode: ResolveMode) -> NodeResult[MountResult]:
+        result = MountResult(
+            mountpoint=self.mountpoint, stable_id=input.stable_id,
+            device_path=input.device_path, options=self.options)
 
-    def mock_resolve(self, input: FormatResult) -> MountResult:
-        return MountResult(mountpoint=self.mountpoint,
-                           stable_id=input.stable_id,
-                           device_path=input.device_path,
-                           options=self.options)
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(result)
 
-    def verify(self) -> bool:
-        return False
+        # TODO: mount command
+        return NodeResult.pending_reboot(result)
 
-    def remove(self) -> bool:
-        return True
+    def verify(self, mode: ResolveMode) -> NodeResult[MountResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(MountResult(mountpoint=self.mountpoint))
+        # TODO: check /proc/mounts
+        return NodeResult.pending_reboot()
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, f"Mount {self.mountpoint}",
-            parent_ids,
-            exec_start=f"/bin/mount {self.mountpoint}",
-            exec_verify=f"/bin/mountpoint -q {self.mountpoint}",
-        )
+    def remove(self, mode: ResolveMode) -> NodeResult[MountResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success()
+        # TODO: umount
+        return NodeResult.success()

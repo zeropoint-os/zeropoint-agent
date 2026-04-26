@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
-from zeropoint_agent.inode import INode
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 from zeropoint_agent.nodes.user.module import ModuleResult
 
 logger = logging.getLogger(__name__)
@@ -28,18 +28,20 @@ class LinkNode(INode[ModuleResult, LinkResult]):
         self.to_module = to_module
         self.bindings = bindings or {}
 
-    def resolve(self, input: ModuleResult) -> LinkResult:
-        logger.info(f"LinkNode.resolve() — linking {self.from_module} → {self.to_module}")
-        return LinkResult(from_module=self.from_module, to_module=self.to_module,
-                          bindings=self.bindings)
+    def resolve(self, input: ModuleResult, mode: ResolveMode) -> NodeResult[LinkResult]:
+        result = LinkResult(from_module=self.from_module, to_module=self.to_module,
+                            bindings=self.bindings)
+        if mode == ResolveMode.MOCK:
+            result.resolved_bindings = {k: f"mock-{v}" for k, v in self.bindings.items()}
+            return NodeResult.success(result)
+        # TODO: resolve bindings, write tfvars, reapply
+        return NodeResult.pending_reboot(result)
 
-    def mock_resolve(self, input: ModuleResult) -> LinkResult:
-        resolved = {k: f"mock-{v}" for k, v in self.bindings.items()}
-        return LinkResult(from_module=self.from_module, to_module=self.to_module,
-                          bindings=self.bindings, resolved_bindings=resolved)
+    def verify(self, mode: ResolveMode) -> NodeResult[LinkResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(LinkResult(from_module=self.from_module,
+                                                  to_module=self.to_module))
+        return NodeResult.pending_reboot()
 
-    def verify(self) -> bool:
-        return False
-
-    def remove(self) -> bool:
-        return True
+    def remove(self, mode: ResolveMode) -> NodeResult[LinkResult]:
+        return NodeResult.success()

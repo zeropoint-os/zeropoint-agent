@@ -1,11 +1,11 @@
 """DriverNode — installs/verifies kernel drivers."""
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult, SystemdUnit
 
 logger = logging.getLogger(__name__)
 
@@ -19,29 +19,53 @@ class DriverResult:
 
 
 class DriverNode(INode[None, DriverResult]):
-    """Installs/verifies a driver. Emits systemd unit."""
+    """Installs/verifies a driver."""
 
     def __init__(self, driver: str, version: Optional[str] = None):
         self.driver = driver
         self.version = version
 
-    def resolve(self, input: None) -> DriverResult:
-        logger.info(f"DriverNode.resolve() — installing {self.driver}")
-        return DriverResult(driver=self.driver, version=self.version)
+    def _is_loaded(self) -> bool:
+        try:
+            out = subprocess.run(
+                ["lsmod"], capture_output=True, text=True, timeout=5
+            )
+            return self.driver in out.stdout
+        except Exception:
+            return False
 
-    def mock_resolve(self, input: None) -> DriverResult:
-        return DriverResult(driver=self.driver, version=self.version or "535.104",
-                            loaded=True)
+    def resolve(self, input: None, mode: ResolveMode) -> NodeResult[DriverResult]:
+        result = DriverResult(driver=self.driver, version=self.version)
+        if mode == ResolveMode.MOCK:
+            result.loaded = True
+            return NodeResult.success(result)
 
-    def verify(self) -> bool:
-        return False
+        if self._is_loaded():
+            result.loaded = True
+            return NodeResult.success(result)
 
-    def remove(self) -> bool:
-        return True
+        # Driver not loaded — may need install + reboot
+        return (NodeResult
+            .pending_reboot(result)
+            .add_unit(SystemdUnit(
+                name=f"zeropoint-driver-{self.driver}",
+                description=f"Load driver {self.driver}",
+                exec_start=f"/sbin/modprobe {self.driver}",
+            )))
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        cmd = f"/sbin/modprobe {self.driver}"
-        return systemd_unit(
-            node_id, f"Load driver {self.driver}",
-            parent_ids, exec_start=cmd, exec_verify=cmd,
-        )
+    def verify(self, mode: ResolveMode) -> NodeResult[DriverResult]:
+        result = DriverResult(driver=self.driver, version=self.version)
+        if mode == ResolveMode.MOCK:
+            result.loaded = True
+            return NodeResult.success(result)
+
+        result.loaded = self._is_loaded()
+        if result.loaded:
+            return NodeResult.success(result)
+        return NodeResult.pending_reboot(result)
+
+    def remove(self, mode: ResolveMode) -> NodeResult[DriverResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success()
+        # Could rmmod, but usually don't
+        return NodeResult.success()

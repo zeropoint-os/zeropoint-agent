@@ -1,12 +1,13 @@
 """DockerNode — observes Docker daemon state."""
 
 import logging
+import subprocess
+import json
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult, SystemdUnit
 from zeropoint_agent.nodes.system.network import NetworkResult
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
 
 logger = logging.getLogger(__name__)
 
@@ -24,23 +25,47 @@ class DockerNode(INode[NetworkResult, DockerResult]):
     def __init__(self):
         pass
 
-    def resolve(self, input: NetworkResult) -> DockerResult:
-        logger.info("DockerNode.resolve() — probing Docker")
-        return DockerResult()
+    def _probe(self) -> DockerResult:
+        try:
+            out = subprocess.run(
+                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True, text=True, timeout=10
+            )
+            if out.returncode == 0:
+                return DockerResult(running=True, version=out.stdout.strip())
+            return DockerResult(running=False)
+        except Exception as e:
+            logger.debug(f"Docker probe failed: {e}")
+            return DockerResult(running=False)
 
-    def mock_resolve(self, input: NetworkResult) -> DockerResult:
-        return DockerResult(running=True, version="24.0.7")
+    def resolve(self, input: NetworkResult, mode: ResolveMode) -> NodeResult[DockerResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(DockerResult(running=True, version="24.0.7"))
 
-    def verify(self) -> bool:
-        return False
+        result = self._probe()
+        if result.running:
+            return NodeResult.success(result)
+        return NodeResult.failed("Docker daemon not running", result)
 
-    def remove(self) -> bool:
-        return True
+    def verify(self, mode: ResolveMode) -> NodeResult[DockerResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(DockerResult(running=True, version="24.0.7"))
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, "Wait for Docker daemon",
-            parent_ids,
-            exec_start="/usr/bin/docker info",
-            exec_verify="/usr/bin/docker info",
-        )
+        result = self._probe()
+        if result.running:
+            return NodeResult.success(result)
+        return NodeResult.pending_reboot(result)
+
+    def remove(self, mode: ResolveMode) -> NodeResult[DockerResult]:
+        return NodeResult.success()
+
+    def systemd_unit(self, node_id: str, parent_ids: list, operation: str) -> Optional[SystemdUnit]:
+        if operation == "verify":
+            return SystemdUnit(
+                name=f"zeropoint-{node_id}",
+                description="Wait for Docker daemon",
+                exec_start="/usr/bin/docker info",
+                after=["docker.service"] + [f"zeropoint-{p}.service" for p in parent_ids],
+                requires=["docker.service"],
+            )
+        return None

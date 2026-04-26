@@ -1,11 +1,11 @@
 """PathNode — creates a directory on a mounted filesystem."""
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 from zeropoint_agent.nodes.hw.mount import MountResult
 
 logger = logging.getLogger(__name__)
@@ -26,23 +26,27 @@ class PathNode(INode[MountResult, PathResult]):
         self.path = path
         self.mode = mode
 
-    def resolve(self, input: MountResult) -> PathResult:
-        logger.info(f"PathNode.resolve() — mkdir {self.path}")
-        return PathResult(path=self.path, mode=self.mode)
+    def resolve(self, input: MountResult, mode: ResolveMode) -> NodeResult[PathResult]:
+        result = PathResult(path=self.path, mode=self.mode)
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(result)
 
-    def mock_resolve(self, input: MountResult) -> PathResult:
-        return PathResult(path=self.path, mode=self.mode)
+        try:
+            os.makedirs(self.path, mode=int(self.mode, 8), exist_ok=True)
+            return NodeResult.success(result)
+        except Exception as e:
+            return NodeResult.failed(str(e), result)
 
-    def verify(self) -> bool:
-        return False
+    def verify(self, mode: ResolveMode) -> NodeResult[PathResult]:
+        result = PathResult(path=self.path, mode=self.mode)
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(result)
+        if os.path.isdir(self.path):
+            return NodeResult.success(result)
+        return NodeResult.pending_reboot(result)
 
-    def remove(self) -> bool:
-        return True
-
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, f"Create directory {self.path}",
-            parent_ids,
-            exec_start=f"/bin/mkdir -p {self.path}",
-            exec_verify=f"/usr/bin/test -d {self.path}",
-        )
+    def remove(self, mode: ResolveMode) -> NodeResult[PathResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success()
+        # Don't rm -rf from a node
+        return NodeResult.success()

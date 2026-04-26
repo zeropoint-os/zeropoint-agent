@@ -3,17 +3,16 @@
 dag.add() is the compiler — validates I/O types at edge creation.
 dag.resolve() is the runtime — topo-walks and propagates values.
 
-Optionally backed by GraphStore (RyuGraph) for persistence across restarts.
+The executor is a generic NodeResult processor — it doesn't know
+what any node does, just reads the result and does the plumbing.
 """
 
-import json
 import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path as FilePath
 from typing import Any, Dict, List, Optional, get_args
 
-from zeropoint_agent.inode import INode, ResolveMode
-from zeropoint_agent.inode import NodeStatus
+from zeropoint_agent.inode import INode, ResolveMode, NodeStatus, NodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,342 +45,191 @@ class DAG:
     The graph — compiler + runtime.
 
     add() type-checks edges. resolve() propagates values.
-    Optionally persists to RyuGraph via GraphStore.
+    The executor processes NodeResult objects generically.
     """
 
     def __init__(self, store=None):
-        """
-        Args:
-            store: Optional GraphStore for persistence. If None, in-memory only.
-        """
         self._nodes: Dict[str, NodeEntry] = {}
         self._order: List[str] = []
         self._store = store
 
     def add(self, node_id: str, node: INode, parents: Optional[List[str]] = None) -> str:
-        """
-        Add a node to the graph with type-checked edges.
-
-        Args:
-            node_id: Unique identifier for this node
-            node: The INode instance (config = desired state)
-            parents: List of parent node IDs
-
-        Returns:
-            The node_id
-
-        Raises:
-            TypeError: if edge types don't match
-            KeyError: if a parent doesn't exist
-        """
+        """Add a node with type-checked edges."""
         parents = parents or []
         i_type, o_type = _get_io_types(node)
 
-        # Type-check each parent edge
         for parent_id in parents:
             if parent_id not in self._nodes:
                 raise KeyError(f"Parent node not found: {parent_id}")
-
-            parent_entry = self._nodes[parent_id]
-            parent_o = parent_entry.output_type
-
+            parent_o = self._nodes[parent_id].output_type
             if i_type is type(None):
-                raise TypeError(
-                    f"Node {node_id} declares no input (I=None) but has parents"
-                )
+                raise TypeError(f"Node {node_id} declares no input (I=None) but has parents")
             if not issubclass(parent_o, i_type):
                 raise TypeError(
                     f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
-                    f"does not match {node_id}.I ({i_type.__name__})"
-                )
+                    f"does not match {node_id}.I ({i_type.__name__})")
 
-        # Root nodes must have I=None
         if not parents and i_type is not type(None):
-            raise TypeError(
-                f"Root node {node_id} must have I=None, "
-                f"got I={i_type.__name__}"
-            )
+            raise TypeError(f"Root node {node_id} must have I=None, got I={i_type.__name__}")
 
-        entry = NodeEntry(
-            node=node,
-            parents=parents,
-            input_type=i_type,
-            output_type=o_type,
-        )
+        entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
         self._nodes[node_id] = entry
         self._order.append(node_id)
 
-        # Persist to store
         if self._store:
             from zeropoint_agent.graph_store import StoredNode
-            # Extract config from node's __dict__ (constructor params = desired state)
             config = {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
             self._store.add_node(StoredNode(
-                id=node_id,
-                node_type=type(node).__name__,
+                id=node_id, node_type=type(node).__name__,
                 node_class=f"{type(node).__module__}.{type(node).__name__}",
-                config=config,
-            ))
+                config=config))
             for parent_id in parents:
                 self._store.add_edge(parent_id, node_id)
 
-        logger.debug(
-            f"Added {node_id}: {type(node).__name__} "
-            f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}]"
-        )
+        logger.debug(f"Added {node_id}: {type(node).__name__} "
+                     f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}]")
         return node_id
 
     def resolve(self, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
-        """
-        Run the graph — propagate values through I → O edges.
-
-        Args:
-            mode:
-                LIVE     — real verify + real resolve, side effects
-                DRY_RUN  — real verify, skip resolve, no side effects
-                MOCK     — simulated verify + resolve, no side effects
-
-        Returns:
-            Dict of node_id → final status
-        """
+        """Run the graph — propagate values through I → O edges."""
         logger.info(f"Resolving DAG ({len(self._nodes)} nodes, mode={mode.value})")
         results = {}
 
         for node_id in self._order:
             entry = self._nodes[node_id]
-            node = entry.node
-
-            try:
-                # Check if any parent failed/blocked
-                # In dry_run, PENDING parents are OK (they "would change" but have mock output)
-                allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
-                if mode == ResolveMode.DRY_RUN:
-                    allowed.add(NodeStatus.PENDING)
-
-                blocked = False
-                for parent_id in entry.parents:
-                    parent_status = self._nodes[parent_id].status
-                    if parent_status not in allowed:
-                        logger.info(f"Blocking {node_id}: parent {parent_id} is {parent_status.value}")
-                        entry.status = NodeStatus.BLOCKED
-                        blocked = True
-                        break
-
-                if blocked:
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                # Gather input from parent(s)
-                if not entry.parents:
-                    input_val = None
-                elif len(entry.parents) == 1:
-                    input_val = self._nodes[entry.parents[0]].output
-                else:
-                    input_val = self._nodes[entry.parents[0]].output
-
-                # Verify first (real in live/dry_run, simulated in mock)
-                if mode == ResolveMode.MOCK:
-                    converged = node.mock_verify()
-                else:
-                    converged = node.verify()
-
-                if converged:
-                    entry.status = NodeStatus.SUCCESS
-                    logger.info(f"✓ {node_id} — already converged")
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                # Dry run: report what would change, use mock output for propagation
-                if mode == ResolveMode.DRY_RUN:
-                    entry.status = NodeStatus.PENDING
-                    entry.output = node.mock_resolve(input_val)
-                    logger.info(f"~ {node_id} — would change (dry run)")
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                # Resolve (real in live, simulated in mock)
-                entry.status = NodeStatus.RUNNING
-                logger.info(f"Resolving {node_id} ({type(node).__name__})")
-
-                if mode == ResolveMode.MOCK:
-                    output = node.mock_resolve(input_val)
-                else:
-                    output = node.resolve(input_val)
-
-                entry.output = output
-
-                # Post-resolve verify
-                if mode == ResolveMode.MOCK:
-                    post_converged = node.mock_verify()
-                else:
-                    post_converged = node.verify()
-
-                if post_converged:
-                    entry.status = NodeStatus.SUCCESS
-                    logger.info(f"✓ {node_id} — converged")
-                else:
-                    entry.status = NodeStatus.PENDING_REBOOT
-                    logger.info(f"⏳ {node_id} — applied, pending verification")
-
-                    # Emit systemd unit if the node supports it
-                    unit_content = node.systemd_unit(node_id, entry.parents)
-                    if unit_content:
-                        self._write_systemd_unit(node_id, unit_content)
-
-            except Exception as e:
-                logger.error(f"✗ {node_id} — failed: {e}")
-                entry.status = NodeStatus.ERROR
-                entry.error = str(e)
-
-            results[node_id] = entry.status
-            self._persist_status(node_id, entry)
+            result = self._resolve_node(node_id, entry, mode)
+            results[node_id] = result.status
 
         return results
 
+    def resolve_subset(self, node_ids: list, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
+        """Resolve only the specified nodes, in topo order."""
+        results = {}
+        ordered = [nid for nid in self._order if nid in node_ids]
+        for node_id in ordered:
+            entry = self._nodes[node_id]
+            result = self._resolve_node(node_id, entry, mode)
+            results[node_id] = result.status
+        return results
+
+    def _resolve_node(self, node_id: str, entry: NodeEntry, mode: ResolveMode) -> NodeResult:
+        """Resolve a single node — the generic NodeResult processor."""
+        node = entry.node
+
+        try:
+            # Check parents
+            allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
+            if mode == ResolveMode.DRY_RUN:
+                allowed.add(NodeStatus.PENDING)
+
+            for parent_id in entry.parents:
+                parent_status = self._nodes[parent_id].status
+                if parent_status not in allowed:
+                    entry.status = NodeStatus.BLOCKED
+                    self._persist_status(node_id, entry)
+                    r = NodeResult()
+                    r.status = NodeStatus.BLOCKED
+                    return r
+
+            # Gather input
+            if not entry.parents:
+                input_val = None
+            elif len(entry.parents) == 1:
+                input_val = self._nodes[entry.parents[0]].output
+            else:
+                input_val = self._nodes[entry.parents[0]].output
+
+            # Verify first
+            verify_result = node.verify(mode)
+
+            if verify_result.status == NodeStatus.SUCCESS:
+                entry.status = NodeStatus.SUCCESS
+                entry.output = verify_result.output
+                self._persist_status(node_id, entry)
+                logger.info(f"✓ {node_id} — already converged")
+                return verify_result
+
+            # Dry run: report what would change, use mock output for propagation
+            if mode == ResolveMode.DRY_RUN:
+                mock_result = node.resolve(input_val, ResolveMode.MOCK)
+                entry.status = NodeStatus.PENDING
+                entry.output = mock_result.output
+                self._persist_status(node_id, entry)
+                logger.info(f"~ {node_id} — would change (dry run)")
+                r = NodeResult()
+                r.status = NodeStatus.PENDING
+                r.output = mock_result.output
+                return r
+
+            # Resolve
+            entry.status = NodeStatus.RUNNING
+            logger.info(f"Resolving {node_id} ({type(node).__name__})")
+
+            result = node.resolve(input_val, mode)
+
+            # Process the result generically
+            entry.status = result.status
+            entry.output = result.output
+            entry.error = result.error
+
+            # Write systemd units if any (skip in mock mode)
+            if mode != ResolveMode.MOCK:
+                for unit in result.systemd_units:
+                    self._write_systemd_unit(unit)
+
+            self._persist_status(node_id, entry)
+
+            status_icon = {"success": "✓", "pending_reboot": "⏳", "error": "✗"}.get(
+                result.status.value, "?")
+            logger.info(f"{status_icon} {node_id} — {result.status.value}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"✗ {node_id} — failed: {e}")
+            entry.status = NodeStatus.ERROR
+            entry.error = str(e)
+            self._persist_status(node_id, entry)
+            return NodeResult.failed(str(e))
+
     def _persist_status(self, node_id: str, entry: NodeEntry) -> None:
-        """Persist node status and output to store."""
         if not self._store:
             return
         output_dict = None
         if entry.output is not None:
             output_dict = asdict(entry.output) if hasattr(entry.output, "__dataclass_fields__") else None
         self._store.update_status(
-            node_id,
-            status=entry.status.value,
-            output=output_dict,
-            error=entry.error,
-        )
+            node_id, status=entry.status.value,
+            output=output_dict, error=entry.error)
 
-    def resolve_subset(self, node_ids: list, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
-        """Resolve only the specified nodes, in topo order.
-
-        Nodes not in node_ids are skipped but their outputs are still
-        available as inputs to matched nodes.
-        """
-        logger.info(f"Resolving subset ({len(node_ids)} nodes, mode={mode.value})")
-        results = {}
-
-        # Filter to only requested nodes, in topo order
-        ordered = [nid for nid in self._order if nid in node_ids]
-
-        for node_id in ordered:
-            entry = self._nodes[node_id]
-            node = entry.node
-
-            try:
-                # Check parents (any parent, not just matched ones)
-                allowed = {NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT}
-                if mode == ResolveMode.DRY_RUN:
-                    allowed.add(NodeStatus.PENDING)
-
-                blocked = False
-                for parent_id in entry.parents:
-                    parent_status = self._nodes[parent_id].status
-                    if parent_status not in allowed:
-                        entry.status = NodeStatus.BLOCKED
-                        blocked = True
-                        break
-
-                if blocked:
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                # Gather input
-                if not entry.parents:
-                    input_val = None
-                elif len(entry.parents) == 1:
-                    input_val = self._nodes[entry.parents[0]].output
-                else:
-                    input_val = self._nodes[entry.parents[0]].output
-
-                # Verify
-                if mode == ResolveMode.MOCK:
-                    converged = node.mock_verify()
-                else:
-                    converged = node.verify()
-
-                if converged:
-                    entry.status = NodeStatus.SUCCESS
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                if mode == ResolveMode.DRY_RUN:
-                    entry.status = NodeStatus.PENDING
-                    entry.output = node.mock_resolve(input_val)
-                    results[node_id] = entry.status
-                    self._persist_status(node_id, entry)
-                    continue
-
-                # Resolve
-                entry.status = NodeStatus.RUNNING
-                if mode == ResolveMode.MOCK:
-                    output = node.mock_resolve(input_val)
-                else:
-                    output = node.resolve(input_val)
-                entry.output = output
-
-                if mode == ResolveMode.MOCK:
-                    post_converged = node.mock_verify()
-                else:
-                    post_converged = node.verify()
-
-                if post_converged:
-                    entry.status = NodeStatus.SUCCESS
-                else:
-                    entry.status = NodeStatus.PENDING_REBOOT
-                    unit_content = node.systemd_unit(node_id, entry.parents)
-                    if unit_content:
-                        self._write_systemd_unit(node_id, unit_content)
-
-            except Exception as e:
-                logger.error(f"✗ {node_id} — failed: {e}")
-                entry.status = NodeStatus.ERROR
-                entry.error = str(e)
-
-            results[node_id] = entry.status
-            self._persist_status(node_id, entry)
-
-        return results
+    def _write_systemd_unit(self, unit) -> None:
+        """Write a systemd unit file."""
+        unit_dir = FilePath("/etc/systemd/system")
+        unit_path = unit_dir / f"{unit.name}.service"
+        try:
+            unit_path.write_text(unit.render())
+            logger.info(f"Wrote systemd unit: {unit_path}")
+        except PermissionError:
+            logger.debug(f"Would write systemd unit: {unit.name}.service")
+        except Exception as e:
+            logger.warning(f"Failed to write systemd unit {unit.name}: {e}")
 
     def remove(self, node_id: str) -> None:
         """Remove a node from the graph."""
         if node_id in self._nodes:
             del self._nodes[node_id]
             self._order = [nid for nid in self._order if nid != node_id]
-            # Remove as parent from any children
             for entry in self._nodes.values():
                 if node_id in entry.parents:
                     entry.parents.remove(node_id)
-            # Persist
             if self._store:
                 self._store.remove_node(node_id)
-            logger.info(f"Removed node: {node_id}")
         else:
             raise KeyError(f"Node not found: {node_id}")
 
-    def _write_systemd_unit(self, node_id: str, content: str) -> None:
-        """Write a systemd unit file for a deferred node."""
-        unit_dir = FilePath("/etc/systemd/system")
-        unit_path = unit_dir / f"zeropoint-{node_id}.service"
-        try:
-            unit_path.write_text(content)
-            logger.info(f"Wrote systemd unit: {unit_path}")
-        except PermissionError:
-            # In dev/mock mode, log but don't fail
-            logger.debug(f"Would write systemd unit: zeropoint-{node_id}.service")
-        except Exception as e:
-            logger.warning(f"Failed to write systemd unit for {node_id}: {e}")
-
     def get(self, node_id: str) -> NodeEntry:
-        """Get a node entry by ID."""
         return self._nodes[node_id]
 
     @property
     def nodes(self) -> Dict[str, NodeEntry]:
-        """All nodes in the graph."""
         return dict(self._nodes)

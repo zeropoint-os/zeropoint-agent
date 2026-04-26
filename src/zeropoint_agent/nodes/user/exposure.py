@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 from zeropoint_agent.nodes.user.module import ModuleResult
 
 logger = logging.getLogger(__name__)
@@ -34,23 +34,23 @@ class ExposureNode(INode[ModuleResult, ExposureResult]):
         self.path_prefix = path_prefix
         self.description = description
 
-    def resolve(self, input: ModuleResult) -> ExposureResult:
-        logger.info(f"ExposureNode.resolve() — exposing {self.module_id}:{self.port}")
-        return ExposureResult(module_id=self.module_id, port=self.port,
-                              protocol=self.protocol, path_prefix=self.path_prefix,
-                              description=self.description)
-
-    def mock_resolve(self, input: ModuleResult) -> ExposureResult:
-        return ExposureResult(
+    def resolve(self, input: ModuleResult, mode: ResolveMode) -> NodeResult[ExposureResult]:
+        result = ExposureResult(
             module_id=self.module_id, port=self.port,
             protocol=self.protocol, path_prefix=self.path_prefix,
-            description=self.description,
-            route_name=f"mock-route-{self.module_id}",
-            external_url=f"http://localhost/{self.module_id}",
-        )
+            description=self.description)
+        if mode == ResolveMode.MOCK:
+            result.route_name = f"mock-route-{self.module_id}"
+            result.external_url = f"http://localhost/{self.module_id}"
+            return NodeResult.success(result)
+        # TODO: push xDS config
+        return NodeResult.pending_reboot(result)
 
-    def verify(self) -> bool:
-        return False
+    def verify(self, mode: ResolveMode) -> NodeResult[ExposureResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(ExposureResult(
+                module_id=self.module_id, port=self.port))
+        return NodeResult.pending_reboot()
 
-    def remove(self) -> bool:
-        return True
+    def remove(self, mode: ResolveMode) -> NodeResult[ExposureResult]:
+        return NodeResult.success()

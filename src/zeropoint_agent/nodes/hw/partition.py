@@ -4,16 +4,16 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult, SystemdUnit
 from zeropoint_agent.nodes.hw.disk import DiskResult
+from zeropoint_agent.nodes._systemd import AGENT_BIN
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PartitionResult:
-    """Contract for a partition node. Keyed by stable ID (disk-stable-id-partN)."""
+    """Contract for a partition node. Keyed by stable ID."""
     number: int
     size_mb: int
     stable_id: str = ""
@@ -23,42 +23,47 @@ class PartitionResult:
 
 
 class PartitionNode(INode[DiskResult, PartitionResult]):
-    """Creates a partition on a parent disk. Stable ID derived from parent."""
+    """Creates a partition on a parent disk."""
 
     def __init__(self, number: int, size_mb: int, type: str = "83"):
         self.number = number
         self.size_mb = size_mb
         self.type = type
 
-    def resolve(self, input: DiskResult) -> PartitionResult:
+    def resolve(self, input: DiskResult, mode: ResolveMode) -> NodeResult[PartitionResult]:
         stable_id = f"{input.stable_id}-part{self.number}"
-        logger.info(f"PartitionNode.resolve() — partition {self.number} on {input.stable_id}")
-        return PartitionResult(
+        result = PartitionResult(
             number=self.number, size_mb=self.size_mb,
-            stable_id=stable_id,
-            device_path=f"{input.device_path}{self.number}" if input.device_path else "",
-            type=self.type,
-        )
+            stable_id=stable_id, type=self.type)
 
-    def mock_resolve(self, input: DiskResult) -> PartitionResult:
-        stable_id = f"{input.stable_id}-part{self.number}"
-        return PartitionResult(
-            number=self.number, size_mb=self.size_mb,
-            stable_id=stable_id,
-            device_path=f"/dev/disk/by-id/{stable_id}",
-            type=self.type,
-        )
+        if mode == ResolveMode.MOCK:
+            result.device_path = f"/dev/disk/by-id/{stable_id}"
+            return NodeResult.success(result)
 
-    def verify(self) -> bool:
-        return False
+        # TODO: sfdisk to create partition
+        result.device_path = f"{input.device_path}{self.number}" if input.device_path else ""
+        return (NodeResult
+            .pending_reboot(result)
+            .add_unit(SystemdUnit(
+                name=f"zeropoint-part-{self.number}",
+                description=f"Verify partition {self.number}",
+                exec_start=f"{AGENT_BIN} verify-node part-{self.number}",
+            )))
 
-    def remove(self) -> bool:
-        return True
+    def verify(self, mode: ResolveMode) -> NodeResult[PartitionResult]:
+        result = PartitionResult(number=self.number, size_mb=self.size_mb)
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(result)
+        # TODO: check /dev/disk/by-id/{stable_id} exists
+        return NodeResult.pending_reboot(result)
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, f"Create partition {self.number}",
-            parent_ids,
-            exec_start=f"{AGENT_BIN} resolve-node {node_id}",
-            exec_verify=f"{AGENT_BIN} verify-node {node_id}",
-        )
+    def remove(self, mode: ResolveMode) -> NodeResult[PartitionResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success()
+        return (NodeResult
+            .pending_reboot()
+            .add_unit(SystemdUnit(
+                name=f"zeropoint-wipe-part-{self.number}",
+                description=f"Wipe partition {self.number}",
+                exec_start=f"wipefs -a /dev/disk/by-id/TODO",
+            )))

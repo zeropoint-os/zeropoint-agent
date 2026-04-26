@@ -1,11 +1,11 @@
 """DiskNode — discovers/registers a disk by stable ID."""
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
-from zeropoint_agent.inode import INode
-from zeropoint_agent.nodes._systemd import systemd_unit, AGENT_BIN
+from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -26,25 +26,35 @@ class DiskNode(INode[None, DiskResult]):
     def __init__(self, stable_id: str):
         self.stable_id = stable_id
 
-    def resolve(self, input: None) -> DiskResult:
-        logger.info(f"DiskNode.resolve() — discovering {self.stable_id}")
-        return DiskResult(stable_id=self.stable_id)
+    def _probe(self) -> Optional[DiskResult]:
+        by_id = f"/dev/disk/by-id/{self.stable_id}"
+        if os.path.exists(by_id):
+            device_path = os.path.realpath(by_id)
+            return DiskResult(stable_id=self.stable_id, device_path=device_path)
+        return None
 
-    def mock_resolve(self, input: None) -> DiskResult:
-        return DiskResult(stable_id=self.stable_id,
-                          device_path=f"/dev/disk/by-id/{self.stable_id}",
-                          size=1000000000, free=500000000)
+    def resolve(self, input: None, mode: ResolveMode) -> NodeResult[DiskResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(DiskResult(
+                stable_id=self.stable_id,
+                device_path=f"/dev/disk/by-id/{self.stable_id}",
+                size=1000000000, free=500000000))
 
-    def verify(self) -> bool:
-        return False
+        result = self._probe()
+        if result:
+            return NodeResult.success(result)
+        return NodeResult.failed(f"Disk not found: {self.stable_id}")
 
-    def remove(self) -> bool:
-        return True
+    def verify(self, mode: ResolveMode) -> NodeResult[DiskResult]:
+        if mode == ResolveMode.MOCK:
+            return NodeResult.success(DiskResult(
+                stable_id=self.stable_id,
+                device_path=f"/dev/disk/by-id/{self.stable_id}"))
 
-    def systemd_unit(self, node_id: str, parent_ids: list) -> Optional[str]:
-        return systemd_unit(
-            node_id, f"Discover disk {self.stable_id}",
-            parent_ids,
-            exec_start=f"/usr/bin/test -e /dev/disk/by-id/{self.stable_id}",
-            exec_verify=f"/usr/bin/test -e /dev/disk/by-id/{self.stable_id}",
-        )
+        result = self._probe()
+        if result:
+            return NodeResult.success(result)
+        return NodeResult.pending_reboot()
+
+    def remove(self, mode: ResolveMode) -> NodeResult[DiskResult]:
+        return NodeResult.success()

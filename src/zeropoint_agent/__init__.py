@@ -1,6 +1,6 @@
 """Zeropoint Agent — graph-based infrastructure language."""
 
-from .inode import INode, ResolveMode, NodeStatus
+from .inode import INode, ResolveMode, NodeStatus, NodeResult, SystemdUnit
 from .dag import DAG
 
 # Node types — re-exported from nodes package
@@ -18,7 +18,7 @@ from .nodes.config import VarResult
 from .nodes.user import ModuleResult, LinkResult, ExposureResult
 
 __all__ = [
-    "INode", "ResolveMode", "NodeStatus", "DAG",
+    "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
     "NetworkNode", "DockerNode", "DriverNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "PathNode",
     "VarNode",
