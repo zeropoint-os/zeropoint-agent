@@ -24,7 +24,7 @@
                 "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
                 "ZEROPOINT_MODE": "mock"
             },
-            "preLaunchTask": "build-npm"
+            "preLaunchTask": "build-webui"
         },
         {
             "name": "Zeropoint Agent (no WebUI)",

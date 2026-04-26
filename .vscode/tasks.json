@@ -1,45 +1,44 @@
 {
-    // See https://go.microsoft.com/fwlink/?LinkId=733558
-    // for the documentation about the tasks.json format
     "version": "2.0.0",
     "tasks": [
-		{
-			"label": "waitForServer",
-			"type": "shell",
-			"command": "while ! nc -z localhost 2370; do sleep 1; done",
-			"group": "none",
-			"dependsOn": ["npm: build"],
-			"problemMatcher": {
-				"base": "$tsc",
-				"background": {
-					"beginsPattern": ".*",
-					"endsPattern": ".*"
-				}
-			}
-		},
-		{
-			"type": "npm",
-			"script": "build",
+        {
+            "label": "build-webui",
+            "type": "npm",
+            "script": "build",
             "path": "webui",
-			"group": {
-				"kind": "build",
-				"isDefault": true
-			},
-			"problemMatcher": [],
-			"label": "build-npm",
-			"detail": "Run webpack",
-		},
-		{
-			"type": "npm",
-			"script": "watch",
-			"path": "webui",
-			"group": {
-				"kind": "build",
-				"isDefault": false
-			},
-			"problemMatcher": [],
-			"label": "watch-npm",
-			"detail": "Run webpack in watch mode"
-		}
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [],
+            "detail": "Build WebUI with webpack"
+        },
+        {
+            "label": "watch-webui",
+            "type": "npm",
+            "script": "dev",
+            "path": "webui",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "isBackground": true,
+            "problemMatcher": [],
+            "detail": "Watch WebUI with webpack"
+        },
+        {
+            "label": "waitForServer",
+            "type": "shell",
+            "command": "while ! nc -z localhost 2370; do sleep 1; done",
+            "group": "none",
+            "dependsOn": ["build-webui"],
+            "problemMatcher": {
+                "base": "$tsc",
+                "background": {
+                    "beginsPattern": ".*",
+                    "endsPattern": ".*"
+                }
+            }
+        }
     ]
 }
