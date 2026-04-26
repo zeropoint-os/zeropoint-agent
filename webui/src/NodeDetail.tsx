@@ -39,7 +39,7 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                         <div class="detail-field" key={key}>
                             <span class="detail-field-key">{key}</span>
                             <span class={`detail-field-value ${isVarRef(value) ? 'var-ref' : ''}`}>
-                                {formatValue(value)}
+                                {<Value value={value} />}
                             </span>
                         </div>
                     ))}
@@ -52,7 +52,7 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                     {Object.entries(output).map(([key, value]) => (
                         <div class="detail-field" key={key}>
                             <span class="detail-field-key">{key}</span>
-                            <span class="detail-field-value">{formatValue(value)}</span>
+                            <span class="detail-field-value">{<Value value={value} />}</span>
                         </div>
                     ))}
                 </div>
@@ -89,8 +89,41 @@ function isVarRef(value: any): boolean {
     return typeof value === 'string' && value.startsWith('${') && value.endsWith('}');
 }
 
-function formatValue(value: any): string {
-    if (value === null || value === undefined) return '—';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
+function Value({ value }: { value: any }) {
+    if (value === null || value === undefined) return <span>—</span>;
+    if (typeof value === 'boolean') return <span>{value ? 'true' : 'false'}</span>;
+    if (typeof value === 'string' || typeof value === 'number')
+        return <span>{String(value)}</span>;
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) return <span>—</span>;
+        return (
+            <div style="padding-left: 0; margin-top: 4px;">
+                {value.map((item, i) => (
+                    <div key={i} style="padding: 4px 0; border-bottom: 1px solid var(--tile-bg);">
+                        <Value value={item} />
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (typeof value === 'object') {
+        const entries = Object.entries(value).filter(([_, v]) => v !== null && v !== undefined);
+        if (entries.length === 0) return <span>—</span>;
+        return (
+            <div style="margin-top: 4px;">
+                {entries.map(([k, v]) => (
+                    <div class="detail-field" key={k} style="padding: 2px 0;">
+                        <span class="detail-field-key" style="font-size: 12px;">{k}</span>
+                        <span class="detail-field-value" style="font-size: 12px;">
+                            <Value value={v} />
+                        </span>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    return <span>{String(value)}</span>;
 }
