@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.graph_store import GraphStore
+from zeropoint_agent.bootstrap import bootstrap
+from zeropoint_agent.inode import ResolveMode
 from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw
 
 
@@ -82,9 +84,29 @@ def create_app() -> FastAPI:
         app.state.dag = DAG(store=app.state.store)
         logger.info("Graph store initialized")
 
-        # Global resolve mode: ZEROPOINT_MODE=mock|dry_run|live (default: mock)
+        # Global resolve mode
         mode_str = os.environ.get("ZEROPOINT_MODE", "mock")
         app.state.default_mode = mode_str
+        mode = {
+            "live": ResolveMode.LIVE,
+            "dry_run": ResolveMode.DRY_RUN,
+            "mock": ResolveMode.MOCK,
+        }.get(mode_str, ResolveMode.MOCK)
+
+        # Bootstrap: ensure core nodes exist
+        logger.info("Running bootstrap...")
+        actions = bootstrap(app.state.dag, mode)
+        for node_id, action in actions.items():
+            logger.info(f"  {node_id}: {action}")
+
+        # Resolve the graph
+        logger.info(f"Resolving graph (mode={mode_str})...")
+        results = app.state.dag.resolve(mode=mode)
+        summary = {}
+        for s in results.values():
+            summary[s.value] = summary.get(s.value, 0) + 1
+        logger.info(f"Resolve complete: {summary}")
+
         logger.info(f"Default resolve mode: {mode_str}")
 
         webui_dist = Path("webui/dist")
