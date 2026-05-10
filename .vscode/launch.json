@@ -26,7 +26,10 @@
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
             },
-            "preLaunchTask": "build-webui"
+            "preLaunchTask": "build-webui",
+            "args": [
+                "serve"
+            ]
         },
         {
             "name": "Zeropoint Agent (no WebUI)",
@@ -42,7 +45,10 @@
                 "ZEROPOINT_MODE": "live",
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
-            }
+            },
+            "args": [
+                "serve"
+            ]
         },
         {
             "name": "WebUI",
