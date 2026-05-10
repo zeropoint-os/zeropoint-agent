@@ -38,8 +38,8 @@
 	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0",
 	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && pip install -e . && npm install --prefix webui",
 	"containerEnv": {
-		"ZP_MODULE_STORAGE": "/workspaces/zeropoint-agent/data/modules",
-		"ZP_MARKER_DIR": "/workspaces/zeropoint-agent/data/markers"
+		"ZP_MODULE_STORAGE": "${containerWorkspaceFolder}/modules",
+		"ZP_MARKER_DIR": "${containerWorkspaceFolder}/markers"
 	},
 	"mounts": [
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
