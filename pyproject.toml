@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeropoint-agent"
+version = "2.0.0"
+description = "Graph-based infrastructure management agent"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "ryugraph>=25.9.0",
+    "GitPython>=3.1.30",
+    "networkx>=3.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "playwright>=1.58.0",
+]
+
+[project.scripts]
+zeropoint-agent = "zeropoint_agent.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
