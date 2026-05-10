@@ -61,14 +61,20 @@ class DAG:
         if node_id in self._nodes:
             return node_id
 
-        # Already in store (from previous run) — skip
+        # Already in store (from previous run) — restore with persisted status
         if self._store and self._store.has_node(node_id):
-            # Re-add to in-memory graph without persisting
             i_type, o_type = _get_io_types(node)
             entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
+            # Restore persisted status
+            stored = self._store.get_node(node_id)
+            if stored:
+                try:
+                    entry.status = NodeStatus(stored.status)
+                except ValueError:
+                    pass
             self._nodes[node_id] = entry
             self._order.append(node_id)
-            logger.debug(f"Loaded {node_id} from store")
+            logger.debug(f"Loaded {node_id} from store (status={entry.status.value})")
             return node_id
 
         i_type, o_type = _get_io_types(node)
