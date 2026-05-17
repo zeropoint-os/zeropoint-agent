@@ -19,20 +19,6 @@ function findRoots(nodes: DagNode[], edges: DagEdge[]): string[] {
     return nodes.filter(n => !hasParent.has(n.id)).map(n => n.id);
 }
 
-function buildPath(targetId: string, edges: DagEdge[]): string[] {
-    const parentMap = new Map<string, string>();
-    for (const e of edges) {
-        if (!parentMap.has(e.target)) parentMap.set(e.target, e.source);
-    }
-    const path: string[] = [];
-    let current: string | undefined = targetId;
-    while (current) {
-        path.unshift(current);
-        current = parentMap.get(current);
-    }
-    return path;
-}
-
 export function App() {
     const [nodes, setNodes] = useState<DagNode[]>([]);
     const [edges, setEdges] = useState<DagEdge[]>([]);
@@ -43,13 +29,19 @@ export function App() {
         return window.matchMedia('(prefers-color-scheme: dark)').matches;
     });
 
-    // Hash-based routing: read node ID from URL hash
+    // Navigation stack — the path the user actually walked through. This is
+    // the source of truth for the breadcrumb. It is NOT derived from edges
+    // (which would pick arbitrary parents when a node has multiple).
     const getHashId = (): string | null => {
         const hash = window.location.hash.replace(/^#\/?/, '');
         return hash || null;
     };
 
-    const [currentId, setCurrentId] = useState<string | null>(getHashId);
+    const [navStack, setNavStack] = useState<string[]>(() => {
+        const id = getHashId();
+        return id ? [id] : [];
+    });
+    const currentId = navStack.length > 0 ? navStack[navStack.length - 1] : null;
 
     // Apply theme
     useEffect(() => {
@@ -57,16 +49,45 @@ export function App() {
         localStorage.setItem('zp-theme', isDark ? 'dark' : 'light');
     }, [isDark]);
 
-    // Sync hash → state on popstate (back/forward)
+    // Sync hash → state on popstate (back/forward, deep link)
     useEffect(() => {
-        const onHashChange = () => setCurrentId(getHashId());
+        const onHashChange = () => {
+            const id = getHashId();
+            setNavStack(stack => {
+                if (id === null) return [];
+                // If the id is already in the stack, slice to it (back navigation).
+                const idx = stack.indexOf(id);
+                if (idx >= 0) return stack.slice(0, idx + 1);
+                // Otherwise treat as a deep link — start a fresh stack with just this id.
+                return [id];
+            });
+        };
         window.addEventListener('hashchange', onHashChange);
         return () => window.removeEventListener('hashchange', onHashChange);
     }, []);
 
+    // Navigate forward (push) or back (slice). Updates hash; hashchange
+    // listener keeps the stack in sync.
     const navigate = (id: string | null) => {
-        setCurrentId(id);
-        window.location.hash = id ? `/${id}` : '/';
+        setNavStack(stack => {
+            let next: string[];
+            if (id === null) {
+                next = [];
+            } else {
+                const idx = stack.indexOf(id);
+                if (idx >= 0) {
+                    next = stack.slice(0, idx + 1);
+                } else {
+                    next = [...stack, id];
+                }
+            }
+            // Keep hash in sync.
+            const newHash = next.length > 0 ? `/${next[next.length - 1]}` : '/';
+            if (window.location.hash !== `#${newHash}`) {
+                window.location.hash = newHash;
+            }
+            return next;
+        });
     };
 
     const load = async () => {
@@ -92,14 +113,13 @@ export function App() {
     const current = currentId ? nodeMap.get(currentId) || null : null;
     const isHome = currentId === null;
 
-    // Pivot path
-    const pivotPath = currentId ? buildPath(currentId, edges) : [];
+    // Pivot path = the user's navigation stack (no graph traversal).
+    const pivotPath = navStack;
 
-    // Siblings at current level
-    const currentParents = edges.filter(e => e.target === currentId).map(e => e.source);
-    const siblings = currentParents.length > 0
-        ? (cm.get(currentParents[0]) || [])
-        : roots;
+    // Siblings at current level — children of the previous navigation step
+    // (or roots if we're at the top of the stack).
+    const previousId = navStack.length >= 2 ? navStack[navStack.length - 2] : null;
+    const siblings = previousId ? (cm.get(previousId) || []) : roots;
 
     const handleResolve = async () => {
         const mode = health?.mode || 'mock';
@@ -156,7 +176,8 @@ export function App() {
                 {Object.entries(statusSummary).map(([s, c]) => `${c} ${s.replace('_', ' ')}`).join(' · ')}
             </div>
 
-            {/* Pivot — home or path through graph */}
+            {/* Pivot — the user's navigation stack (push on click-into,
+                slice on click-on-crumb). Not derived from the graph. */}
             <div class="pivot">
                 <button
                     class={`pivot-tab ${isHome ? 'active' : ''}`}
@@ -164,27 +185,38 @@ export function App() {
                 >
                     home
                 </button>
-                {pivotPath.map(id => (
-                    <button
-                        key={id}
-                        class={`pivot-tab ${id === currentId ? 'active' : ''}`}
-                        onClick={() => navigate(id)}
-                    >
-                        {id}
-                    </button>
-                ))}
-                {/* Siblings not in path */}
-                {!isHome && siblings
-                    .filter(id => id !== currentId && !pivotPath.includes(id))
-                    .map(id => (
+                {pivotPath.map((id, i) => {
+                    const prev = i > 0 ? pivotPath[i - 1] : null;
+                    const label = prev && id.startsWith(prev + '/')
+                        ? id.slice(prev.length + 1)
+                        : id;
+                    return (
                         <button
                             key={id}
-                            class="pivot-tab"
+                            class={`pivot-tab ${id === currentId ? 'active' : ''}`}
                             onClick={() => navigate(id)}
                         >
-                            {id}
+                            {label}
                         </button>
-                    ))}
+                    );
+                })}
+                {/* Siblings of the current node, not yet visited. */}
+                {!isHome && siblings
+                    .filter(id => id !== currentId && !pivotPath.includes(id))
+                    .map(id => {
+                        const label = previousId && id.startsWith(previousId + '/')
+                            ? id.slice(previousId.length + 1)
+                            : id;
+                        return (
+                            <button
+                                key={id}
+                                class="pivot-tab"
+                                onClick={() => navigate(id)}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
             </div>
 
             <div class="content">
