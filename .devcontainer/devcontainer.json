@@ -45,7 +45,9 @@
 		"source=/dev,target=/dev,type=bind,consistency=consistent"
 	],
 	"runArgs": [
-		"--gpus", "all"
+		"--privileged",
+		"--gpus", "all",
+		"--runtime", "nvidia"
 	],
 	"forwardPorts": [2370],
 	"portsAttributes": {
