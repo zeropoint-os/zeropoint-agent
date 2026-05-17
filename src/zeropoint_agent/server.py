@@ -11,9 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.graph_store import GraphStore
-from zeropoint_agent.bootstrap import bootstrap
 from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw
+from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules
 
 
 class _ColoredFormatter(logging.Formatter):
@@ -72,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(query.router)
     app.include_router(mutations.router)
     app.include_router(hw.router)
+    app.include_router(modules.router)
 
     @app.on_event("startup")
     def _init():
@@ -81,32 +81,14 @@ def create_app() -> FastAPI:
         db_path = str(data_dir / "graph.db")
         logger.info(f"Initializing graph store at {db_path}")
         app.state.store = GraphStore(db_path)
+        # DAG.__init__ rehydrates persisted nodes from the store.
         app.state.dag = DAG(store=app.state.store)
-        logger.info("Graph store initialized")
+        logger.info("Graph store initialized (%d nodes loaded)",
+                    len(app.state.dag.nodes))
 
-        # Global resolve mode
+        # Default resolve mode used by endpoints that don't override.
         mode_str = os.environ.get("ZEROPOINT_MODE", "mock")
         app.state.default_mode = mode_str
-        mode = {
-            "live": ResolveMode.LIVE,
-            "dry_run": ResolveMode.DRY_RUN,
-            "mock": ResolveMode.MOCK,
-        }.get(mode_str, ResolveMode.MOCK)
-
-        # Bootstrap: ensure core nodes exist
-        logger.info("Running bootstrap...")
-        actions = bootstrap(app.state.dag, mode)
-        for node_id, action in actions.items():
-            logger.info(f"  {node_id}: {action}")
-
-        # Resolve the graph
-        logger.info(f"Resolving graph (mode={mode_str})...")
-        results = app.state.dag.resolve(mode=mode)
-        summary = {}
-        for s in results.values():
-            summary[s.value] = summary.get(s.value, 0) + 1
-        logger.info(f"Resolve complete: {summary}")
-
         logger.info(f"Default resolve mode: {mode_str}")
 
         webui_dist = Path("webui/dist")

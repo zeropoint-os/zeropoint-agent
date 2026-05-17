@@ -52,13 +52,16 @@ class ShellScriptNode(INode[None, ShellScriptResult]):
     """
 
     # Allow any input type — ShellScriptNode is flexible
-    def __init__(self, exec: str, verify: str = "/bin/true",
+    def __init__(self, exec_cmd: str = "", verify_cmd: str = "/bin/true",
                  description: str = "", timeout: int = 300,
                  marker: Optional[str] = None,
-                 env: Optional[Dict[str, str]] = None):
-        self.exec_cmd = exec
-        self.verify_cmd = verify
-        self.description = description or exec
+                 env: Optional[Dict[str, str]] = None,
+                 # Legacy keyword aliases for backward compatibility:
+                 exec: Optional[str] = None,
+                 verify: Optional[str] = None):
+        self.exec_cmd = exec if exec is not None else exec_cmd
+        self.verify_cmd = verify if verify is not None else verify_cmd
+        self.description = description or self.exec_cmd
         self.timeout = timeout
         self.marker = marker
         self.env = env or {}

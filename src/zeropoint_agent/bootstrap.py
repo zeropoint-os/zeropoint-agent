@@ -10,7 +10,10 @@ This IS the boot process. There's no separate boot command.
 
 import os
 import logging
+import platform
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 from zeropoint_agent.dag import DAG
@@ -23,6 +26,45 @@ from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.core.shell_script import ShellScriptNode
 
 logger = logging.getLogger(__name__)
+
+
+def _detect_arch() -> str:
+    m = platform.machine().lower()
+    if m in ("x86_64", "amd64"):
+        return "amd64"
+    if m in ("aarch64", "arm64"):
+        return "arm64"
+    return m
+
+
+def _detect_gpu_vendor() -> str:
+    # Try nvidia-smi (works when the toolkit is installed; cheap probe)
+    if shutil.which("nvidia-smi"):
+        try:
+            r = subprocess.run(["nvidia-smi", "-L"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                return "nvidia"
+        except Exception:
+            pass
+    # Device node fallbacks (work in containers without /usr/bin/lspci)
+    if any(Path("/dev").glob("nvidia*")):
+        return "nvidia"
+    if Path("/dev/kfd").exists():
+        return "amd"
+    # Last resort: lspci if available
+    if shutil.which("lspci"):
+        try:
+            out = subprocess.run(["lspci"], capture_output=True, text=True, timeout=5)
+            if out.returncode == 0:
+                text = out.stdout.lower()
+                if "nvidia" in text:
+                    return "nvidia"
+                if "amd/ati" in text or "advanced micro devices" in text:
+                    return "amd"
+        except Exception:
+            pass
+    return ""
 
 
 def detect_default_interface() -> str:
@@ -112,10 +154,17 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
 
 
 
-    # --- Storage ---
+    # --- System VarNodes (zp_*) ---
+    # All zp_* are system-managed VarNodes that modules wire to by name.
+    # Global ones live in the bootstrap graph; per-module ones (zp_module_id,
+    # zp_network_name) are created by module-add.
+
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
-    add("module-storage", VarNode(name="ZP_MODULE_STORAGE", value=storage_path))
+    add("module-storage", VarNode(name="zp_module_storage", value=storage_path))
     os.makedirs(storage_path, exist_ok=True)
+
+    add("zp-arch", VarNode(name="zp_arch", value=_detect_arch()))
+    add("zp-gpu-vendor", VarNode(name="zp_gpu_vendor", value=_detect_gpu_vendor()))
 
     # --- Marker directory ---
     marker_dir = os.environ.get("ZP_MARKER_DIR", "/etc/zeropoint")

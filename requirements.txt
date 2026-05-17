@@ -4,3 +4,6 @@ ryugraph>=25.9.0
 GitPython>=3.1.30
 networkx>=3.0
 playwright>=1.58.0
+python-hcl2>=4.3.0
+docker>=7.0.0
+click>=8.1.0

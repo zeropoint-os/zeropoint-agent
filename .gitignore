@@ -239,6 +239,7 @@ tmp/
 
 # Ignore our data folder
 data/
+modules/
 
 # Ignore logs
 logs/

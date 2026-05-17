@@ -230,3 +230,58 @@ def add(node_type, node_id, config, parent):
     except Exception as e:
         click.echo(f"Failed: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command("module-add")
+@click.argument("module_id")
+@click.argument("source")
+@click.option("--var", "-v", multiple=True,
+              help="Override a default for an auto-created VarNode (key=value).")
+@click.option("--resolve/--no-resolve", default=False,
+              help="Resolve the new module immediately after adding.")
+def module_add(module_id, source, var, resolve):
+    """Add a Terraform module to the graph.
+
+    SOURCE must be a git URL with @<40-char-commit-sha>.
+    """
+    from zeropoint_agent.module_installer import add_module
+
+    overrides = {}
+    for kv in var:
+        if "=" not in kv:
+            click.echo(f"Invalid --var: {kv} (expected key=value)", err=True)
+            sys.exit(1)
+        k, v = kv.split("=", 1)
+        overrides[k] = v
+
+    store, dag = _get_store_and_dag()
+    mode = _get_mode()
+    bootstrap(dag, mode)
+
+    try:
+        result = add_module(dag, module_id, source, overrides=overrides)
+    except Exception as e:
+        click.echo(f"Failed: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Added module {result.module_node_id}")
+    if result.wired_existing_nodes:
+        click.echo(f"  wired:        {', '.join(sorted(set(result.wired_existing_nodes)))}")
+    if result.created_var_nodes:
+        click.echo(f"  created vars: {', '.join(result.created_var_nodes)}")
+
+    if resolve:
+        click.echo(f"\nResolving {module_id} (mode={mode.value})...")
+        targets = list(dict.fromkeys(
+            result.created_var_nodes
+            + result.wired_existing_nodes
+            + [module_id]
+        ))
+        results = dag.resolve_subset(targets, mode=mode)
+        for nid in targets:
+            s = results.get(nid)
+            if s is None:
+                continue
+            icon = STATUS_ICONS.get(s.value, "?")
+            color = STATUS_COLORS.get(s.value, "white")
+            click.echo(f"  {click.style(icon, fg=color)} {nid:30s} {s.value}")

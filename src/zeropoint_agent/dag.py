@@ -52,6 +52,61 @@ class DAG:
         self._nodes: Dict[str, NodeEntry] = {}
         self._order: List[str] = []
         self._store = store
+        if store is not None:
+            self._load_from_store()
+
+    def _load_from_store(self) -> None:
+        """Instantiate and add every node persisted in the store.
+
+        Walks the store in topological order so each node's parents are
+        already present when it's added. Uses dag.add() so the per-node
+        type checks + status restoration paths run identically to a fresh
+        bootstrap.
+        """
+        import importlib
+
+        try:
+            all_nodes = self._store.get_all_nodes()
+        except Exception as e:
+            logger.warning("failed to enumerate stored nodes: %s", e)
+            return
+        if not all_nodes:
+            return
+
+        by_id = {n.id: n for n in all_nodes}
+        parents_of = {nid: self._store.get_parents(nid) for nid in by_id}
+
+        # Kahn-style topological sort.
+        in_degree = {nid: len(parents_of[nid]) for nid in by_id}
+        ready = [nid for nid, d in in_degree.items() if d == 0]
+        order: List[str] = []
+        while ready:
+            ready.sort()  # deterministic
+            nid = ready.pop(0)
+            order.append(nid)
+            for cid in self._store.get_children(nid):
+                if cid not in in_degree:
+                    continue
+                in_degree[cid] -= 1
+                if in_degree[cid] == 0:
+                    ready.append(cid)
+        if len(order) < len(by_id):
+            # Cycle or missing parent — fall back to insertion order.
+            order = [nid for nid in by_id if nid not in order]
+            logger.warning(
+                "graph store has %d unreachable nodes (cycle?)", len(order))
+
+        for nid in order:
+            stored = by_id[nid]
+            try:
+                module_name, _, cls_name = stored.node_class.rpartition(".")
+                cls = getattr(importlib.import_module(module_name), cls_name)
+                node = cls(**(stored.config or {}))
+                self.add(nid, node, parents=parents_of[nid])
+            except Exception as e:
+                logger.warning(
+                    "failed to load node %s (%s): %s",
+                    nid, stored.node_class, e)
 
     def add(self, node_id: str, node: INode, parents: Optional[List[str]] = None) -> str:
         """Add a node with type-checked edges. Skips if already in graph or store."""
@@ -83,12 +138,24 @@ class DAG:
             if parent_id not in self._nodes:
                 raise KeyError(f"Parent node not found: {parent_id}")
             parent_o = self._nodes[parent_id].output_type
-            # I=None or I=object means "don't care about input type" — skip check
-            if i_type is not type(None) and i_type is not object:
-                if not issubclass(parent_o, i_type):
-                    raise TypeError(
-                        f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
-                        f"does not match {node_id}.I ({i_type.__name__})")
+            # I=None, I=object, or I=Any means "don't care about input type" — skip check
+            if i_type is type(None) or i_type is object:
+                continue
+            try:
+                from typing import Any as _Any
+                if i_type is _Any:
+                    continue
+            except Exception:
+                pass
+            try:
+                matches = issubclass(parent_o, i_type)
+            except TypeError:
+                # Non-class type annotation (Union, etc.) — don't enforce
+                continue
+            if not matches:
+                raise TypeError(
+                    f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
+                    f"does not match {node_id}.I ({i_type.__name__})")
 
         # Root nodes: I=None or I=object are valid without parents.
         # Other typed inputs are also OK as roots (no parent means resolve
