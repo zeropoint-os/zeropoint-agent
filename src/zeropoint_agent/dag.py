@@ -38,6 +38,9 @@ class NodeEntry:
     error: Optional[str] = None
     input_type: type = type(None)
     output_type: type = type(None)
+    # Cached path derived from namespace ancestry. "" if not under a namespace.
+    # Computed at add() time; kept in sync if the namespace tree changes.
+    path: str = ""
 
 
 class DAG:
@@ -127,9 +130,11 @@ class DAG:
                     entry.status = NodeStatus(stored.status)
                 except ValueError:
                     pass
+            entry.path = self._compute_path(node, parents)
             self._nodes[node_id] = entry
             self._order.append(node_id)
-            logger.debug(f"Loaded {node_id} from store (status={entry.status.value})")
+            logger.debug(f"Loaded {node_id} from store (status={entry.status.value}, "
+                         f"path={entry.path!r})")
             return node_id
 
         i_type, o_type = _get_io_types(node)
@@ -162,6 +167,7 @@ class DAG:
         # gets None as input, node handles it).
 
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
+        entry.path = self._compute_path(node, parents)
         self._nodes[node_id] = entry
         self._order.append(node_id)
 
@@ -176,8 +182,33 @@ class DAG:
                 self._store.add_edge(parent_id, node_id)
 
         logger.debug(f"Added {node_id}: {type(node).__name__} "
-                     f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}]")
+                     f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}] "
+                     f"path={entry.path!r}")
         return node_id
+
+    def _compute_path(self, node: INode, parents: List[str]) -> str:
+        """Compute a node's path from its NamespaceNode parents.
+
+        - If `node` is itself a NamespaceNode, the path is
+          `<namespace-parent's path>/<self.name>` (or just `self.name` for root).
+        - Otherwise, the path is the path of the (at most one) NamespaceNode parent.
+        """
+        from zeropoint_agent.nodes.config.namespace import NamespaceNode
+
+        ns_parent_paths = [
+            self._nodes[pid].path
+            for pid in parents
+            if isinstance(self._nodes[pid].node, NamespaceNode)
+        ]
+        if len(ns_parent_paths) > 1:
+            raise ValueError(
+                f"node has more than one NamespaceNode parent: {parents}")
+        inherited = ns_parent_paths[0] if ns_parent_paths else ""
+
+        if isinstance(node, NamespaceNode):
+            name = getattr(node, "name", "")
+            return f"{inherited}/{name}" if inherited else name
+        return inherited
 
     def resolve(self, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
         """Run the graph — propagate values through I → O edges."""

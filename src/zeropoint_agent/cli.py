@@ -264,18 +264,18 @@ def module_add(module_id, source, var, resolve):
         click.echo(f"Failed: {e}", err=True)
         sys.exit(1)
 
-    click.echo(f"Added module {result.module_node_id}")
+    click.echo(f"Added module {result.module_id} at {result.namespace_id}")
+    click.echo(f"  terraform:    {result.terraform_id}")
     if result.wired_existing_nodes:
         click.echo(f"  wired:        {', '.join(sorted(set(result.wired_existing_nodes)))}")
     if result.created_var_nodes:
-        click.echo(f"  created vars: {', '.join(result.created_var_nodes)}")
+        click.echo(f"  created:      {', '.join(result.created_var_nodes)}")
 
     if resolve:
-        click.echo(f"\nResolving {module_id} (mode={mode.value})...")
+        click.echo(f"\nResolving {result.namespace_id} (mode={mode.value})...")
         targets = list(dict.fromkeys(
             result.created_var_nodes
-            + result.wired_existing_nodes
-            + [module_id]
+            + list(set(result.wired_existing_nodes))
         ))
         results = dag.resolve_subset(targets, mode=mode)
         for nid in targets:
@@ -284,4 +284,4 @@ def module_add(module_id, source, var, resolve):
                 continue
             icon = STATUS_ICONS.get(s.value, "?")
             color = STATUS_COLORS.get(s.value, "white")
-            click.echo(f"  {click.style(icon, fg=color)} {nid:30s} {s.value}")
+            click.echo(f"  {click.style(icon, fg=color)} {nid:50s} {s.value}")

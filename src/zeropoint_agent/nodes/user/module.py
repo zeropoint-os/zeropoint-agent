@@ -1,18 +1,19 @@
-"""ModuleNode — installs a Terraform-managed containerized module.
+"""TerraformNode — installs a Terraform-managed containerized module.
 
 Port of internal/modules/installer.go.
 
-Configuration shape:
-  - Stored on the node: module_id, source (git URL with @SHA), module_dir
-  - Everything else comes from VarNode parents at resolve time.
+This node is purely the *terraform runner*. It has no constructor-level
+config beyond the git source URL. Everything else (module_id, network
+name, storage path, user vars) flows in from VarNode parents.
 
-The DAG executor delivers parents as:
-  - None (no parents)             — error
-  - VarResult (one parent)        — single var (rare for modules)
-  - dict[parent_id, VarResult]    — many vars (typical)
+The DAG executor delivers parents as a dict {parent_id: parent_output}
+because TerraformNode always has multiple parents:
+  - its enclosing NamespaceNode (provides path)
+  - the per-module/system VarNodes (provide tfvars)
 
-ModuleNode flattens all VarResult parents into a single tfvars dict keyed
-by VarResult.name, then adds intrinsic zp_* vars derived from itself.
+TerraformNode flattens VarResult parents into a single tfvars dict
+keyed by VarResult.name. NamespaceResult parents are ignored at the
+tfvars level (they're only there for path/structure).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import Any, Dict, Optional
 
 from zeropoint_agent.inode import INode, NodeResult, ResolveMode
 from zeropoint_agent.nodes.config.var import VarResult
+from zeropoint_agent.nodes.config.namespace import NamespaceResult
 from zeropoint_agent.terraform import TerraformError, TerraformExecutor
 
 logger = logging.getLogger(__name__)
@@ -46,15 +48,19 @@ class ContainerInfo:
 
 
 @dataclass
-class ModuleResult:
-    """Contract for a module node."""
-    module_id: str
+class TerraformResult:
+    """Contract for a TerraformNode."""
     source: str
+    module_id: str = ""
     module_dir: str = ""
     network_name: str = ""
     variables: Dict[str, str] = field(default_factory=dict)
     main: Optional[str] = None
     containers: Dict[str, ContainerInfo] = field(default_factory=dict)
+
+
+# Back-compat alias for the old name; remove once nothing imports it.
+ModuleResult = TerraformResult
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +81,10 @@ def _parse_git_source(source: str) -> tuple[str, str]:
 
 
 def _flatten_inputs(input_val: Any) -> Dict[str, str]:
-    """Convert executor input into {var_name: var_value} dict."""
+    """Convert executor input into {var_name: var_value} dict.
+
+    NamespaceResult entries are ignored (they're for path, not tfvars).
+    """
     if input_val is None:
         return {}
     if isinstance(input_val, VarResult):
@@ -99,7 +108,6 @@ def _ensure_network(name: str) -> None:
             client.networks.create(name, driver="bridge")
             logger.info("created docker network %s", name)
     except Exception as e:
-        # Fallback to CLI if docker SDK isn't usable
         check = subprocess.run(
             ["docker", "network", "inspect", name],
             capture_output=True, text=True)
@@ -138,7 +146,6 @@ def _git_clone_at_sha(url: str, sha: str, target: Path) -> None:
 
 
 def _docker_inspect(name: str) -> Dict[str, Any]:
-    """Return docker inspect output for a container, or {} if missing."""
     try:
         import docker  # type: ignore
         c = docker.from_env().containers.get(name)
@@ -167,69 +174,46 @@ def _extract_container_ip(inspect: Dict[str, Any]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# ModuleNode
+# TerraformNode
 # ---------------------------------------------------------------------------
 
-class ModuleNode(INode[Any, ModuleResult]):
-    """Terraform-managed module installation.
+class TerraformNode(INode[Any, TerraformResult]):
+    """A terraform-managed module install.
 
-    Inputs (from VarNode parents) become terraform variables. Required
-    parents are the system VarNodes (``zp_module_storage``, ``zp_arch``,
-    ``zp_gpu_vendor``, ``zp_module_id``, ``zp_network_name``) plus any
-    user-defined VarNodes for module-specific config.
-
-    Required outputs from the module:
-      - ``main``                — name of the primary container
-      - ``<container>_ports``   — port mapping for each container (at least one)
-
-    Optional outputs:
-      - ``<container>_mounts``  — volume mappings
+    Carries only the git source URL. Everything else is read from
+    VarNode parents at resolve time.
     """
 
-    # I/O contract: accept anything (dict of VarResults, or single VarResult),
-    # produce ModuleResult.
-
-    def __init__(self, module_id: str, source: str):
-        self.module_id = module_id
+    def __init__(self, source: str):
         self.source = source
 
-    # ---- helpers --------------------------------------------------------
-
-    @property
-    def network_name(self) -> str:
-        """Fallback network name if no zp_network_name parent VarNode is wired."""
-        return f"zeropoint-module-{self.module_id}"
+    def _required(self, tfvars: Dict[str, str], key: str) -> str:
+        v = tfvars.get(key)
+        if not v:
+            raise RuntimeError(
+                f"required system var {key!r} not provided "
+                f"(expected a VarNode parent with this name)")
+        return v
 
     def _module_dir(self, tfvars: Dict[str, str]) -> Path:
-        storage = tfvars.get("zp_module_storage")
-        if not storage:
-            raise RuntimeError(
-                "module storage path not provided "
-                "(expected VarNode named 'zp_module_storage' as parent)")
-        return Path(storage) / self.module_id
-
-    def _build_tfvars(self, input_val: Any) -> Dict[str, str]:
-        """All terraform variables come from VarNode parents — no injection."""
-        return _flatten_inputs(input_val)
+        storage = self._required(tfvars, "zp_module_storage")
+        module_id = self._required(tfvars, "zp_module_id")
+        return Path(storage) / module_id
 
     def _build_result(self, tfvars: Dict[str, str],
-                      outputs: Dict[str, dict],
-                      network_name: str) -> ModuleResult:
-        module_dir = str(self._module_dir(tfvars))
-        result = ModuleResult(
-            module_id=self.module_id,
+                      outputs: Dict[str, dict]) -> TerraformResult:
+        result = TerraformResult(
             source=self.source,
-            module_dir=module_dir,
-            network_name=network_name,
+            module_id=self._required(tfvars, "zp_module_id"),
+            module_dir=str(self._module_dir(tfvars)),
+            network_name=self._required(tfvars, "zp_network_name"),
             variables=dict(tfvars),
         )
 
-        # Required: 'main'
         main_out = outputs.get("main", {})
         if main_out and "value" in main_out:
             result.main = str(main_out["value"])
 
-        # Collect container metadata from {name}_ports / {name}_mounts.
         containers: Dict[str, ContainerInfo] = {}
         for key, meta in outputs.items():
             val = meta.get("value")
@@ -244,7 +228,6 @@ class ModuleNode(INode[Any, ModuleResult]):
                 if isinstance(val, dict):
                     ci.mounts = val
 
-        # Probe docker for live container state.
         for cname, ci in containers.items():
             inspect = _docker_inspect(cname)
             if inspect:
@@ -254,20 +237,21 @@ class ModuleNode(INode[Any, ModuleResult]):
         result.containers = containers
         return result
 
-    # ---- INode API ------------------------------------------------------
+    def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[TerraformResult]:
+        tfvars = _flatten_inputs(input)
 
-    def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[ModuleResult]:
         if mode == ResolveMode.MOCK:
-            mock = ModuleResult(
-                module_id=self.module_id,
+            module_id = tfvars.get("zp_module_id", "mock-module")
+            mock = TerraformResult(
                 source=self.source,
-                module_dir=f"/mock/{self.module_id}",
-                network_name=self.network_name,
-                variables=_flatten_inputs(input),
-                main=f"{self.module_id}-main",
+                module_id=module_id,
+                module_dir=f"/mock/{module_id}",
+                network_name=tfvars.get("zp_network_name", f"zeropoint-module-{module_id}"),
+                variables=tfvars,
+                main=f"{module_id}-main",
                 containers={
-                    f"{self.module_id}-main": ContainerInfo(
-                        name=f"{self.module_id}-main",
+                    f"{module_id}-main": ContainerInfo(
+                        name=f"{module_id}-main",
                         ports={"http": 8080},
                         ip="172.17.0.42",
                         state="running",
@@ -278,20 +262,15 @@ class ModuleNode(INode[Any, ModuleResult]):
 
         try:
             url, sha = _parse_git_source(self.source)
-            tfvars = self._build_tfvars(input)
             module_dir = self._module_dir(tfvars)
+            network_name = self._required(tfvars, "zp_network_name")
 
-            network_name = tfvars.get("zp_network_name") or self.network_name
-
-            # Clone if missing or stale (no .terraform dir means we haven't init'd).
             if not module_dir.exists():
                 logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
                 _git_clone_at_sha(url, sha, module_dir)
 
-            # Docker network used by all of the module's containers.
             _ensure_network(network_name)
 
-            # tf init + apply
             tf = TerraformExecutor(module_dir)
             tf.init()
             tf.apply(tfvars)
@@ -301,14 +280,11 @@ class ModuleNode(INode[Any, ModuleResult]):
                 return NodeResult.failed(
                     "module is missing required terraform output 'main'")
 
-            # Need at least one *_ports output
-            has_ports = any(k.endswith("_ports") for k in outputs)
-            if not has_ports:
+            if not any(k.endswith("_ports") for k in outputs):
                 return NodeResult.failed(
                     "module must declare at least one '<container>_ports' output")
 
-            result = self._build_result(tfvars, outputs, network_name)
-            return NodeResult.success(result)
+            return NodeResult.success(self._build_result(tfvars, outputs))
 
         except (TerraformError, ValueError) as e:
             return NodeResult.failed(str(e))
@@ -316,30 +292,25 @@ class ModuleNode(INode[Any, ModuleResult]):
             return NodeResult.failed(
                 f"command failed: {e}\nstderr: {e.stderr}")
         except Exception as e:
-            logger.exception("ModuleNode resolve failed")
+            logger.exception("TerraformNode resolve failed")
             return NodeResult.failed(str(e))
 
-    def verify(self, mode: ResolveMode) -> NodeResult[ModuleResult]:
+    def verify(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
         if mode == ResolveMode.MOCK:
-            return NodeResult.success(ModuleResult(
-                module_id=self.module_id, source=self.source))
+            return NodeResult.success(TerraformResult(source=self.source))
+        # verify() can't compute paths from inputs (no parent access),
+        # so always defer to resolve(); terraform itself no-ops if already
+        # converged.
+        return NodeResult.pending_reboot(TerraformResult(source=self.source))
 
-        # verify() has no access to parents, so we can't compute the
-        # module dir. Always defer to resolve() — terraform itself will
-        # tell us whether we're converged (no-op apply if so).
-        return NodeResult.pending_reboot(ModuleResult(
-            module_id=self.module_id, source=self.source))
-
-    def remove(self, mode: ResolveMode) -> NodeResult[ModuleResult]:
+    def remove(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
         if mode == ResolveMode.MOCK:
             return NodeResult.success()
-        # remove() also has no access to parents. Without the var values
-        # that were used during apply, terraform destroy may be incomplete.
-        # The DAG executor should ideally pass input to remove() too;
-        # until then, this is best-effort using whatever we can infer.
-        try:
-            _remove_network(self.network_name)
-            return NodeResult.success()
-        except Exception as e:
-            logger.exception("ModuleNode remove failed")
-            return NodeResult.failed(str(e))
+        # remove() doesn't have parent access. A remove orchestrator
+        # walking the namespace can clean up the module dir + network
+        # after destroy. (TODO: thread input into remove() too.)
+        return NodeResult.success()
+
+
+# Back-compat alias.
+ModuleNode = TerraformNode

@@ -8,26 +8,26 @@ from .nodes import (
     ShellScriptNode,
     NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
     DiskNode, PartitionNode, FormatNode, MountNode, PathNode,
-    VarNode,
-    ModuleNode, LinkNode, ExposureNode,
+    VarNode, NamespaceNode,
+    ModuleNode, TerraformNode, LinkNode, ExposureNode,
 )
 
 # Result contracts — re-exported from each node module
 from .nodes.core import ShellScriptResult
 from .nodes.system import NetworkResult, DockerResult, NvidiaGpuResult, AmdGpuResult
 from .nodes.hw import DiskResult, PartitionResult, FormatResult, MountResult, PathResult
-from .nodes.config import VarResult
-from .nodes.user import ModuleResult, LinkResult, ExposureResult
+from .nodes.config import VarResult, NamespaceResult
+from .nodes.user import ModuleResult, TerraformResult, LinkResult, ExposureResult
 
 __all__ = [
     "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
     "ShellScriptNode", "ShellScriptResult",
     "NetworkNode", "DockerNode", "NvidiaGpuNode", "AmdGpuNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "PathNode",
-    "VarNode",
-    "ModuleNode", "LinkNode", "ExposureNode",
+    "VarNode", "NamespaceNode",
+    "ModuleNode", "TerraformNode", "LinkNode", "ExposureNode",
     "NetworkResult", "DockerResult", "NvidiaGpuResult", "AmdGpuResult",
     "DiskResult", "PartitionResult", "FormatResult", "MountResult", "PathResult",
-    "VarResult",
-    "ModuleResult", "LinkResult", "ExposureResult",
+    "VarResult", "NamespaceResult",
+    "ModuleResult", "TerraformResult", "LinkResult", "ExposureResult",
 ]

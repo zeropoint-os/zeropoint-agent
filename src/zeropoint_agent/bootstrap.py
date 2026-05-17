@@ -154,21 +154,32 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
 
 
 
-    # --- System VarNodes (zp_*) ---
-    # All zp_* are system-managed VarNodes that modules wire to by name.
-    # Global ones live in the bootstrap graph; per-module ones (zp_module_id,
-    # zp_network_name) are created by module-add.
+    # --- System namespaces ---
+    # global-settings: zp_* system VarNodes shared by all modules
+    # modules:         parent namespace for all installed modules
+    from zeropoint_agent.nodes.config.namespace import NamespaceNode
+    add("global-settings", NamespaceNode(name="global-settings"))
+    add("modules", NamespaceNode(name="modules"))
 
+    # --- System VarNodes (zp_*) under global-settings ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
-    add("module-storage", VarNode(name="zp_module_storage", value=storage_path))
+    add("global-settings/zp_module_storage",
+        VarNode(name="zp_module_storage", value=storage_path),
+        parents=["global-settings"])
     os.makedirs(storage_path, exist_ok=True)
 
-    add("zp-arch", VarNode(name="zp_arch", value=_detect_arch()))
-    add("zp-gpu-vendor", VarNode(name="zp_gpu_vendor", value=_detect_gpu_vendor()))
+    add("global-settings/zp_arch",
+        VarNode(name="zp_arch", value=_detect_arch()),
+        parents=["global-settings"])
+    add("global-settings/zp_gpu_vendor",
+        VarNode(name="zp_gpu_vendor", value=_detect_gpu_vendor()),
+        parents=["global-settings"])
 
     # --- Marker directory ---
     marker_dir = os.environ.get("ZP_MARKER_DIR", "/etc/zeropoint")
-    add("marker-dir", VarNode(name="ZP_MARKER_DIR", value=marker_dir))
+    add("global-settings/marker_dir",
+        VarNode(name="zp_marker_dir", value=marker_dir),
+        parents=["global-settings"])
     os.makedirs(marker_dir, exist_ok=True)
 
     return actions
