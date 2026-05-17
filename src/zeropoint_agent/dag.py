@@ -90,9 +90,9 @@ class DAG:
                         f"Type mismatch: {parent_id}.O ({parent_o.__name__}) "
                         f"does not match {node_id}.I ({i_type.__name__})")
 
-        # Root nodes with typed input still need parents (unless I=None)
-        if not parents and i_type is not type(None) and i_type is not object:
-            raise TypeError(f"Root node {node_id} must have I=None, got I={i_type.__name__}")
+        # Root nodes: I=None or I=object are valid without parents.
+        # Other typed inputs are also OK as roots (no parent means resolve
+        # gets None as input, node handles it).
 
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
         self._nodes[node_id] = entry
