@@ -20,6 +20,13 @@ PERMS_BITS = ("r", "w", "d")
 _PERMS_ALPHABET = set("rwd*-")
 
 
+class NodeExists(ValueError):
+    """Raised by dag.add() when a node with the requested id already exists.
+
+    Maps to HTTP 409 Conflict at the REST layer.
+    """
+
+
 def _valid_perms(perms: str) -> bool:
     """A perms string is exactly 3 chars from {r,w,d,*,-} at the right positions."""
     if not isinstance(perms, str) or len(perms) != 3:
@@ -79,9 +86,8 @@ class DAG:
         """Instantiate and add every node persisted in the store.
 
         Walks the store in topological order so each node's parents are
-        already present when it's added. Uses dag.add() so the per-node
-        type checks + status restoration paths run identically to a fresh
-        bootstrap.
+        already present when it's added. Bypasses the duplicate check in
+        `add()` via the internal `_load_one()` method.
         """
         import importlib
 
@@ -122,8 +128,7 @@ class DAG:
                 module_name, _, cls_name = stored.node_class.rpartition(".")
                 cls = getattr(importlib.import_module(module_name), cls_name)
                 node = cls(**(stored.config or {}))
-                self.add(nid, node, parents=parents_of[nid],
-                         perms=getattr(stored, "perms", "***") or "***")
+                self._load_one(nid, node, parents=parents_of[nid], stored=stored)
             except Exception as e:
                 logger.warning(
                     "failed to load node %s (%s): %s",
@@ -132,7 +137,15 @@ class DAG:
     def add(self, node_id: str, node: INode,
             parents: Optional[List[str]] = None,
             perms: str = "***") -> str:
-        """Add a node with type-checked edges. Skips if already in graph or store.
+        """Add a new node with type-checked edges.
+
+        Raises:
+            NodeExists: if `node_id` is already present in memory or in the
+                store. Callers wanting "create if absent" should catch this
+                explicitly (or check first via `node_id in self.nodes`).
+            ValueError: if `perms` is malformed.
+            KeyError:   if a parent id doesn't exist.
+            TypeError:  on parent/child I/O type mismatch.
 
         Args:
             perms: instance-level permission string (3 chars from {r,w,d,*,-}).
@@ -144,36 +157,14 @@ class DAG:
             raise ValueError(
                 f"invalid perms {perms!r}: expected 3 chars from r/w/d/*/-")
 
-        # Already in memory — skip
+        # Dumb primitive: error on duplicate. Callers do their own
+        # "if exists, skip/edit" logic.
         if node_id in self._nodes:
-            return node_id
-
-        # Already in store (from previous run) — restore with persisted status
+            raise NodeExists(
+                f"node {node_id!r} already exists in the graph")
         if self._store and self._store.has_node(node_id):
-            i_type, o_type = _get_io_types(node)
-            entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
-            # Restore persisted status
-            stored = self._store.get_node(node_id)
-            if stored:
-                try:
-                    entry.status = NodeStatus(stored.status)
-                except ValueError:
-                    pass
-                # Restore persisted perms if present; otherwise fall back to
-                # the perms arg (caller's intent for this rerun).
-                stored_perms = getattr(stored, "perms", None) or perms
-                if _valid_perms(stored_perms):
-                    entry.perms = stored_perms
-                else:
-                    entry.perms = perms
-            else:
-                entry.perms = perms
-            entry.path = self._compute_path(node, parents)
-            self._nodes[node_id] = entry
-            self._order.append(node_id)
-            logger.debug(f"Loaded {node_id} from store (status={entry.status.value}, "
-                         f"path={entry.path!r}, perms={entry.perms})")
-            return node_id
+            raise NodeExists(
+                f"node {node_id!r} already exists in the persistent store")
 
         i_type, o_type = _get_io_types(node)
 
@@ -224,6 +215,33 @@ class DAG:
                      f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}] "
                      f"path={entry.path!r}")
         return node_id
+
+    def _load_one(self, node_id: str, node: INode,
+                  parents: List[str], stored=None) -> None:
+        """Rehydrate a single node from the store into the in-memory DAG.
+
+        Bypasses the duplicate check in `add()`. For internal use by
+        `_load_from_store()` only — never call this for user-driven adds.
+        """
+        if node_id in self._nodes:
+            return  # already loaded (shouldn't happen in normal flow)
+
+        i_type, o_type = _get_io_types(node)
+        entry = NodeEntry(node=node, parents=parents,
+                          input_type=i_type, output_type=o_type)
+        if stored is not None:
+            try:
+                entry.status = NodeStatus(stored.status)
+            except ValueError:
+                pass
+            stored_perms = getattr(stored, "perms", None) or "***"
+            entry.perms = stored_perms if _valid_perms(stored_perms) else "***"
+        entry.path = self._compute_path(node, parents)
+        self._nodes[node_id] = entry
+        self._order.append(node_id)
+        logger.debug(
+            f"Rehydrated {node_id} (status={entry.status.value}, "
+            f"path={entry.path!r}, perms={entry.perms})")
 
     def _compute_path(self, node: INode, parents: List[str]) -> str:
         """Compute a node's path from its NamespaceNode parents.

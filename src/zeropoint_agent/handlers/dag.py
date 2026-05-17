@@ -72,10 +72,10 @@ async def build_graph(request_body: GraphBuildRequest, request: Request):
 async def add_node(spec: NodeSpec, request: Request):
     """Add a single node to the existing graph.
 
-    If a NamespaceNode parent is specified, that parent must have `w`
-    in its effective permissions (creating a child counts as writing
-    to the namespace).
+    Returns 409 if a node with the given id already exists.
+    Returns 403 if a NamespaceNode parent isn't writable.
     """
+    from zeropoint_agent.dag import NodeExists
     try:
         dag = request.app.state.dag
         # Check w on every NamespaceNode parent before mutating.
@@ -94,12 +94,28 @@ async def add_node(spec: NodeSpec, request: Request):
                                 f"(cannot add children; effective perms: {eff})")
                     )
         node = _create_node(spec)
-        dag.add(spec.id, node, parents=spec.parents)
+        dag.add(spec.id, node, parents=spec.parents,
+                perms=getattr(spec, "perms", "***") or "***")
         return {"ok": True, "node_id": spec.id}
     except HTTPException:
         raise
+    except NodeExists as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except (TypeError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/nodes/{node_id:path}")
+async def get_node(node_id: str, request: Request):
+    """Return a single node by id."""
+    from urllib.parse import unquote
+    node_id = unquote(node_id)
+    dag = request.app.state.dag
+    try:
+        entry = dag.get(node_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"node not found: {node_id}")
+    return node_to_dict(node_id, entry, dag)
 
 
 @router.get("")

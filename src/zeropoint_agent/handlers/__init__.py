@@ -40,6 +40,7 @@ class NodeSpec(BaseModel):
     type: str
     config: Dict[str, Any]
     parents: List[str] = []
+    perms: str = "***"
 
 
 class GraphBuildRequest(BaseModel):

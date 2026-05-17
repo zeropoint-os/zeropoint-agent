@@ -1,287 +1,319 @@
 """CLI for zeropoint-agent.
 
-Subcommands:
-  serve           Start the API server
-  status          Show graph status
-  verify-node     Verify a single node (called by systemd)
-  resolve-node    Resolve a single node (called by systemd)
-  add             Add a node to the graph
-  check           Run bootstrap + resolve (what startup does)
+Thin HTTP client over the REST API. Every subcommand makes a single
+request, prints the JSON body verbatim, and exits with the HTTP status
+code (0 for 200; otherwise the actual code, e.g. 404, 409, 403).
+
+The one exception is `serve`, which starts the API server directly.
+
+Environment:
+    ZEROPOINT_AGENT_URL  base URL (default http://127.0.0.1:2370)
+    ZEROPOINT_MODE       default resolve mode for `serve` (live/dry_run/mock)
 """
 
+from __future__ import annotations
+
+import json
 import os
 import sys
-import json
-import logging
-from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import click
-
-from zeropoint_agent.inode import ResolveMode, NodeStatus
-from zeropoint_agent.dag import DAG
-from zeropoint_agent.graph_store import GraphStore
-from zeropoint_agent.bootstrap import bootstrap
+import requests
 
 
-def _get_store_and_dag():
-    """Create store + DAG from env vars."""
-    store_path = os.environ.get("ZEROPOINT_ROOT_PATH", ".")
-    data_dir = Path(store_path) / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    db_path = str(data_dir / "graph.db")
-    store = GraphStore(db_path)
-    dag = DAG(store=store)
-    return store, dag
+# --- HTTP client ---------------------------------------------------------
+
+def _base_url() -> str:
+    return os.environ.get("ZEROPOINT_AGENT_URL", "http://127.0.0.1:2370").rstrip("/")
 
 
-def _get_mode() -> ResolveMode:
-    mode_str = os.environ.get("ZEROPOINT_MODE", "live")
-    return {
-        "live": ResolveMode.LIVE,
-        "dry_run": ResolveMode.DRY_RUN,
-        "mock": ResolveMode.MOCK,
-    }.get(mode_str, ResolveMode.LIVE)
+def _emit(resp: requests.Response) -> None:
+    """Print the response body (JSON if possible, else raw) and exit.
+
+    Exit code: 0 on 2xx, otherwise the HTTP status code (clamped to 1..255).
+    """
+    try:
+        body = resp.json()
+        click.echo(json.dumps(body, indent=2))
+    except ValueError:
+        click.echo(resp.text or "", nl=False)
+        click.echo()
+
+    if 200 <= resp.status_code < 300:
+        sys.exit(0)
+    # Unix exit codes are 0..255. HTTP codes 400..599 all fit; clamp anyway.
+    code = resp.status_code
+    if code < 1:
+        code = 1
+    if code > 255:
+        code = code % 256 or 1
+    sys.exit(code)
 
 
-STATUS_ICONS = {
-    "success": "●",
-    "success_skip": "○",
-    "pending": "○",
-    "pending_reboot": "●",
-    "running": "●",
-    "error": "●",
-    "blocked": "●",
-    "skipped": "○",
-}
+def _request(method: str, path: str, **kwargs) -> requests.Response:
+    url = _base_url() + path
+    try:
+        return requests.request(method, url, **kwargs)
+    except requests.ConnectionError as e:
+        click.echo(json.dumps({
+            "error": "connection_failed",
+            "detail": str(e),
+            "url": url,
+        }, indent=2), err=True)
+        sys.exit(7)  # arbitrary: server unreachable
+    except requests.RequestException as e:
+        click.echo(json.dumps({
+            "error": "request_failed",
+            "detail": str(e),
+            "url": url,
+        }, indent=2), err=True)
+        sys.exit(8)
 
-STATUS_COLORS = {
-    "success": "green",
-    "success_skip": "green",
-    "pending": "yellow",
-    "pending_reboot": "yellow",
-    "running": "blue",
-    "error": "red",
-    "blocked": "white",
-    "skipped": "white",
-}
 
+def _parse_kv(pairs: Iterable[str]) -> Dict[str, Any]:
+    """Parse --foo k=v style options. Values are JSON-parsed if possible."""
+    out: Dict[str, Any] = {}
+    for kv in pairs:
+        if "=" not in kv:
+            raise click.UsageError(f"expected key=value, got {kv!r}")
+        k, v = kv.split("=", 1)
+        try:
+            out[k] = json.loads(v)
+        except (json.JSONDecodeError, ValueError):
+            out[k] = v
+    return out
+
+
+# --- root group ----------------------------------------------------------
 
 @click.group()
 def cli():
-    """zeropoint-agent — graph-based infrastructure management."""
-    pass
+    """zeropoint-agent — graph-based infrastructure management.
 
+    All subcommands except `serve` are thin HTTP clients over the REST API.
+    Set ZEROPOINT_AGENT_URL to point at a non-default server.
+    """
+
+
+# --- serve ---------------------------------------------------------------
 
 @cli.command()
 @click.option("--host", default="0.0.0.0", help="Bind address")
-@click.option("--port", default=2370, help="Port")
-def serve(host, port):
-    """Start the API server."""
+@click.option("--port", default=2370, type=int, help="Port")
+def serve(host: str, port: int):
+    """Start the API server (the one local command).
+
+    The server owns the persistent DAG; CLI subcommands hit its REST API.
+    """
     import uvicorn
     from zeropoint_agent.server import app
     uvicorn.run(app, host=host, port=port, log_config=None)
 
 
-@cli.command()
-def status():
-    """Show graph status."""
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
+# --- node ----------------------------------------------------------------
 
-    # Bootstrap to load nodes
-    bootstrap(dag, mode)
-
-    if not dag.nodes:
-        click.echo("No nodes in graph.")
-        return
-
-    for nid, entry in dag.nodes.items():
-        s = entry.status.value
-        icon = STATUS_ICONS.get(s, "?")
-        color = STATUS_COLORS.get(s, "white")
-        node_type = type(entry.node).__name__
-        click.echo(f"  {click.style(icon, fg=color)} {nid:25s} {s:15s} {node_type}")
+@cli.group()
+def node():
+    """Inspect and mutate individual nodes."""
 
 
-@cli.command()
-def check():
-    """Run bootstrap + resolve (same as server startup)."""
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
-
-    click.echo("Running bootstrap...")
-    actions = bootstrap(dag, mode)
-    for nid, action in actions.items():
-        click.echo(f"  {nid}: {action}")
-
-    click.echo(f"\nResolving (mode={mode.value})...")
-    results = dag.resolve(mode=mode)
-
-    summary = {}
-    for nid, s in results.items():
-        icon = STATUS_ICONS.get(s.value, "?")
-        color = STATUS_COLORS.get(s.value, "white")
-        click.echo(f"  {click.style(icon, fg=color)} {nid:25s} {s.value}")
-        summary[s.value] = summary.get(s.value, 0) + 1
-
-    click.echo(f"\n{' · '.join(f'{c} {s}' for s, c in summary.items())}")
-
-
-@cli.command("verify-node")
-@click.argument("node_id")
-def verify_node(node_id):
-    """Verify a single node (called by systemd on boot)."""
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
-    bootstrap(dag, mode)
-
-    if node_id not in dag.nodes:
-        click.echo(f"Node not found: {node_id}", err=True)
-        sys.exit(1)
-
-    entry = dag.get(node_id)
-    result = entry.node.verify(mode)
-
-    icon = STATUS_ICONS.get(result.status.value, "?")
-    color = STATUS_COLORS.get(result.status.value, "white")
-    click.echo(f"{click.style(icon, fg=color)} {node_id}: {result.status.value}")
-
-    if result.error:
-        click.echo(f"  error: {result.error}", err=True)
-
-    if result.output:
-        click.echo(f"  output: {result.output}")
-
-    # Exit code: 0 for success/success_skip, 1 for anything else
-    if result.status in (NodeStatus.SUCCESS, NodeStatus.SUCCESS_SKIP):
-        sys.exit(0)
+@node.command("list")
+@click.argument("pattern", required=False)
+def node_list(pattern: Optional[str]):
+    """List nodes. With no pattern, returns the whole graph."""
+    if pattern:
+        from urllib.parse import quote
+        _emit(_request("GET", f"/api/dag/query/{quote(pattern, safe='/*')}"))
     else:
-        sys.exit(1)
+        _emit(_request("GET", "/api/dag"))
 
 
-@cli.command("resolve-node")
+@node.command("get")
 @click.argument("node_id")
-def resolve_node(node_id):
-    """Resolve a single node (called by systemd for deferred work)."""
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
-    bootstrap(dag, mode)
-
-    if node_id not in dag.nodes:
-        click.echo(f"Node not found: {node_id}", err=True)
-        sys.exit(1)
-
-    # Resolve just this node
-    results = dag.resolve_subset([node_id], mode=mode)
-    s = results.get(node_id, NodeStatus.ERROR)
-
-    icon = STATUS_ICONS.get(s.value, "?")
-    color = STATUS_COLORS.get(s.value, "white")
-    click.echo(f"{click.style(icon, fg=color)} {node_id}: {s.value}")
-
-    entry = dag.get(node_id)
-    if entry.error:
-        click.echo(f"  error: {entry.error}", err=True)
-    if entry.output:
-        click.echo(f"  output: {entry.output}")
-
-    if s in (NodeStatus.SUCCESS, NodeStatus.SUCCESS_SKIP):
-        sys.exit(0)
-    else:
-        sys.exit(1)
+def node_get(node_id: str):
+    """Fetch a single node by id."""
+    from urllib.parse import quote
+    _emit(_request("GET", f"/api/dag/nodes/{quote(node_id, safe='/')}"))
 
 
-@cli.command()
+@node.command("add")
 @click.argument("node_type")
 @click.argument("node_id")
-@click.option("--config", "-c", multiple=True, help="Config key=value pairs")
-@click.option("--parent", "-p", multiple=True, help="Parent node IDs")
-def add(node_type, node_id, config, parent):
-    """Add a node to the graph."""
-    from zeropoint_agent.handlers import NODE_REGISTRY
-
-    if node_type not in NODE_REGISTRY:
-        click.echo(f"Unknown node type: {node_type}", err=True)
-        click.echo(f"Available: {', '.join(NODE_REGISTRY.keys())}")
-        sys.exit(1)
-
-    # Parse config
-    cfg = {}
-    for kv in config:
-        if "=" not in kv:
-            click.echo(f"Invalid config: {kv} (expected key=value)", err=True)
-            sys.exit(1)
-        k, v = kv.split("=", 1)
-        # Try to parse as JSON for non-string values
-        try:
-            cfg[k] = json.loads(v)
-        except (json.JSONDecodeError, ValueError):
-            cfg[k] = v
-
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
-    bootstrap(dag, mode)
-
-    cls = NODE_REGISTRY[node_type]
-    try:
-        node = cls(**cfg)
-        dag.add(node_id, node, parents=list(parent))
-        click.echo(f"Added {node_id} ({node_type})")
-    except Exception as e:
-        click.echo(f"Failed: {e}", err=True)
-        sys.exit(1)
+@click.option("--parent", "-p", "parents", multiple=True,
+              help="Parent node id (repeatable).")
+@click.option("--config", "-c", "config_kvs", multiple=True,
+              help="Config key=value (JSON-parsed; repeatable).")
+@click.option("--perms", default="***",
+              help='Permission string, 3 chars from r/w/d/*/-  (default "***").')
+def node_add(node_type: str, node_id: str,
+             parents: Tuple[str, ...], config_kvs: Tuple[str, ...],
+             perms: str):
+    """Create a new node. Errors 409 if the id already exists."""
+    payload = {
+        "id": node_id,
+        "type": node_type,
+        "config": _parse_kv(config_kvs),
+        "parents": list(parents),
+        "perms": perms,
+    }
+    _emit(_request("POST", "/api/dag/nodes", json=payload))
 
 
-@cli.command("module-add")
+@node.command("ensure")
+@click.argument("node_type")
+@click.argument("node_id")
+@click.option("--parent", "-p", "parents", multiple=True,
+              help="Parent node id (repeatable).")
+@click.option("--config", "-c", "config_kvs", multiple=True,
+              help="Config key=value (JSON-parsed; repeatable).")
+@click.option("--perms", default="***",
+              help='Permission string, 3 chars from r/w/d/*/-  (default "***").')
+def node_ensure(node_type: str, node_id: str,
+                parents: Tuple[str, ...], config_kvs: Tuple[str, ...],
+                perms: str):
+    """Create the node if absent; do nothing if it already exists.
+
+    Same shape as `add`, but tolerates 409 (already-exists). Use this
+    when the script's intent is "I want this to exist" rather than
+    "I am creating a new thing."
+    """
+    payload = {
+        "id": node_id,
+        "type": node_type,
+        "config": _parse_kv(config_kvs),
+        "parents": list(parents),
+        "perms": perms,
+    }
+    resp = _request("POST", "/api/dag/nodes", json=payload)
+    if resp.status_code == 409:
+        click.echo(json.dumps({"ok": True, "node_id": node_id,
+                               "existed": True}, indent=2))
+        sys.exit(0)
+    _emit(resp)
+
+
+@node.command("update")
+@click.argument("node_id")
+@click.option("--config", "-c", "config_kvs", multiple=True,
+              help="Config key=value to set (repeatable).")
+def node_update(node_id: str, config_kvs: Tuple[str, ...]):
+    """Edit a node's config. Resets it (and descendants) to PENDING."""
+    from urllib.parse import quote
+    payload = _parse_kv(config_kvs)
+    _emit(_request("PUT", f"/api/dag/{quote(node_id, safe='/')}", json=payload))
+
+
+@node.command("remove")
+@click.argument("pattern")
+def node_remove(pattern: str):
+    """Remove a node (or pattern of nodes). Cascading."""
+    from urllib.parse import quote
+    _emit(_request("DELETE", f"/api/dag/{quote(pattern, safe='/*')}"))
+
+
+@node.command("verify")
+@click.argument("pattern", required=False, default="**")
+def node_verify(pattern: str):
+    """Check node health (status snapshot)."""
+    from urllib.parse import quote
+    _emit(_request("GET", f"/api/dag/health/{quote(pattern, safe='/*')}"))
+
+
+# --- dag -----------------------------------------------------------------
+
+@cli.group()
+def dag():
+    """Whole-graph operations."""
+
+
+@dag.command("status")
+def dag_status():
+    """Return overall graph health + status summary."""
+    _emit(_request("GET", "/api/health"))
+
+
+@dag.command("resolve")
+@click.argument("pattern", required=False)
+@click.option("--mode", "mode", default=None,
+              type=click.Choice(["live", "dry_run", "mock"], case_sensitive=False),
+              help="Override server's default resolve mode.")
+def dag_resolve(pattern: Optional[str], mode: Optional[str]):
+    """Resolve the whole graph (or a pattern's subgraph)."""
+    body: Dict[str, Any] = {}
+    if mode:
+        body["mode"] = mode
+    if pattern:
+        from urllib.parse import quote
+        _emit(_request("POST",
+                       f"/api/dag/resolve/{quote(pattern, safe='/*')}",
+                       json=body))
+    else:
+        _emit(_request("POST", "/api/dag/resolve", json=body))
+
+
+# --- module --------------------------------------------------------------
+
+@cli.group()
+def module():
+    """Install / remove modules (terraform-managed)."""
+
+
+@module.command("add")
 @click.argument("module_id")
 @click.argument("source")
-@click.option("--var", "-v", multiple=True,
-              help="Override a default for an auto-created VarNode (key=value).")
+@click.option("--var", "-v", "overrides", multiple=True,
+              help="Override a user var (key=value; repeatable).")
+@click.option("--parent-namespace", default="modules",
+              help='Namespace to install under (default "modules").')
 @click.option("--resolve/--no-resolve", default=False,
-              help="Resolve the new module immediately after adding.")
-def module_add(module_id, source, var, resolve):
-    """Add a Terraform module to the graph.
-
-    SOURCE must be a git URL with @<40-char-commit-sha>.
-    """
-    from zeropoint_agent.module_installer import add_module
-
-    overrides = {}
-    for kv in var:
+              help="Resolve the module immediately after adding.")
+def module_add(module_id: str, source: str,
+               overrides: Tuple[str, ...], parent_namespace: str,
+               resolve: bool):
+    """Install a terraform module. Errors 409 if it already exists."""
+    overrides_dict = {}
+    for kv in overrides:
         if "=" not in kv:
-            click.echo(f"Invalid --var: {kv} (expected key=value)", err=True)
-            sys.exit(1)
+            raise click.UsageError(f"--var expected key=value, got {kv!r}")
         k, v = kv.split("=", 1)
-        overrides[k] = v
+        overrides_dict[k] = v
+    payload = {
+        "module_id": module_id,
+        "source": source,
+        "overrides": overrides_dict,
+        "resolve": resolve,
+        "parent_namespace": parent_namespace,
+    }
+    _emit(_request("POST", "/api/modules", json=payload))
 
-    store, dag = _get_store_and_dag()
-    mode = _get_mode()
-    bootstrap(dag, mode)
 
+@module.command("remove")
+@click.argument("module_id")
+@click.option("--parent-namespace", default="modules",
+              help='Namespace the module lives under (default "modules").')
+def module_remove(module_id: str, parent_namespace: str):
+    """Remove a module (cascading delete of its namespace subtree)."""
+    from urllib.parse import quote
+    target = f"{parent_namespace}/{module_id}"
+    _emit(_request("DELETE", f"/api/dag/{quote(target, safe='/*')}"))
+
+
+# --- detect --------------------------------------------------------------
+
+@cli.command()
+@click.argument("kind")
+def detect(kind: str):
+    """Probe a host-derived value (arch, gpu-vendor)."""
+    _emit(_request("GET", f"/api/detect/{kind}"))
+
+
+def _safe_json(resp: requests.Response) -> Any:
     try:
-        result = add_module(dag, module_id, source, overrides=overrides)
-    except Exception as e:
-        click.echo(f"Failed: {e}", err=True)
-        sys.exit(1)
+        return resp.json()
+    except Exception:
+        return resp.text
 
-    click.echo(f"Added module {result.module_id} at {result.namespace_id}")
-    click.echo(f"  terraform:    {result.terraform_id}")
-    if result.wired_existing_nodes:
-        click.echo(f"  wired:        {', '.join(sorted(set(result.wired_existing_nodes)))}")
-    if result.created_var_nodes:
-        click.echo(f"  created:      {', '.join(result.created_var_nodes)}")
 
-    if resolve:
-        click.echo(f"\nResolving {result.namespace_id} (mode={mode.value})...")
-        targets = list(dict.fromkeys(
-            result.created_var_nodes
-            + list(set(result.wired_existing_nodes))
-        ))
-        results = dag.resolve_subset(targets, mode=mode)
-        for nid in targets:
-            s = results.get(nid)
-            if s is None:
-                continue
-            icon = STATUS_ICONS.get(s.value, "?")
-            color = STATUS_COLORS.get(s.value, "white")
-            click.echo(f"  {click.style(icon, fg=color)} {nid:50s} {s.value}")
+if __name__ == "__main__":
+    cli()
