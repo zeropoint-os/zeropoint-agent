@@ -163,12 +163,18 @@ class DAG:
                     return r
 
             # Gather input
+            # 0 parents → None
+            # 1 parent → that parent's output
+            # N parents → dict {parent_id: parent_output}
             if not entry.parents:
                 input_val = None
             elif len(entry.parents) == 1:
                 input_val = self._nodes[entry.parents[0]].output
             else:
-                input_val = self._nodes[entry.parents[0]].output
+                input_val = {
+                    pid: self._nodes[pid].output
+                    for pid in entry.parents
+                }
 
             # Verify first
             verify_result = node.verify(mode)
