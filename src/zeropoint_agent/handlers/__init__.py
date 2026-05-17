@@ -52,8 +52,12 @@ class ResolveRequest(BaseModel):
     mode: str = "mock"
 
 
-def node_to_dict(nid: str, entry) -> dict:
-    """Convert a node entry to a JSON-friendly dict."""
+def node_to_dict(nid: str, entry, dag=None) -> dict:
+    """Convert a node entry to a JSON-friendly dict.
+
+    If `dag` is provided, include `effective_perms` (resolved across
+    instance, namespace chain, and type default).
+    """
     result = {
         "id": nid,
         "type": type(entry.node).__name__,
@@ -62,7 +66,14 @@ def node_to_dict(nid: str, entry) -> dict:
                    if not k.startswith("_")},
         "parents": entry.parents,
         "error": entry.error,
+        "path": entry.path,
+        "perms": entry.perms,
     }
+    if dag is not None:
+        try:
+            result["effective_perms"] = dag.effective_perms(nid)
+        except Exception:
+            result["effective_perms"] = entry.perms
     if entry.output and hasattr(entry.output, "__dataclass_fields__"):
         result["output"] = asdict(entry.output)
     return result

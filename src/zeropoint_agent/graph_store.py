@@ -29,6 +29,7 @@ class StoredNode:
     status: str = "pending"
     output: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    perms: str = "***"   # instance-level permissions (3 chars from r/w/d/*/-)
 
 
 class GraphStore:
@@ -72,12 +73,23 @@ class GraphStore:
                     status STRING DEFAULT 'pending',
                     output STRING DEFAULT '',
                     error STRING DEFAULT '',
+                    perms STRING DEFAULT '***',
                     PRIMARY KEY(id)
                 )
             """)
             self._conn.execute("""
                 CREATE REL TABLE DEPENDS_ON(FROM Node TO Node)
             """)
+        # Probe whether the perms column exists (for DBs created before the
+        # field was added). Cache the result so reads can degrade gracefully.
+        try:
+            self._conn.execute("MATCH (n:Node) RETURN n.perms LIMIT 1")
+            self._has_perms_column = True
+        except Exception:
+            self._has_perms_column = False
+            logger.warning(
+                "Graph store predates the perms column; reads will default to '***'. "
+                "Re-create the store to persist perms.")
 
     def add_node(self, node: StoredNode) -> None:
         """Add a node to the graph."""
@@ -85,21 +97,40 @@ class GraphStore:
         output_json = json.dumps(node.output) if node.output else ""
         error = node.error or ""
 
-        self._conn.execute(
-            "CREATE (n:Node {"
-            f"id: $id, node_type: $node_type, node_class: $node_class, "
-            f"config: $config, status: $status, output: $output, error: $error"
-            "})",
-            parameters={
-                "id": node.id,
-                "node_type": node.node_type,
-                "node_class": node.node_class,
-                "config": config_json,
-                "status": node.status,
-                "output": output_json,
-                "error": error,
-            },
-        )
+        if self._has_perms_column:
+            self._conn.execute(
+                "CREATE (n:Node {"
+                f"id: $id, node_type: $node_type, node_class: $node_class, "
+                f"config: $config, status: $status, output: $output, "
+                f"error: $error, perms: $perms"
+                "})",
+                parameters={
+                    "id": node.id,
+                    "node_type": node.node_type,
+                    "node_class": node.node_class,
+                    "config": config_json,
+                    "status": node.status,
+                    "output": output_json,
+                    "error": error,
+                    "perms": node.perms,
+                },
+            )
+        else:
+            self._conn.execute(
+                "CREATE (n:Node {"
+                f"id: $id, node_type: $node_type, node_class: $node_class, "
+                f"config: $config, status: $status, output: $output, error: $error"
+                "})",
+                parameters={
+                    "id": node.id,
+                    "node_type": node.node_type,
+                    "node_class": node.node_class,
+                    "config": config_json,
+                    "status": node.status,
+                    "output": output_json,
+                    "error": error,
+                },
+            )
         logger.debug(f"Stored node: {node.id} ({node.node_type})")
 
     def has_node(self, node_id: str) -> bool:
@@ -121,12 +152,20 @@ class GraphStore:
 
     def get_node(self, node_id: str) -> Optional[StoredNode]:
         """Get a node by ID."""
-        result = self._conn.execute(
-            "MATCH (n:Node {id: $id}) "
-            "RETURN n.id, n.node_type, n.node_class, n.config, "
-            "n.status, n.output, n.error",
-            parameters={"id": node_id},
-        )
+        if self._has_perms_column:
+            result = self._conn.execute(
+                "MATCH (n:Node {id: $id}) "
+                "RETURN n.id, n.node_type, n.node_class, n.config, "
+                "n.status, n.output, n.error, n.perms",
+                parameters={"id": node_id},
+            )
+        else:
+            result = self._conn.execute(
+                "MATCH (n:Node {id: $id}) "
+                "RETURN n.id, n.node_type, n.node_class, n.config, "
+                "n.status, n.output, n.error",
+                parameters={"id": node_id},
+            )
         if result.has_next():
             row = result.get_next()
             return StoredNode(
@@ -137,16 +176,24 @@ class GraphStore:
                 status=row[4],
                 output=json.loads(row[5]) if row[5] else None,
                 error=row[6] if row[6] else None,
+                perms=row[7] if self._has_perms_column and len(row) > 7 and row[7] else "***",
             )
         return None
 
     def get_all_nodes(self) -> List[StoredNode]:
         """Get all nodes."""
-        result = self._conn.execute(
-            "MATCH (n:Node) "
-            "RETURN n.id, n.node_type, n.node_class, n.config, "
-            "n.status, n.output, n.error"
-        )
+        if self._has_perms_column:
+            result = self._conn.execute(
+                "MATCH (n:Node) "
+                "RETURN n.id, n.node_type, n.node_class, n.config, "
+                "n.status, n.output, n.error, n.perms"
+            )
+        else:
+            result = self._conn.execute(
+                "MATCH (n:Node) "
+                "RETURN n.id, n.node_type, n.node_class, n.config, "
+                "n.status, n.output, n.error"
+            )
         nodes = []
         while result.has_next():
             row = result.get_next()
@@ -158,6 +205,7 @@ class GraphStore:
                 status=row[4],
                 output=json.loads(row[5]) if row[5] else None,
                 error=row[6] if row[6] else None,
+                perms=row[7] if self._has_perms_column and len(row) > 7 and row[7] else "***",
             ))
         return nodes
 

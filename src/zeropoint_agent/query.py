@@ -34,12 +34,15 @@ def query_dag(dag, pattern: str, status: Optional[str] = None,
     Returns:
         List of matching node IDs
     """
-    segments = [s for s in pattern.strip("/").split("/") if s]
-
-    if not segments:
-        return []
-
-    matched = _resolve_segments(dag, segments)
+    # Fast path: pattern is an exact node id (common case now that ids
+    # are namespace paths like "modules/redis/terraform").
+    if pattern in dag.nodes:
+        matched = [pattern]
+    else:
+        segments = [s for s in pattern.strip("/").split("/") if s]
+        if not segments:
+            return []
+        matched = _resolve_segments(dag, segments)
 
     # Apply filters
     if status:

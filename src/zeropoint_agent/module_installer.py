@@ -184,21 +184,28 @@ def add_module(
 
     logger.info("module %s declares %d variables", module_id, len(tf_vars))
 
-    # Namespace for this module: modules/<module_id>
+    # Namespace for this module: modules/<module_id>. The namespace itself
+    # is fully manipulable by the user (rwd) — users can rename, edit, or
+    # remove the whole module.
     namespace_id = f"{parent_namespace}/{module_id}"
-    dag.add(namespace_id, NamespaceNode(name=module_id), parents=[parent_namespace])
+    dag.add(namespace_id, NamespaceNode(name=module_id),
+            parents=[parent_namespace], perms="rwd")
 
     created: List[str] = [namespace_id]
     wired_existing: List[str] = []
     var_parent_ids: List[str] = []  # all VarNodes that feed the TerraformNode
 
     # Auto-create per-module path-derived system vars under the namespace.
+    # These are system-managed: their value is derived from the namespace
+    # path, so editing makes no sense (r--). They live for the lifetime of
+    # the namespace and shouldn't be removed independently.
     for varname, from_path_spec in _PER_MODULE_SYSTEM_VARS.items():
         node_id = f"{namespace_id}/{varname}"
         dag.add(
             node_id,
             VarNode(name=varname, from_path=from_path_spec),
             parents=[namespace_id],
+            perms="r--",
         )
         created.append(node_id)
         var_parent_ids.append(node_id)
@@ -229,7 +236,8 @@ def add_module(
             continue
 
         # User-defined var: create a VarNode under the namespace with the
-        # module's default or an override.
+        # module's default or an override. User vars are freely editable
+        # (defer to namespace context).
         var_node_id = f"{namespace_id}/{var.name}"
         value = (overrides[var.name] if var.name in overrides
                  else _hcl_variable_to_str(var.default))
@@ -251,6 +259,7 @@ def add_module(
 
     # The TerraformNode: lives under the namespace, depends on it (for
     # path/ordering) + all var parents.
+    # Type default r-d (w vetoed by class) is sufficient; no instance override.
     terraform_id = f"{namespace_id}/terraform"
     dag.add(
         terraform_id,

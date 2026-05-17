@@ -31,7 +31,7 @@ async def query_graph(pattern: str, request: Request,
     pattern = unquote(pattern)
     dag = request.app.state.dag
     matched_ids = query_dag(dag, pattern, status=status, node_type=type)
-    nodes = [node_to_dict(nid, dag.get(nid)) for nid in matched_ids]
+    nodes = [node_to_dict(nid, dag.get(nid), dag) for nid in matched_ids]
 
     summary = {}
     for n in nodes:

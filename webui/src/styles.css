@@ -61,6 +61,16 @@ html, body, #root {
     padding: 0 24px 24px;
 }
 
+.perms-value {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.5px;
+}
+
+.perms-effective {
+    color: var(--fg-muted);
+    margin-left: 4px;
+}
+
 /* --- Pivot tabs --- */
 
 .pivot {

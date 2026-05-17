@@ -8,18 +8,37 @@ interface Props {
     onNavigate: (id: string) => void;
 }
 
+// Fields rendered in the detail header — don't repeat them in the property list.
+const HEADER_FIELDS = new Set(['id', 'type', 'status']);
+
+// Fields that have their own dedicated section.
+const SECTION_FIELDS = new Set(['error']);
+
 export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
     const nodeMap = new Map(allNodes.map(n => [n.id, n]));
     const childrenOf = (id: string) => edges.filter(e => e.source === id).map(e => nodeMap.get(e.target)).filter(Boolean) as DagNode[];
     const children = childrenOf(node.id);
 
-    const config = node.config || {};
-    const output = node.output || {};
-
-    // Split id into leaf + parent path for cleaner display.
+    // Leaf name + parent path for the header.
     const lastSlash = node.id.lastIndexOf('/');
     const leaf = lastSlash >= 0 ? node.id.slice(lastSlash + 1) : node.id;
     const parentPath = lastSlash >= 0 ? node.id.slice(0, lastSlash) : '';
+
+    // Flatten config dict into top-level properties, treat every other
+    // top-level field of the node response as a property. Property
+    // inspector — render whatever the server says the node carries.
+    const props: Array<[string, any]> = [];
+    for (const [key, value] of Object.entries(node)) {
+        if (HEADER_FIELDS.has(key)) continue;
+        if (SECTION_FIELDS.has(key)) continue;
+        if (key === 'config' && value && typeof value === 'object') {
+            for (const [ck, cv] of Object.entries(value)) {
+                props.push([ck, cv]);
+            }
+            continue;
+        }
+        props.push([key, value]);
+    }
 
     return (
         <div class="detail">
@@ -38,27 +57,15 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                 </div>
             )}
 
-            {Object.keys(config).length > 0 && (
+            {props.length > 0 && (
                 <div class="detail-section">
-                    <div class="detail-section-title">config</div>
-                    {Object.entries(config).map(([key, value]) => (
+                    <div class="detail-section-title">properties</div>
+                    {props.map(([key, value]) => (
                         <div class="detail-field" key={key}>
                             <span class="detail-field-key">{key}</span>
                             <span class={`detail-field-value ${isVarRef(value) ? 'var-ref' : ''}`}>
-                                {<Value value={value} />}
+                                <Value value={value} />
                             </span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {Object.keys(output).length > 0 && (
-                <div class="detail-section">
-                    <div class="detail-section-title">output</div>
-                    {Object.entries(output).map(([key, value]) => (
-                        <div class="detail-field" key={key}>
-                            <span class="detail-field-key">{key}</span>
-                            <span class="detail-field-value">{<Value value={value} />}</span>
                         </div>
                     ))}
                 </div>
@@ -97,7 +104,7 @@ function isVarRef(value: any): boolean {
 }
 
 function Value({ value }: { value: any }) {
-    if (value === null || value === undefined) return <span>—</span>;
+    if (value === null || value === undefined || value === '') return <span>—</span>;
     if (typeof value === 'boolean') return <span>{value ? 'true' : 'false'}</span>;
     if (typeof value === 'string' || typeof value === 'number')
         return <span>{String(value)}</span>;

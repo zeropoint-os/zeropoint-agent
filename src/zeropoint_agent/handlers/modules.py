@@ -19,35 +19,56 @@ class ModuleAddRequest(BaseModel):
     source: str
     overrides: Optional[Dict[str, str]] = None
     resolve: bool = False  # if true, resolve the module + its parents after add
+    parent_namespace: str = "modules"
 
 
 @router.post("")
 async def add_module_endpoint(req: ModuleAddRequest, request: Request):
     """Install a Terraform module into the DAG.
 
+    Requires `w` on the target parent namespace (default ``modules``).
+
     Clones the module to inspect ``variables.tf``, wires each declared
     variable to an existing VarNode (by name) or auto-creates a new
-    ``{module_id}.{varname}`` VarNode with the module's default. Adds the
-    ModuleNode with all wired VarNodes as parents.
+    ``{namespace}/{varname}`` VarNode with the module's default. Adds the
+    TerraformNode under the namespace.
 
     If ``resolve`` is true, immediately resolves the new module and its
     parents in the server's configured mode.
     """
     dag = request.app.state.dag
+
+    # Permission check on the parent namespace.
+    if req.parent_namespace not in dag.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail=f"parent namespace {req.parent_namespace!r} not found")
+    eff = dag.effective_perms(req.parent_namespace)
+    if "w" not in eff:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"parent namespace {req.parent_namespace!r} is not "
+                    f"writable (cannot install module; effective perms: {eff})")
+        )
+
     try:
         result = add_module(
             dag, req.module_id, req.source,
             overrides=req.overrides or {},
+            parent_namespace=req.parent_namespace,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("module-add failed")
         raise HTTPException(status_code=500, detail=str(e))
 
     response: Dict = {
         "module_id": result.module_id,
-        "module_node_id": result.module_node_id,
+        "namespace_id": result.namespace_id,
+        "terraform_id": result.terraform_id,
         "created_var_nodes": result.created_var_nodes,
         "wired_existing_nodes": sorted(set(result.wired_existing_nodes)),
     }
@@ -63,11 +84,10 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
         targets = list(dict.fromkeys(
             result.created_var_nodes
             + list(set(result.wired_existing_nodes))
-            + [result.module_node_id]
         ))
         statuses = dag.resolve_subset(targets, mode=mode)
         response["resolve"] = {nid: s.value for nid, s in statuses.items()}
-        entry = dag.get(result.module_node_id)
+        entry = dag.get(result.terraform_id)
         response["status"] = entry.status.value
         if entry.error:
             response["error"] = entry.error

@@ -95,62 +95,63 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     """
     actions = {}
 
-    def add(node_id, node, parents=None):
+    def add(node_id, node, parents=None, perms="***"):
         before = len(dag.nodes)
-        dag.add(node_id, node, parents=parents)
+        dag.add(node_id, node, parents=parents, perms=perms)
         actions[node_id] = "added" if len(dag.nodes) > before else "exists"
 
     # --- Network ---
     interface = os.environ.get("ZP_NETWORK_INTERFACE", detect_default_interface())
-    add("network", NetworkNode(interface=interface))
+    add("network", NetworkNode(interface=interface), perms="r--")
 
     # --- Docker ---
-    add("docker", DockerNode(), parents=["network"])
+    add("docker", DockerNode(), parents=["network"], perms="r--")
 
     # --- GPU detection + install chains ---
     # detect returns SUCCESS_SKIP if driver working → children skip
     # detect returns SUCCESS if GPU found but no driver → children run
     # detect returns SKIPPED if no GPU → children skip
+    # All are system-managed; readable but not user-editable.
 
-    add("nvidia", NvidiaGpuNode())
+    add("nvidia", NvidiaGpuNode(), perms="r--")
     add("nvidia-install", ShellScriptNode(
         exec="apt-get install -y nvidia-driver nvidia-container-toolkit && nvidia-ctk runtime configure --runtime=docker",
         verify="nvidia-smi > /dev/null 2>&1",
         description="Install NVIDIA driver + container toolkit",
         timeout=600,
-    ), parents=["nvidia"])
+    ), parents=["nvidia"], perms="r--")
     add("nvidia-reboot", ShellScriptNode(
         exec="echo 'NVIDIA kernel module requires reboot'",
         verify="lsmod | grep -q nvidia",
         description="Reboot for NVIDIA kernel module",
         timeout=30,
-    ), parents=["nvidia-install"])
+    ), parents=["nvidia-install"], perms="r--")
     add("nvidia-verify", ShellScriptNode(
         exec="nvidia-smi && docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi",
         verify="nvidia-smi > /dev/null 2>&1",
         description="Verify NVIDIA driver + Docker GPU runtime",
         timeout=300,
-    ), parents=["nvidia-reboot"])
+    ), parents=["nvidia-reboot"], perms="r--")
 
-    add("amd", AmdGpuNode())
+    add("amd", AmdGpuNode(), perms="r--")
     add("amd-install", ShellScriptNode(
         exec="apt-get install -y rocm-dkms",
         verify="rocm-smi > /dev/null 2>&1",
         description="Install AMD ROCm drivers",
         timeout=600,
-    ), parents=["amd"])
+    ), parents=["amd"], perms="r--")
     add("amd-reboot", ShellScriptNode(
         exec="echo 'ROCm kernel module requires reboot'",
         verify="lsmod | grep -q amdgpu",
         description="Reboot for AMD kernel module",
         timeout=30,
-    ), parents=["amd-install"])
+    ), parents=["amd-install"], perms="r--")
     add("amd-verify", ShellScriptNode(
         exec="rocm-smi",
         verify="rocm-smi > /dev/null 2>&1",
         description="Verify AMD ROCm drivers",
         timeout=300,
-    ), parents=["amd-reboot"])
+    ), parents=["amd-reboot"], perms="r--")
 
 
 
@@ -158,8 +159,8 @@ def bootstrap(dag: DAG, mode: ResolveMode) -> dict:
     # global-settings: zp_* system VarNodes shared by all modules
     # modules:         parent namespace for all installed modules
     from zeropoint_agent.nodes.config.namespace import NamespaceNode
-    add("global-settings", NamespaceNode(name="global-settings"))
-    add("modules", NamespaceNode(name="modules"))
+    add("global-settings", NamespaceNode(name="global-settings"), perms="r--")
+    add("modules", NamespaceNode(name="modules"), perms="rw*")
 
     # --- System VarNodes (zp_*) under global-settings ---
     storage_path = os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")

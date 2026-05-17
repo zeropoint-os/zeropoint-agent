@@ -8,6 +8,9 @@ export interface DagNode {
     parents: string[];
     error: string | null;
     output?: Record<string, any>;
+    path?: string;              // namespace-derived path
+    perms?: string;             // instance-level perms (3 chars, r/w/d/*/-)
+    effective_perms?: string;   // resolved across all layers
 }
 
 export interface DagEdge {

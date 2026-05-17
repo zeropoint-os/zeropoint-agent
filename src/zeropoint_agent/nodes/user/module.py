@@ -184,6 +184,10 @@ class TerraformNode(INode[Any, TerraformResult]):
     VarNode parents at resolve time.
     """
 
+    # No editable fields on this class — config flows from VarNode parents.
+    # Hence type-level veto on `w`. Still deletable (calls remove()).
+    default_perms = "r-d"
+
     def __init__(self, source: str):
         self.source = source
 

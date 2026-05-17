@@ -70,12 +70,34 @@ async def build_graph(request_body: GraphBuildRequest, request: Request):
 
 @router.post("/nodes")
 async def add_node(spec: NodeSpec, request: Request):
-    """Add a single node to the existing graph."""
+    """Add a single node to the existing graph.
+
+    If a NamespaceNode parent is specified, that parent must have `w`
+    in its effective permissions (creating a child counts as writing
+    to the namespace).
+    """
     try:
         dag = request.app.state.dag
+        # Check w on every NamespaceNode parent before mutating.
+        from zeropoint_agent.nodes.config.namespace import NamespaceNode
+        for pid in spec.parents:
+            try:
+                parent_entry = dag.get(pid)
+            except KeyError:
+                continue
+            if isinstance(parent_entry.node, NamespaceNode):
+                eff = dag.effective_perms(pid)
+                if "w" not in eff:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(f"parent namespace {pid!r} is not writable "
+                                f"(cannot add children; effective perms: {eff})")
+                    )
         node = _create_node(spec)
         dag.add(spec.id, node, parents=spec.parents)
         return {"ok": True, "node_id": spec.id}
+    except HTTPException:
+        raise
     except (TypeError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -88,7 +110,7 @@ async def get_dag(request: Request):
     edges = []
 
     for nid, entry in dag.nodes.items():
-        nodes.append(node_to_dict(nid, entry))
+        nodes.append(node_to_dict(nid, entry, dag))
         for parent_id in entry.parents:
             edges.append({"source": parent_id, "target": nid})
 

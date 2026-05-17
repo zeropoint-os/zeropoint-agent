@@ -163,7 +163,20 @@ class INode(ABC, Generic[I, O]):
       - status: SUCCESS, PENDING_REBOOT, ERROR
       - systemd_units: deferred work for next boot
       - error: message if something went wrong
+
+    Class-level attribute `default_perms` declares the type's default
+    permissions string (3 chars from {r,w,d,*,-}). See
+    zeropoint-agent/permissions-model in the mind-map for full semantics.
+    Subclasses override this to express fundamental class-level rules
+    (e.g., TerraformNode = "r-d" because it has no editable fields).
     """
+
+    # Type-level default permissions. Three characters in r/w/d/*/- alphabet:
+    #   letter  — capability granted at this level
+    #   '*'     — wildcard; no opinion, defer to other layers
+    #   '-'     — veto; hard lock, no descendant can override
+    # Default: fully neutral. Class authors override to bake in invariants.
+    default_perms: str = "***"
 
     @abstractmethod
     def resolve(self, input: I, mode: ResolveMode) -> NodeResult[O]:

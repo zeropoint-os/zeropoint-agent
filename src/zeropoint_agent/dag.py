@@ -16,6 +16,20 @@ from zeropoint_agent.inode import INode, ResolveMode, NodeStatus, NodeResult
 
 logger = logging.getLogger(__name__)
 
+PERMS_BITS = ("r", "w", "d")
+_PERMS_ALPHABET = set("rwd*-")
+
+
+def _valid_perms(perms: str) -> bool:
+    """A perms string is exactly 3 chars from {r,w,d,*,-} at the right positions."""
+    if not isinstance(perms, str) or len(perms) != 3:
+        return False
+    for i, ch in enumerate(perms):
+        if ch == PERMS_BITS[i] or ch in ("*", "-"):
+            continue
+        return False
+    return True
+
 
 def _get_io_types(node: INode) -> tuple:
     """Extract (I, O) type params from an INode subclass."""
@@ -39,8 +53,11 @@ class NodeEntry:
     input_type: type = type(None)
     output_type: type = type(None)
     # Cached path derived from namespace ancestry. "" if not under a namespace.
-    # Computed at add() time; kept in sync if the namespace tree changes.
     path: str = ""
+    # Instance-level permissions (3 chars from {r,w,d,*,-}). Resolved
+    # against parent namespaces and the type default at check time.
+    # See zeropoint-agent/permissions-model in the mind-map.
+    perms: str = "***"
 
 
 class DAG:
@@ -105,15 +122,27 @@ class DAG:
                 module_name, _, cls_name = stored.node_class.rpartition(".")
                 cls = getattr(importlib.import_module(module_name), cls_name)
                 node = cls(**(stored.config or {}))
-                self.add(nid, node, parents=parents_of[nid])
+                self.add(nid, node, parents=parents_of[nid],
+                         perms=getattr(stored, "perms", "***") or "***")
             except Exception as e:
                 logger.warning(
                     "failed to load node %s (%s): %s",
                     nid, stored.node_class, e)
 
-    def add(self, node_id: str, node: INode, parents: Optional[List[str]] = None) -> str:
-        """Add a node with type-checked edges. Skips if already in graph or store."""
+    def add(self, node_id: str, node: INode,
+            parents: Optional[List[str]] = None,
+            perms: str = "***") -> str:
+        """Add a node with type-checked edges. Skips if already in graph or store.
+
+        Args:
+            perms: instance-level permission string (3 chars from {r,w,d,*,-}).
+                   Default "***" means no instance opinion; resolution defers
+                   to parent namespaces and the type's default_perms.
+        """
         parents = parents or []
+        if not _valid_perms(perms):
+            raise ValueError(
+                f"invalid perms {perms!r}: expected 3 chars from r/w/d/*/-")
 
         # Already in memory — skip
         if node_id in self._nodes:
@@ -130,11 +159,20 @@ class DAG:
                     entry.status = NodeStatus(stored.status)
                 except ValueError:
                     pass
+                # Restore persisted perms if present; otherwise fall back to
+                # the perms arg (caller's intent for this rerun).
+                stored_perms = getattr(stored, "perms", None) or perms
+                if _valid_perms(stored_perms):
+                    entry.perms = stored_perms
+                else:
+                    entry.perms = perms
+            else:
+                entry.perms = perms
             entry.path = self._compute_path(node, parents)
             self._nodes[node_id] = entry
             self._order.append(node_id)
             logger.debug(f"Loaded {node_id} from store (status={entry.status.value}, "
-                         f"path={entry.path!r})")
+                         f"path={entry.path!r}, perms={entry.perms})")
             return node_id
 
         i_type, o_type = _get_io_types(node)
@@ -168,6 +206,7 @@ class DAG:
 
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
         entry.path = self._compute_path(node, parents)
+        entry.perms = perms
         self._nodes[node_id] = entry
         self._order.append(node_id)
 
@@ -177,7 +216,7 @@ class DAG:
             self._store.add_node(StoredNode(
                 id=node_id, node_type=type(node).__name__,
                 node_class=f"{type(node).__module__}.{type(node).__name__}",
-                config=config))
+                config=config, perms=entry.perms))
             for parent_id in parents:
                 self._store.add_edge(parent_id, node_id)
 
@@ -209,6 +248,53 @@ class DAG:
             name = getattr(node, "name", "")
             return f"{inherited}/{name}" if inherited else name
         return inherited
+
+    def _find_namespace_parent(self, entry: NodeEntry) -> Optional[NodeEntry]:
+        """Return the (at most one) NamespaceNode parent of an entry, or None."""
+        from zeropoint_agent.nodes.config.namespace import NamespaceNode
+        for pid in entry.parents:
+            p = self._nodes.get(pid)
+            if p is not None and isinstance(p.node, NamespaceNode):
+                return p
+        return None
+
+    def effective_perms(self, node_id: str) -> str:
+        """Resolve a node's effective permissions across all layers.
+
+        See zeropoint-agent/permissions-model:
+          - Instance perms (own)
+          - Parent namespace chain (walked outward)
+          - Type default (floor)
+
+        Per bit: any layer with '-' vetoes; else any layer with the letter
+        grants; else default deny.
+        """
+        entry = self._nodes.get(node_id)
+        if entry is None:
+            raise KeyError(f"node not found: {node_id}")
+
+        layers: List[str] = [entry.perms]
+        ns = self._find_namespace_parent(entry)
+        while ns is not None:
+            layers.append(ns.perms)
+            ns = self._find_namespace_parent(ns)
+        layers.append(getattr(type(entry.node), "default_perms", "***"))
+
+        result = []
+        for i, bit in enumerate(PERMS_BITS):
+            granted = False
+            for layer in layers:
+                if i >= len(layer):
+                    continue
+                ch = layer[i]
+                if ch == "-":
+                    granted = False
+                    break  # hard veto — stop scanning this bit
+                if ch == bit:
+                    granted = True
+                # ch == '*' — silent, keep looking
+            result.append(bit if granted else "-")
+        return "".join(result)
 
     def resolve(self, mode: ResolveMode = ResolveMode.LIVE) -> Dict[str, NodeStatus]:
         """Run the graph — propagate values through I → O edges."""
