@@ -62,6 +62,26 @@ zeropoint-agent node ensure var global-settings/marker_dir \
 # ---- resolve -------------------------------------------------------------
 
 echo "resolving ..."
-zeropoint-agent dag resolve
+zeropoint-agent dag resolve > /dev/null
+
+# ---- install the local test module ---------------------------------------
+# Confirms the full happy path: bootstrap -> module add (local source) ->
+# terraform apply -> output VarNodes populated. Idempotent via 'module add'
+# returning 409 if zp-test is already installed.
+
+TEST_MODULE_DIR="$(cd "$(dirname "$0")/.." && pwd)/test-module"
+
+if [[ -d "$TEST_MODULE_DIR" ]]; then
+  echo "installing zp-test from $TEST_MODULE_DIR ..."
+  set +e
+  zeropoint-agent module add zp-test "$TEST_MODULE_DIR" --resolve > /tmp/zp-test-install.log 2>&1
+  rc=$?
+  set -e
+  case $rc in
+    0)   echo "  installed.";;
+    409) echo "  already installed; skipping.";;
+    *)   echo "  WARNING: install failed (exit $rc); see /tmp/zp-test-install.log" >&2;;
+  esac
+fi
 
 echo "done."

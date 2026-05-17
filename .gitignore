@@ -243,3 +243,9 @@ modules/
 
 # Ignore logs
 logs/
+# Terraform state inside local test modules
+test-module/.terraform/
+test-module/.terraform.lock.hcl
+test-module/*.tfstate
+test-module/*.tfstate.backup
+test-module/*.tfstate.lock.info

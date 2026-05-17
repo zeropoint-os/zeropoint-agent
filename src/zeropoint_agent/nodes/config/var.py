@@ -86,11 +86,16 @@ def _output_value(input_val: Any, output_name: str) -> Optional[str]:
     """Pull a named entry out of a parent's ``outputs`` dict.
 
     Looks for any parent whose output is a dataclass-like with an
-    ``outputs`` attribute (e.g., TerraformResult). Returns the
-    JSON-encoded value if the field is complex, or str(value) otherwise.
+    ``outputs`` attribute (e.g., TerraformResult) OR a dict with an
+    "outputs" key (the dataclass's rehydrated-from-store form). Returns
+    the JSON-encoded value if the field is complex, or str(value) otherwise.
     """
     def _from_outputs(holder: Any) -> Optional[str]:
+        # Dataclass form (live runtime).
         outputs = getattr(holder, "outputs", None)
+        # Dict form (rehydrated from store via asdict()).
+        if outputs is None and isinstance(holder, dict):
+            outputs = holder.get("outputs")
         if isinstance(outputs, dict) and output_name in outputs:
             val = outputs[output_name]
             if isinstance(val, (dict, list)):

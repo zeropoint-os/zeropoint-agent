@@ -70,8 +70,31 @@ ModuleResult = TerraformResult
 # helpers
 # ---------------------------------------------------------------------------
 
+def _is_local_source(source: str) -> bool:
+    """True if source refers to a local filesystem path, not a git URL."""
+    if source.startswith("file://"):
+        return True
+    if source.startswith(("/", "./", "../", "~/")):
+        return True
+    return False
+
+
+def _local_source_path(source: str) -> Path:
+    """Resolve a local source string to an absolute Path."""
+    s = source[len("file://"):] if source.startswith("file://") else source
+    p = Path(s).expanduser().resolve()
+    if not p.exists():
+        raise ValueError(f"local module source does not exist: {p}")
+    if not p.is_dir():
+        raise ValueError(f"local module source is not a directory: {p}")
+    return p
+
+
 def _parse_git_source(source: str) -> tuple[str, str]:
-    """Split 'https://…/repo.git@<sha>' into (url, sha). Raises on invalid."""
+    """Split 'https://…/repo.git@<sha>' into (url, sha). Raises on invalid.
+
+    For local paths use `_is_local_source` + `_local_source_path` instead.
+    """
     if "@" not in source:
         raise ValueError(
             f"module source must include @<commit-sha>: {source!r}")
@@ -272,17 +295,28 @@ class TerraformNode(INode[Any, TerraformResult]):
             return NodeResult.success(mock)
 
         try:
-            url, sha = _parse_git_source(self.source)
             module_dir = self._module_dir(tfvars)
             network_name = self._required(tfvars, "zp_network_name")
 
-            if not module_dir.exists():
-                logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
-                _git_clone_at_sha(url, sha, module_dir)
+            if _is_local_source(self.source):
+                # Local module: terraform runs from the source path directly
+                # (no clone, no copy). Edits to the local tree are picked up
+                # on the next resolve. State (.terraform/, *.tfstate) lives
+                # under the local path too — module_storage isn't used for
+                # local sources beyond providing zp_module_storage to the
+                # module's variables.
+                tf_cwd = _local_source_path(self.source)
+                logger.info("using local module at %s", tf_cwd)
+            else:
+                url, sha = _parse_git_source(self.source)
+                if not module_dir.exists():
+                    logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
+                    _git_clone_at_sha(url, sha, module_dir)
+                tf_cwd = module_dir
 
             _ensure_network(network_name)
 
-            tf = TerraformExecutor(module_dir)
+            tf = TerraformExecutor(tf_cwd)
             tf.init()
             tf.apply(tfvars)
 

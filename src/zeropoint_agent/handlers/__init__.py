@@ -70,6 +70,10 @@ def node_to_dict(nid: str, entry, dag=None) -> dict:
             result["effective_perms"] = dag.effective_perms(nid)
         except Exception:
             result["effective_perms"] = entry.perms
-    if entry.output and hasattr(entry.output, "__dataclass_fields__"):
-        result["output"] = asdict(entry.output)
+    if entry.output is not None:
+        if hasattr(entry.output, "__dataclass_fields__"):
+            result["output"] = asdict(entry.output)
+        elif isinstance(entry.output, dict):
+            # Rehydrated from store as a dict.
+            result["output"] = entry.output
     return result

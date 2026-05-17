@@ -236,6 +236,11 @@ class DAG:
                 pass
             stored_perms = getattr(stored, "perms", None) or "***"
             entry.perms = stored_perms if _valid_perms(stored_perms) else "***"
+            # Restore the persisted output (as a dict). Consumers that
+            # type-check should accept dicts as well as the original
+            # dataclass shape.
+            if getattr(stored, "output", None) is not None:
+                entry.output = stored.output
         entry.path = self._compute_path(node, parents)
         self._nodes[node_id] = entry
         self._order.append(node_id)

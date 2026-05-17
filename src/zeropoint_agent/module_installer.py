@@ -35,6 +35,7 @@ from zeropoint_agent.nodes.config.namespace import NamespaceNode
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.user.module import (
     TerraformNode, _parse_git_source, _git_clone_at_sha,
+    _is_local_source, _local_source_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -198,13 +199,22 @@ def add_module(
         raise KeyError(
             f"parent namespace {parent_namespace!r} not found in graph")
 
-    url, sha = _parse_git_source(source)
-    inspection_dir = _shallow_clone_for_inspection(url, sha)
+    # Inspect the module (variables.tf + outputs). For local sources we read
+    # the directory directly; for git sources we shallow-clone to a temp
+    # location and read from there.
+    if _is_local_source(source):
+        inspection_dir = _local_source_path(source)
+        cleanup = False
+    else:
+        url, sha = _parse_git_source(source)
+        inspection_dir = _shallow_clone_for_inspection(url, sha)
+        cleanup = True
     try:
         tf_vars = parse_variables_tf(inspection_dir)
         tf_outputs = parse_outputs_tf(inspection_dir)
     finally:
-        shutil.rmtree(inspection_dir.parent, ignore_errors=True)
+        if cleanup:
+            shutil.rmtree(inspection_dir.parent, ignore_errors=True)
 
     logger.info("module %s declares %d variables, %d outputs",
                 module_id, len(tf_vars), len(tf_outputs))
