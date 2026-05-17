@@ -1,32 +1,23 @@
 #!/usr/bin/env bash
-# Bootstrap the zeropoint-agent default DAG via the REST API.
+# Devcontainer postCreate: seed the zeropoint-agent default DAG.
 #
-# Usage:
-#   1. Start the server (in another terminal or backgrounded):
-#        zeropoint-agent serve &
-#   2. Run this script.
+# Invoked once when the devcontainer is created (see ../.devcontainer/
+# devcontainer.json -> postCreateCommand). Re-running it is safe — every
+# step uses `node ensure`, which tolerates "already exists".
+#
+# Works whether or not a server is running:
+#   - If `zeropoint-agent serve` is up, every CLI call goes over HTTP.
+#   - Otherwise, each CLI call spins up an in-process app, runs the
+#     request, and tears down. Same handlers, no network.
 #
 # This script IS the bootstrap. Every step is one CLI call (one REST call).
-# To learn what the bootstrap does, read this file.
+# To learn what bootstrap does, read this file.
 #
 # Override the server URL with ZEROPOINT_AGENT_URL (default
-# http://127.0.0.1:2370).
+# http://127.0.0.1:2370). Force in-process always with
+# ZEROPOINT_AGENT_LOCAL=1; force HTTP only with ZEROPOINT_AGENT_REMOTE=1.
 
 set -euo pipefail
-
-URL="${ZEROPOINT_AGENT_URL:-http://127.0.0.1:2370}"
-
-# ---- wait for the server -------------------------------------------------
-
-echo "waiting for $URL ..."
-for _ in $(seq 1 30); do
-  curl -sfS -o /dev/null "$URL/api/health" && break
-  sleep 1
-done
-curl -sfS -o /dev/null "$URL/api/health" || {
-  echo "zeropoint-agent server at $URL did not come up" >&2
-  exit 1
-}
 
 # ---- probe host values from the agent (single source of truth) -----------
 

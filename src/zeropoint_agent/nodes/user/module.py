@@ -57,6 +57,9 @@ class TerraformResult:
     variables: Dict[str, str] = field(default_factory=dict)
     main: Optional[str] = None
     containers: Dict[str, ContainerInfo] = field(default_factory=dict)
+    # Raw terraform outputs as {name: value}. Complex values (dicts, lists)
+    # are preserved as-is. VarNodes with from_output=<name> read this dict.
+    outputs: Dict[str, Any] = field(default_factory=dict)
 
 
 # Back-compat alias for the old name; remove once nothing imports it.
@@ -212,6 +215,10 @@ class TerraformNode(INode[Any, TerraformResult]):
             module_dir=str(self._module_dir(tfvars)),
             network_name=self._required(tfvars, "zp_network_name"),
             variables=dict(tfvars),
+            # Flatten {name: {sensitive, type, value}} → {name: value} so
+            # VarNodes downstream can read outputs directly.
+            outputs={k: (v.get("value") if isinstance(v, dict) else v)
+                     for k, v in outputs.items()},
         )
 
         main_out = outputs.get("main", {})

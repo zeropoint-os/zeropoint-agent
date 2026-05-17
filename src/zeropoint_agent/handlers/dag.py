@@ -1,15 +1,11 @@
-"""DAG build and inspection endpoints."""
+"""DAG inspection + per-node mutations."""
 
-import os
 import logging
-from pathlib import Path
 from dataclasses import asdict
 
 from fastapi import APIRouter, Request, HTTPException
 
-from zeropoint_agent.dag import DAG
-from zeropoint_agent.graph_store import GraphStore
-from zeropoint_agent.handlers import NodeSpec, GraphBuildRequest, NODE_REGISTRY, node_to_dict
+from zeropoint_agent.handlers import NodeSpec, NODE_REGISTRY, node_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -32,40 +28,6 @@ def _create_node(spec: NodeSpec):
             status_code=400,
             detail=f"Invalid config for {spec.type}: {e}"
         )
-
-
-@router.post("/build")
-async def build_graph(request_body: GraphBuildRequest, request: Request):
-    """Build a complete graph from a list of node specs.
-
-    Nodes must be in topological order (parents before children).
-    Type checking happens at each edge.
-    """
-    try:
-        store_path = os.environ.get("ZEROPOINT_ROOT_PATH", ".")
-        db_path = str(Path(store_path) / "data" / "graph.db")
-
-        store = GraphStore(db_path)
-        store.clear()
-        dag = DAG(store=store)
-
-        for spec in request_body.nodes:
-            node = _create_node(spec)
-            dag.add(spec.id, node, parents=spec.parents)
-
-        request.app.state.store = store
-        request.app.state.dag = dag
-
-        return {
-            "ok": True,
-            "nodes": len(request_body.nodes),
-            "message": f"Graph built with {len(request_body.nodes)} nodes"
-        }
-    except (TypeError, KeyError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to build graph: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/nodes")

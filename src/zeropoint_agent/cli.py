@@ -51,17 +51,73 @@ def _emit(resp: requests.Response) -> None:
     sys.exit(code)
 
 
-def _request(method: str, path: str, **kwargs) -> requests.Response:
+class _InProcessResponse:
+    """Minimal duck-type of requests.Response for TestClient results."""
+
+    def __init__(self, status_code: int, text: str):
+        self.status_code = status_code
+        self.text = text
+        self.ok = 200 <= status_code < 300
+
+    def json(self):
+        return json.loads(self.text) if self.text else None
+
+
+def _request_in_process(method: str, path: str,
+                        **kwargs) -> _InProcessResponse:
+    """Dispatch a request through an in-process app (no server, no socket).
+
+    Used as a fallback when no real server is reachable. Same handlers
+    run; the only difference is there's no network. Holds the GraphStore
+    lock for the duration of the call, so this fails (loudly) if a real
+    server is already running against the same store.
+    """
+    from fastapi.testclient import TestClient
+    from zeropoint_agent.server import app
+    with TestClient(app) as client:
+        resp = client.request(method, path, **kwargs)
+        return _InProcessResponse(resp.status_code, resp.text)
+
+
+def _request(method: str, path: str, **kwargs):
+    """HTTP request to the running server, falling back to in-process.
+
+    If a server is reachable at ZEROPOINT_AGENT_URL, the request goes
+    over HTTP. Otherwise the CLI starts a transient in-process app
+    (FastAPI TestClient), runs the request, and tears down — same code
+    path as the real server, no network, no separate process.
+
+    Force one mode via ZEROPOINT_AGENT_REMOTE=1 (HTTP only; never fall
+    back) or ZEROPOINT_AGENT_LOCAL=1 (always in-process; never HTTP).
+    """
     url = _base_url() + path
+    force_local = os.environ.get("ZEROPOINT_AGENT_LOCAL")
+    force_remote = os.environ.get("ZEROPOINT_AGENT_REMOTE")
+
+    if force_local and not force_remote:
+        return _request_in_process(method, path, **kwargs)
+
     try:
         return requests.request(method, url, **kwargs)
     except requests.ConnectionError as e:
-        click.echo(json.dumps({
-            "error": "connection_failed",
-            "detail": str(e),
-            "url": url,
-        }, indent=2), err=True)
-        sys.exit(7)  # arbitrary: server unreachable
+        if force_remote:
+            click.echo(json.dumps({
+                "error": "connection_failed",
+                "detail": str(e),
+                "url": url,
+            }, indent=2), err=True)
+            sys.exit(7)
+        # Auto-fallback: no server reachable, try in-process.
+        try:
+            return _request_in_process(method, path, **kwargs)
+        except Exception as fb_err:
+            click.echo(json.dumps({
+                "error": "no_server_and_in_process_failed",
+                "http_detail": str(e),
+                "in_process_detail": str(fb_err),
+                "url": url,
+            }, indent=2), err=True)
+            sys.exit(7)
     except requests.RequestException as e:
         click.echo(json.dumps({
             "error": "request_failed",
@@ -107,7 +163,9 @@ def serve(host: str, port: int):
     The server owns the persistent DAG; CLI subcommands hit its REST API.
     """
     import uvicorn
-    from zeropoint_agent.server import app
+    from zeropoint_agent.server import app, setup_logging
+    logger = setup_logging()
+    logger.info("Zeropoint Agent starting...")
     uvicorn.run(app, host=host, port=port, log_config=None)
 
 

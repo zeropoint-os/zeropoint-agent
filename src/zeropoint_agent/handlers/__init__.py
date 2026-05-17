@@ -43,11 +43,6 @@ class NodeSpec(BaseModel):
     perms: str = "***"
 
 
-class GraphBuildRequest(BaseModel):
-    """Build a complete graph in one call."""
-    nodes: List[NodeSpec]
-
-
 class ResolveRequest(BaseModel):
     """Request to resolve the graph."""
     mode: str = "mock"

@@ -316,6 +316,23 @@ html, body, #root {
     max-width: 720px;
 }
 
+/* --- Empty state --- */
+
+.empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim);
+    text-align: center;
+    padding: 24px;
+}
+
+.empty-state-title {
+    font-size: 18px;
+    font-weight: 300;
+}
+
 /* --- Status bar --- */
 
 .status-bar {

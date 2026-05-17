@@ -58,9 +58,13 @@ def setup_logging():
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
-    logger = setup_logging()
-    logger.info("Zeropoint Agent starting...")
+    """Create and configure the FastAPI application.
+
+    Does NOT configure logging — that's the caller's job (the CLI's
+    `serve` does it; in-process callers leave the user's existing
+    logging config in place).
+    """
+    logger = logging.getLogger(__name__)
 
     app = FastAPI(title="Zeropoint Agent API", version="2.0.0")
 
@@ -80,7 +84,7 @@ def create_app() -> FastAPI:
         data_dir = Path(store_path) / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
         db_path = str(data_dir / "graph.db")
-        logger.info(f"Initializing graph store at {db_path}")
+        logger.info("Initializing graph store at %s", db_path)
         app.state.store = GraphStore(db_path)
         # DAG.__init__ rehydrates persisted nodes from the store.
         app.state.dag = DAG(store=app.state.store)
@@ -90,7 +94,7 @@ def create_app() -> FastAPI:
         # Default resolve mode used by endpoints that don't override.
         mode_str = os.environ.get("ZEROPOINT_MODE", "mock")
         app.state.default_mode = mode_str
-        logger.info(f"Default resolve mode: {mode_str}")
+        logger.info("Default resolve mode: %s", mode_str)
 
         webui_dist = Path("webui/dist")
         if webui_dist.exists():

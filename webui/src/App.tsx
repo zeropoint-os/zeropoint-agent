@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse } from './api';
-import { fetchDag, fetchHealth, resolve, loadDemoGraph } from './api';
+import { fetchDag, fetchHealth, resolve } from './api';
 import { NodeDetail } from './NodeDetail';
 import { Tile } from './Tile';
 
@@ -127,11 +127,6 @@ export function App() {
         await load();
     };
 
-    const handleLoadDemo = async () => {
-        await loadDemoGraph();
-        await load();
-    };
-
     const total = health?.graph?.nodes || 0;
     const mode = health?.mode || 'mock';
     const statusSummary = health?.graph?.statuses || {};
@@ -146,15 +141,8 @@ export function App() {
                         {isDark ? '☀' : '☾'}
                     </button>
                 </div>
-                <div class="content" style="display: flex; align-items: center; justify-content: center; flex: 1;">
-                    <div style="text-align: center; color: var(--fg-dim);">
-                        <div style="font-size: 18px; font-weight: 300; margin-bottom: 12px;">
-                            no nodes
-                        </div>
-                        <button class="btn primary" onClick={handleLoadDemo}>
-                            load demo graph
-                        </button>
-                    </div>
+                <div class="empty-state">
+                    <div class="empty-state-title">no nodes</div>
                 </div>
                 <div class="status-bar">
                     <span>0 nodes</span>

@@ -107,6 +107,29 @@ def parse_variables_tf(module_dir: Path) -> List[TfVariable]:
     return list(variables.values())
 
 
+def parse_outputs_tf(module_dir: Path) -> List[str]:
+    """Return the names of every `output "name" { … }` block in module_dir."""
+    import hcl2  # type: ignore
+
+    names: List[str] = []
+    seen: set = set()
+    for tf_file in sorted(module_dir.glob("*.tf")):
+        try:
+            with tf_file.open("r") as fh:
+                parsed = hcl2.load(fh)
+        except Exception as e:
+            logger.debug("failed to parse %s: %s", tf_file, e)
+            continue
+        for entry in parsed.get("output", []) or []:
+            for raw_name in entry.keys():
+                name = _strip_hcl_str(raw_name)
+                if name in seen:
+                    continue
+                seen.add(name)
+                names.append(name)
+    return names
+
+
 def _shallow_clone_for_inspection(url: str, sha: str) -> Path:
     """Clone into a temp dir so we can read variables.tf; caller deletes it."""
     tmp = Path(tempfile.mkdtemp(prefix="zp-modinspect-"))
@@ -179,10 +202,12 @@ def add_module(
     inspection_dir = _shallow_clone_for_inspection(url, sha)
     try:
         tf_vars = parse_variables_tf(inspection_dir)
+        tf_outputs = parse_outputs_tf(inspection_dir)
     finally:
         shutil.rmtree(inspection_dir.parent, ignore_errors=True)
 
-    logger.info("module %s declares %d variables", module_id, len(tf_vars))
+    logger.info("module %s declares %d variables, %d outputs",
+                module_id, len(tf_vars), len(tf_outputs))
 
     # Namespace for this module: modules/<module_id>. The namespace itself
     # is fully manipulable by the user (rwd) — users can rename, edit, or
@@ -268,9 +293,32 @@ def add_module(
     )
     created.append(terraform_id)
 
+    # Output VarNodes — one per declared terraform output. Each is r--
+    # (system-managed; its value comes from terraform's output, not the
+    # user) and lives under the module's namespace, with the TerraformNode
+    # as a data-flow parent so the value flows through at resolve time.
+    for out_name in tf_outputs:
+        out_id = f"{namespace_id}/{out_name}"
+        if out_id in dag.nodes:
+            # Collision with a user var or a system var sharing the name.
+            # Skip; the user can rename one or the other.
+            logger.warning(
+                "module %s output %s collides with existing node %s; "
+                "skipping the output VarNode",
+                module_id, out_name, out_id)
+            continue
+        dag.add(
+            out_id,
+            VarNode(name=out_name, from_output=out_name),
+            parents=[namespace_id, terraform_id],
+            perms="r--",
+        )
+        created.append(out_id)
+
     logger.info(
-        "added module %s at %s (created=%d wired=%d)",
+        "added module %s at %s (created=%d wired=%d outputs=%d)",
         module_id, namespace_id, len(created), len(wired_existing),
+        len(tf_outputs),
     )
 
     return AddModuleResult(
