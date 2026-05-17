@@ -4,6 +4,9 @@ interface TileProps {
     node: DagNode;
     onClick: () => void;
     childCount?: number;
+    // If provided, the tile's name is shown relative to this path (the leaf
+    // after stripping the prefix). Otherwise the full id is shown.
+    parentPath?: string;
 }
 
 function tileValue(node: DagNode): string {
@@ -25,13 +28,20 @@ function truncate(s: string, n: number): string {
     return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
-export function Tile({ node, onClick, childCount }: TileProps) {
+function displayName(id: string, parentPath?: string): string {
+    if (parentPath && id.startsWith(parentPath + '/')) {
+        return id.slice(parentPath.length + 1);
+    }
+    return id;
+}
+
+export function Tile({ node, onClick, childCount, parentPath }: TileProps) {
     return (
         <div class="tile" onClick={onClick}>
             <div>
                 <div class="tile-header">
                     <div class={`status-dot ${node.status}`} />
-                    <div class="tile-name">{node.id}</div>
+                    <div class="tile-name">{displayName(node.id, parentPath)}</div>
                 </div>
                 <div class="tile-value">
                     {tileValue(node)}

@@ -16,13 +16,19 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
     const config = node.config || {};
     const output = node.output || {};
 
+    // Split id into leaf + parent path for cleaner display.
+    const lastSlash = node.id.lastIndexOf('/');
+    const leaf = lastSlash >= 0 ? node.id.slice(lastSlash + 1) : node.id;
+    const parentPath = lastSlash >= 0 ? node.id.slice(0, lastSlash) : '';
+
     return (
         <div class="detail">
             <div class="detail-header">
                 <div class={`status-dot ${node.status}`} style="width: 14px; height: 14px;" />
-                <div class="detail-name">{node.id}</div>
+                <div class="detail-name">{leaf}</div>
             </div>
             <div class="detail-type">
+                {parentPath && <span style="opacity: 0.6;">{parentPath} · </span>}
                 {node.type} · {node.status.replace('_', ' ')}
             </div>
 
@@ -68,6 +74,7 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                                 node={c}
                                 onClick={() => onNavigate(c.id)}
                                 childCount={childrenOf(c.id).length}
+                                parentPath={node.id}
                             />
                         ))}
                     </div>
