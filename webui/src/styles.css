@@ -233,23 +233,25 @@ html, body, #root {
 }
 
 .detail-field {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(140px, 200px) 1fr;
+    gap: 24px;
     padding: 6px 0;
     font-size: 14px;
+    align-items: baseline;
 }
 
 .detail-field-key {
     font-weight: 400;
     color: var(--fg-muted);
+    text-align: left;
 }
 
 .detail-field-value {
     font-weight: 300;
-    text-align: right;
-    max-width: 60%;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    text-align: left;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .detail-field-value.var-ref {
@@ -259,6 +261,27 @@ html, body, #root {
 
 .detail-field-value.var-ref:hover {
     text-decoration: underline;
+}
+
+.nested-value {
+    display: block;
+    width: 100%;
+}
+
+.nested-field {
+    padding: 2px 0 !important;
+    font-size: 13px;
+    grid-template-columns: minmax(100px, 160px) 1fr;
+    gap: 16px;
+}
+
+.nested-row {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--tile-bg);
+}
+
+.nested-row:last-child {
+    border-bottom: none;
 }
 
 .detail-error {
@@ -313,7 +336,6 @@ html, body, #root {
 .content {
     flex: 1;
     overflow-y: auto;
-    max-width: 720px;
 }
 
 /* --- Empty state --- */

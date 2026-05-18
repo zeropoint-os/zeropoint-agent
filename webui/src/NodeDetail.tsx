@@ -62,10 +62,10 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                     <div class="detail-section-title">properties</div>
                     {props.map(([key, value]) => (
                         <div class="detail-field" key={key}>
-                            <span class="detail-field-key">{key}</span>
-                            <span class={`detail-field-value ${isVarRef(value) ? 'var-ref' : ''}`}>
+                            <div class="detail-field-key">{key}</div>
+                            <div class={`detail-field-value ${isVarRef(value) ? 'var-ref' : ''}`}>
                                 <Value value={value} />
-                            </span>
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -112,9 +112,9 @@ function Value({ value }: { value: any }) {
     if (Array.isArray(value)) {
         if (value.length === 0) return <span>—</span>;
         return (
-            <div style="padding-left: 0; margin-top: 4px;">
+            <div class="nested-value">
                 {value.map((item, i) => (
-                    <div key={i} style="padding: 4px 0; border-bottom: 1px solid var(--tile-bg);">
+                    <div class="nested-row" key={i}>
                         <Value value={item} />
                     </div>
                 ))}
@@ -126,13 +126,13 @@ function Value({ value }: { value: any }) {
         const entries = Object.entries(value).filter(([_, v]) => v !== null && v !== undefined);
         if (entries.length === 0) return <span>—</span>;
         return (
-            <div style="margin-top: 4px;">
+            <div class="nested-value">
                 {entries.map(([k, v]) => (
-                    <div class="detail-field" key={k} style="padding: 2px 0;">
-                        <span class="detail-field-key" style="font-size: 12px;">{k}</span>
-                        <span class="detail-field-value" style="font-size: 12px;">
+                    <div class="detail-field nested-field" key={k}>
+                        <div class="detail-field-key">{k}</div>
+                        <div class="detail-field-value">
                             <Value value={v} />
-                        </span>
+                        </div>
                     </div>
                 ))}
             </div>
