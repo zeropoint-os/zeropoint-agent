@@ -66,9 +66,81 @@ html, body, #root {
     letter-spacing: 0.5px;
 }
 
+.perms-grant { color: var(--fg); }
+.perms-wild  { color: var(--fg-muted); }
+.perms-veto  { color: var(--fg-dim); }
+.perms-other { color: var(--status-error, #e88); }
+
 .perms-effective {
     color: var(--fg-muted);
     margin-left: 4px;
+}
+
+.widget-empty {
+    color: var(--fg-dim);
+    font-style: italic;
+}
+
+.widget-path {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 0.95em;
+}
+
+.widget-list {
+    margin: 0;
+    padding-left: 16px;
+    list-style: none;
+}
+
+.widget-list li {
+    padding: 2px 0;
+}
+
+/* --- Disclosure (chevron-style collapsible) --- */
+
+.widget-object {
+    display: block;
+}
+
+.disclosure {
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+}
+
+.disclosure:hover .disclosure-summary {
+    color: var(--fg);
+}
+
+.disclosure-chevron {
+    display: inline-block;
+    width: 12px;
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 0.85em;
+    transition: transform 80ms ease;
+}
+
+.disclosure-summary {
+    color: var(--fg-muted);
+    font-style: italic;
+    font-size: 0.95em;
+}
+
+.widget-object-body {
+    margin-top: 6px;
+    margin-left: 14px;
+    padding-left: 8px;
+    border-left: 1px solid var(--tile-bg, rgba(255,255,255,0.08));
 }
 
 /* --- Pivot tabs --- */
@@ -261,27 +333,6 @@ html, body, #root {
 
 .detail-field-value.var-ref:hover {
     text-decoration: underline;
-}
-
-.nested-value {
-    display: block;
-    width: 100%;
-}
-
-.nested-field {
-    padding: 2px 0 !important;
-    font-size: 13px;
-    grid-template-columns: minmax(100px, 160px) 1fr;
-    gap: 16px;
-}
-
-.nested-row {
-    padding: 4px 0;
-    border-bottom: 1px solid var(--tile-bg);
-}
-
-.nested-row:last-child {
-    border-bottom: none;
 }
 
 .detail-error {

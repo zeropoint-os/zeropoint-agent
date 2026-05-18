@@ -38,6 +38,30 @@ export interface ResolveResponse {
     nodes: DagNode[];
 }
 
+/** Schema for a single field on a node class. */
+export interface FieldSchema {
+    name: string;
+    type: string;             // "string" | "number" | "bool" | "list" | "dict" | "any" | ...
+    required?: boolean;
+    nullable?: boolean;
+    default?: any;
+    description?: string;
+}
+
+/** Schema for one node class. */
+export interface NodeTypeSchema {
+    type: string;
+    module: string;
+    default_perms: string;
+    doc: string;
+    fields: FieldSchema[];
+}
+
+export interface NodeTypesResponse {
+    ok: boolean;
+    types: Record<string, NodeTypeSchema>;  // keyed by registry short name
+}
+
 const BASE = '/api';
 
 export async function fetchDag(): Promise<DagResponse> {
@@ -56,5 +80,10 @@ export async function resolve(mode: string = 'mock'): Promise<ResolveResponse> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode }),
     });
+    return r.json();
+}
+
+export async function fetchNodeTypes(): Promise<NodeTypesResponse> {
+    const r = await fetch(`${BASE}/node-types`);
     return r.json();
 }

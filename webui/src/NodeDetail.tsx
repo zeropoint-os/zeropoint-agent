@@ -1,20 +1,16 @@
-import type { DagNode, DagEdge } from './api';
+import type { DagNode, DagEdge, NodeTypeSchema } from './api';
 import { Tile } from './Tile';
+import { PropertyInspector } from './PropertyInspector';
 
 interface Props {
     node: DagNode;
     allNodes: DagNode[];
     edges: DagEdge[];
     onNavigate: (id: string) => void;
+    schema?: NodeTypeSchema;
 }
 
-// Fields rendered in the detail header — don't repeat them in the property list.
-const HEADER_FIELDS = new Set(['id', 'type', 'status']);
-
-// Fields that have their own dedicated section.
-const SECTION_FIELDS = new Set(['error']);
-
-export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
+export function NodeDetail({ node, allNodes, edges, onNavigate, schema }: Props) {
     const nodeMap = new Map(allNodes.map(n => [n.id, n]));
     const childrenOf = (id: string) => edges.filter(e => e.source === id).map(e => nodeMap.get(e.target)).filter(Boolean) as DagNode[];
     const children = childrenOf(node.id);
@@ -23,22 +19,6 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
     const lastSlash = node.id.lastIndexOf('/');
     const leaf = lastSlash >= 0 ? node.id.slice(lastSlash + 1) : node.id;
     const parentPath = lastSlash >= 0 ? node.id.slice(0, lastSlash) : '';
-
-    // Flatten config dict into top-level properties, treat every other
-    // top-level field of the node response as a property. Property
-    // inspector — render whatever the server says the node carries.
-    const props: Array<[string, any]> = [];
-    for (const [key, value] of Object.entries(node)) {
-        if (HEADER_FIELDS.has(key)) continue;
-        if (SECTION_FIELDS.has(key)) continue;
-        if (key === 'config' && value && typeof value === 'object') {
-            for (const [ck, cv] of Object.entries(value)) {
-                props.push([ck, cv]);
-            }
-            continue;
-        }
-        props.push([key, value]);
-    }
 
     return (
         <div class="detail">
@@ -57,19 +37,7 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
                 </div>
             )}
 
-            {props.length > 0 && (
-                <div class="detail-section">
-                    <div class="detail-section-title">properties</div>
-                    {props.map(([key, value]) => (
-                        <div class="detail-field" key={key}>
-                            <div class="detail-field-key">{key}</div>
-                            <div class={`detail-field-value ${isVarRef(value) ? 'var-ref' : ''}`}>
-                                <Value value={value} />
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
+            <PropertyInspector node={node} schema={schema} />
 
             {children.length > 0 && (
                 <div class="detail-section">
@@ -97,47 +65,4 @@ export function NodeDetail({ node, allNodes, edges, onNavigate }: Props) {
             </div>
         </div>
     );
-}
-
-function isVarRef(value: any): boolean {
-    return typeof value === 'string' && value.startsWith('${') && value.endsWith('}');
-}
-
-function Value({ value }: { value: any }) {
-    if (value === null || value === undefined || value === '') return <span>—</span>;
-    if (typeof value === 'boolean') return <span>{value ? 'true' : 'false'}</span>;
-    if (typeof value === 'string' || typeof value === 'number')
-        return <span>{String(value)}</span>;
-
-    if (Array.isArray(value)) {
-        if (value.length === 0) return <span>—</span>;
-        return (
-            <div class="nested-value">
-                {value.map((item, i) => (
-                    <div class="nested-row" key={i}>
-                        <Value value={item} />
-                    </div>
-                ))}
-            </div>
-        );
-    }
-
-    if (typeof value === 'object') {
-        const entries = Object.entries(value).filter(([_, v]) => v !== null && v !== undefined);
-        if (entries.length === 0) return <span>—</span>;
-        return (
-            <div class="nested-value">
-                {entries.map(([k, v]) => (
-                    <div class="detail-field nested-field" key={k}>
-                        <div class="detail-field-key">{k}</div>
-                        <div class="detail-field-value">
-                            <Value value={v} />
-                        </div>
-                    </div>
-                ))}
-            </div>
-        );
-    }
-
-    return <span>{String(value)}</span>;
 }

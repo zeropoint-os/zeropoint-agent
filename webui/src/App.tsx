@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
-import type { DagNode, DagEdge, HealthResponse } from './api';
-import { fetchDag, fetchHealth, resolve } from './api';
+import type { DagNode, DagEdge, HealthResponse, NodeTypeSchema } from './api';
+import { fetchDag, fetchHealth, fetchNodeTypes, resolve } from './api';
 import { NodeDetail } from './NodeDetail';
 import { Tile } from './Tile';
 
@@ -42,6 +42,22 @@ export function App() {
         return id ? [id] : [];
     });
     const currentId = navStack.length > 0 ? navStack[navStack.length - 1] : null;
+
+    // Node-type schemas, fetched once and cached. Used by the property
+    // inspector to drive widget selection per field. We re-key by the
+    // class name (matching DagNode.type) for easier lookup.
+    const [nodeTypes, setNodeTypes] = useState<Record<string, NodeTypeSchema>>({});
+    useEffect(() => {
+        fetchNodeTypes()
+            .then(r => {
+                const byClass: Record<string, NodeTypeSchema> = {};
+                for (const s of Object.values(r.types || {})) {
+                    byClass[s.type] = s;
+                }
+                setNodeTypes(byClass);
+            })
+            .catch(e => console.error('Failed to load node types:', e));
+    }, []);
 
     // Apply theme
     useEffect(() => {
@@ -234,6 +250,7 @@ export function App() {
                         allNodes={nodes}
                         edges={edges}
                         onNavigate={(id) => navigate(id)}
+                        schema={nodeTypes[current.type]}
                     />
                 )}
             </div>
