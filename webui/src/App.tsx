@@ -43,20 +43,25 @@ export function App() {
     });
     const currentId = navStack.length > 0 ? navStack[navStack.length - 1] : null;
 
-    // Node-type schemas, fetched once and cached. Used by the property
-    // inspector to drive widget selection per field. We re-key by the
-    // class name (matching DagNode.type) for easier lookup.
-    const [nodeTypes, setNodeTypes] = useState<Record<string, NodeTypeSchema>>({});
+    // Type schemas, fetched once. Indexed two ways:
+    //   - schemasByPickerName: short name → schema (for the type picker)
+    //   - schemasByClassName:  class name → schema (for matching DagNode.type)
+    const [schemasByPickerName, setSchemasByPickerName] =
+        useState<Record<string, NodeTypeSchema>>({});
+    const [schemasByClassName, setSchemasByClassName] =
+        useState<Record<string, NodeTypeSchema>>({});
     useEffect(() => {
         fetchNodeTypes()
             .then(r => {
+                const byPicker = r.types || {};
                 const byClass: Record<string, NodeTypeSchema> = {};
-                for (const s of Object.values(r.types || {})) {
-                    byClass[s.type] = s;
+                for (const s of Object.values(byPicker)) {
+                    if (s.class_name) byClass[s.class_name] = s;
                 }
-                setNodeTypes(byClass);
+                setSchemasByPickerName(byPicker);
+                setSchemasByClassName(byClass);
             })
-            .catch(e => console.error('Failed to load node types:', e));
+            .catch(e => console.error('Failed to load type schemas:', e));
     }, []);
 
     // Apply theme
@@ -250,7 +255,8 @@ export function App() {
                         allNodes={nodes}
                         edges={edges}
                         onNavigate={(id) => navigate(id)}
-                        schema={nodeTypes[current.type]}
+                        schema={schemasByClassName[current.type]}
+                        pickerSchemas={schemasByPickerName}
                     />
                 )}
             </div>

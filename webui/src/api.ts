@@ -48,18 +48,21 @@ export interface FieldSchema {
     description?: string;
 }
 
-/** Schema for one node class. */
+/** Schema for one creatable thing (node class or meta-operation). */
 export interface NodeTypeSchema {
-    type: string;
-    module: string;
-    default_perms: string;
-    doc: string;
+    type: string;             // short picker name
+    kind: 'node' | 'operation';
+    endpoint: string;
     fields: FieldSchema[];
+    class_name?: string;      // only set for kind='node'
+    module?: string;
+    default_perms?: string;
+    doc?: string;
 }
 
 export interface NodeTypesResponse {
     ok: boolean;
-    types: Record<string, NodeTypeSchema>;  // keyed by registry short name
+    types: Record<string, NodeTypeSchema>;  // keyed by short name
 }
 
 const BASE = '/api';
