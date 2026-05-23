@@ -39,13 +39,19 @@ def _valid_perms(perms: str) -> bool:
 
 
 def _get_io_types(node: INode) -> tuple:
-    """Extract (I, O) type params from an INode subclass."""
-    for base in getattr(type(node), "__orig_bases__", ()):
-        origin = getattr(base, "__origin__", None)
-        if origin is INode:
-            args = get_args(base)
-            if len(args) == 2:
-                return args
+    """Extract (I, O) type params from an INode subclass.
+
+    Walks the MRO to handle indirect parameterization, e.g.
+    NamespacedVar(VarNode[str]) where INode[Any, VarResult[T]] is
+    declared on VarNode, not on NamespacedVar directly.
+    """
+    for cls in type(node).__mro__:
+        for base in getattr(cls, "__orig_bases__", ()):
+            origin = getattr(base, "__origin__", None)
+            if origin is INode:
+                args = get_args(base)
+                if len(args) == 2:
+                    return args
     raise TypeError(f"{type(node).__name__} does not properly parameterize INode[I, O]")
 
 

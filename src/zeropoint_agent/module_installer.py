@@ -5,11 +5,12 @@ After this returns, calling `dag.resolve()` will run terraform.
 Layout produced under `modules/<module_id>`:
 
     modules/<module_id>                          NamespaceNode
-    ├── zp_module_id                             VarNode from_path="leaf"
-    ├── zp_network_name                          VarNode from_path="zeropoint-module-{full-dashed}"
-    ├── zp_module_dir                           DirectoryVar  (agent's terraform cwd)
-    ├── zp_storage_dir                          DirectoryVar  (module's isolated data root)
-    ├── <each user var from variables.tf>        VarNode literal (or override)
+    ├── zp_module_id                             NamespacedVar  spec="leaf"
+    ├── zp_network_name                          NamespacedVar  spec="zeropoint-module-{full-dashed}"
+    ├── zp_module_dir                            DirectoryVar   (agent's terraform cwd)
+    ├── zp_storage_dir                           DirectoryVar   (module's isolated data root)
+    ├── <each user var from variables.tf>        VarNode        literal (or override)
+    ├── <each terraform output>                  OutputVar      reads parent.outputs[<name>]
     └── terraform                                TerraformNode
 
 Two DirectoryVars carry the agent's two filesystem promises about a module:
@@ -26,7 +27,7 @@ Two DirectoryVars carry the agent's two filesystem promises about a module:
 
 The TerraformNode depends on:
   - the namespace (provides path)
-  - every VarNode child of the namespace (user vars + auto-derived system vars)
+  - every VarNode-like child of the namespace (user vars + system vars)
   - any global system VarNodes living elsewhere (e.g. `settings/zp_arch`)
 
 No literal magic strings are stored — `zp_module_id` and
@@ -47,6 +48,8 @@ from typing import Any, Dict, List, Optional
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.nodes.config.namespace import NamespaceNode
+from zeropoint_agent.nodes.config.namespaced import NamespacedVar
+from zeropoint_agent.nodes.config.output import OutputVar
 from zeropoint_agent.nodes.config.directory import DirectoryVar
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.user.module import (
@@ -274,11 +277,11 @@ def add_module(
     # These are system-managed: their value is derived from the namespace
     # path, so editing makes no sense (r--). They live for the lifetime of
     # the namespace and shouldn't be removed independently.
-    for varname, from_path_spec in _PER_MODULE_SYSTEM_VARS.items():
+    for varname, spec in _PER_MODULE_SYSTEM_VARS.items():
         node_id = f"{namespace_id}/{varname}"
         dag.add(
             node_id,
-            VarNode(name=varname, from_path=from_path_spec),
+            NamespacedVar(name=varname, spec=spec),
             parents=[namespace_id],
             perms="r--",
         )
@@ -386,12 +389,12 @@ def add_module(
             # Skip; the user can rename one or the other.
             logger.warning(
                 "module %s output %s collides with existing node %s; "
-                "skipping the output VarNode",
+                "skipping the OutputVar",
                 module_id, out_name, out_id)
             continue
         dag.add(
             out_id,
-            VarNode(name=out_name, from_output=out_name),
+            OutputVar(name=out_name, key=out_name),
             parents=[namespace_id, terraform_id],
             perms="r--",
         )

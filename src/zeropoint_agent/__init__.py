@@ -8,7 +8,7 @@ from .nodes import (
     ShellScriptNode,
     NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
     DiskNode, PartitionNode, FormatNode, MountNode, MountDir,
-    VarNode, DirectoryVar, NamespaceNode,
+    VarNode, NamespacedVar, OutputVar, DirectoryVar, NamespaceNode,
     ModuleNode, TerraformNode, LinkNode, ExposureNode,
 )
 
@@ -24,7 +24,7 @@ __all__ = [
     "ShellScriptNode", "ShellScriptResult",
     "NetworkNode", "DockerNode", "NvidiaGpuNode", "AmdGpuNode",
     "DiskNode", "PartitionNode", "FormatNode", "MountNode", "MountDir",
-    "VarNode", "DirectoryVar", "NamespaceNode",
+    "VarNode", "NamespacedVar", "OutputVar", "DirectoryVar", "NamespaceNode",
     "ModuleNode", "TerraformNode", "LinkNode", "ExposureNode",
     "NetworkResult", "DockerResult", "NvidiaGpuResult", "AmdGpuResult",
     "DiskResult", "PartitionResult", "FormatResult", "MountResult", "MountDirResult",

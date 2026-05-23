@@ -9,7 +9,7 @@ from zeropoint_agent import (
     ShellScriptNode,
     NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
     DiskNode, PartitionNode, FormatNode, MountNode, MountDir,
-    VarNode, DirectoryVar, NamespaceNode,
+    VarNode, NamespacedVar, OutputVar, DirectoryVar, NamespaceNode,
     ModuleNode, TerraformNode, LinkNode, ExposureNode,
 )
 
@@ -26,6 +26,8 @@ NODE_REGISTRY = {
     "mount": MountNode,
     "mountdir": MountDir,
     "var": VarNode,
+    "namespaced": NamespacedVar,
+    "output": OutputVar,
     "dir": DirectoryVar,
     "namespace": NamespaceNode,
     "module": ModuleNode,         # back-compat alias for terraform

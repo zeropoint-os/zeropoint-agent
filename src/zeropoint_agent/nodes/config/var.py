@@ -1,78 +1,53 @@
-"""VarNode — a named value.
+"""VarNode — a named, typed value.
 
-A VarNode produces a `VarResult(name, value)`. Four modes for how the
-value is determined, in priority order:
+A VarNode produces a `VarResult[T](name, value)`. There are three
+concrete shapes — each genuinely different, hence its own class:
 
-  - **Literal**: `VarNode(name="model", value="llama3")`
-    Value is the constructor literal.
+  - **VarNode** (this file) — holds a literal `T`, OR forwards from a
+    VarNode parent ("passthrough"). The user-editable case.
 
-  - **Path-derived**: `VarNode(name="zp_module_id", from_path="leaf")`
-    Value is computed from the inherited namespace path.
+  - **NamespacedVar** (`namespaced.py`) — derives its value from its
+    inherited namespace path via a template spec like "leaf",
+    "full", or "zeropoint-module-{full-dashed}". Installer-created;
+    not user-authored.
 
-  - **Output-derived**: `VarNode(name="redis_url", from_output="redis_url")`
-    Value is pulled from a parent's outputs dict (typically a
-    TerraformResult); useful for surfacing module outputs as VarNodes.
+  - **OutputVar** (`output.py`) — reads its value from a parent's
+    `outputs` dict. Installer-created (e.g. one per terraform
+    output); not user-authored.
 
-  - **Passthrough**: `VarNode(name="zp_arch_override")` (no value, parent
-    is another VarNode)
-    Value is the parent VarNode's value.
+VarResult and VarNode are generic over `T` so the type system knows
+what a VarNode produces. Pickers and consumers use the parameter to
+filter compatible link targets.
 
-The mode is chosen by which constructor args are set, in priority:
-  from_path > from_output > value > (otherwise passthrough)
+The base VarNode runtime is two-mode: literal first, passthrough as
+fallback. The mode is implicit in graph structure — a VarNode with a
+VarNode parent and no literal forwards; one with a literal emits it.
+No flags, no special cases beyond the single fallback.
 """
 
-import json
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Generic, Optional, TypeVar
 
 from zeropoint_agent.inode import INode, ResolveMode, NodeResult
-from zeropoint_agent.nodes.config.namespace import NamespaceResult
 
 logger = logging.getLogger(__name__)
 
 
+T = TypeVar("T")
+
+
 @dataclass
-class VarResult:
-    """Contract for a variable node."""
+class VarResult(Generic[T]):
+    """Contract for a value-producing node. `value` is whatever T is."""
     name: str
-    value: str
+    value: T
 
 
-def _derive_from_path(path: str, spec: str) -> str:
-    if not path:
-        return ""
-    leaf = path.rsplit("/", 1)[-1]
-    full = path
-    full_dashed = path.replace("/", "-")
-    if spec == "leaf":
-        return leaf
-    if spec == "full":
-        return full
-    if spec == "full-dashed":
-        return full_dashed
-    if "{" in spec:
-        return (spec
-                .replace("{leaf}", leaf)
-                .replace("{full-dashed}", full_dashed)
-                .replace("{full}", full))
-    logger.warning("Unknown from_path spec %r; using literal", spec)
-    return spec
-
-
-def _inherited_path(input_val: Any) -> Optional[str]:
-    if input_val is None:
-        return None
-    if isinstance(input_val, NamespaceResult):
-        return input_val.path
-    if isinstance(input_val, dict):
-        for v in input_val.values():
-            if isinstance(v, NamespaceResult):
-                return v.path
-    return None
-
-
-def _passthrough_value(input_val: Any) -> Optional[str]:
+def _passthrough_value(input_val: Any) -> Optional[Any]:
+    """Pull a value off the first VarResult in `input_val`."""
     if isinstance(input_val, VarResult):
         return input_val.value
     if isinstance(input_val, dict):
@@ -82,97 +57,40 @@ def _passthrough_value(input_val: Any) -> Optional[str]:
     return None
 
 
-def _output_value(input_val: Any, output_name: str) -> Optional[str]:
-    """Pull a named entry out of a parent's ``outputs`` dict.
+class VarNode(INode[Any, VarResult[T]], Generic[T]):
+    """A named value of type T. Holds a literal OR forwards from a VarNode parent.
 
-    Looks for any parent whose output is a dataclass-like with an
-    ``outputs`` attribute (e.g., TerraformResult) OR a dict with an
-    "outputs" key (the dataclass's rehydrated-from-store form). Returns
-    the JSON-encoded value if the field is complex, or str(value) otherwise.
-    """
-    def _from_outputs(holder: Any) -> Optional[str]:
-        # Dataclass form (live runtime).
-        outputs = getattr(holder, "outputs", None)
-        # Dict form (rehydrated from store via asdict()).
-        if outputs is None and isinstance(holder, dict):
-            outputs = holder.get("outputs")
-        if isinstance(outputs, dict) and output_name in outputs:
-            val = outputs[output_name]
-            if isinstance(val, (dict, list)):
-                return json.dumps(val)
-            if val is None:
-                return ""
-            return str(val)
-        return None
+    The mode is implicit:
+      - `value` is set    → literal mode; emit it.
+      - `value` is None   → passthrough mode; emit the parent VarNode's value.
 
-    direct = _from_outputs(input_val)
-    if direct is not None:
-        return direct
-    if isinstance(input_val, dict):
-        for v in input_val.values():
-            got = _from_outputs(v)
-            if got is not None:
-                return got
-    return None
-
-
-class VarNode(INode[Any, VarResult]):
-    """A named value: literal, passthrough, path-derived, or output-derived.
-
-    See module docstring for mode selection rules.
+    Linking (picker UX) sets value to None and adds a parent edge; the
+    runtime fallback then handles the value-walking.
     """
 
-    def __init__(self, name: str,
-                 value: Optional[str] = None,
-                 from_path: Optional[str] = None,
-                 from_output: Optional[str] = None):
+    def __init__(self, name: str, value: Optional[T] = None):
         self.name = name
         self.value = value
-        self.from_path = from_path
-        self.from_output = from_output
 
-    def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult]:
-        # Path-derived
-        if self.from_path is not None:
-            path = _inherited_path(input)
-            if path is None:
-                return NodeResult.failed(
-                    f"VarNode {self.name} has from_path={self.from_path!r} "
-                    f"but no NamespaceNode parent provided a path")
-            value = _derive_from_path(path, self.from_path)
-            return NodeResult.success(VarResult(name=self.name, value=value))
-
-        # Output-derived
-        if self.from_output is not None:
-            val = _output_value(input, self.from_output)
-            if val is None:
-                return NodeResult.failed(
-                    f"VarNode {self.name} has from_output={self.from_output!r} "
-                    f"but no parent provided an 'outputs' dict with that key")
-            return NodeResult.success(VarResult(name=self.name, value=val))
-
-        # Literal
+    def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult[T]]:
+        # Literal mode.
         if self.value is not None:
             return NodeResult.success(VarResult(name=self.name, value=self.value))
 
-        # Passthrough
+        # Passthrough mode (linked to another VarNode).
         pv = _passthrough_value(input)
         if pv is not None:
             return NodeResult.success(VarResult(name=self.name, value=pv))
 
         return NodeResult.failed(
-            f"VarNode {self.name} has no value, from_path, from_output, "
-            f"or VarResult parent")
+            f"VarNode {self.name} has no value and no VarNode parent to forward from")
 
-    def verify(self, mode: ResolveMode) -> NodeResult[VarResult]:
-        # Literal: always verified.
-        if (self.value is not None
-                and self.from_path is None
-                and self.from_output is None):
+    def verify(self, mode: ResolveMode) -> NodeResult[VarResult[T]]:
+        # Literal is always verified; anything else needs resolve.
+        if self.value is not None:
             return NodeResult.success(VarResult(name=self.name, value=self.value))
-        # Anything else: must run resolve() to compute the value.
-        return NodeResult.pending_reboot(VarResult(name=self.name, value=""))
+        return NodeResult.pending_reboot(VarResult(name=self.name, value=None))  # type: ignore[arg-type]
 
-    def remove(self, mode: ResolveMode) -> NodeResult[VarResult]:
+    def remove(self, mode: ResolveMode) -> NodeResult[VarResult[T]]:
         return NodeResult.success()
 

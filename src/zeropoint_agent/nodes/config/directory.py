@@ -1,9 +1,9 @@
 """DirectoryVar — a VarNode whose value is a filesystem path the agent owns.
 
-A DirectoryVar is a regular VarNode in every observable way: it produces
-a `VarResult(name, value)`, it can be literal, path-derived, output-
-derived, or passthrough, and downstream consumers can't tell the
-difference from a vanilla VarNode.
+A DirectoryVar is a regular VarNode[str] in every observable way: it
+produces a `VarResult[str](name, value)`, can hold a literal path or
+be linked to another VarNode[str], and downstream consumers can't
+tell the difference from a vanilla VarNode.
 
 What's special is what happens **when its `value` is edited**. The
 agent treats `value` as the canonical location of a directory it owns:
@@ -127,7 +127,7 @@ def _safe_move(old: Path, new: Path) -> None:
             "(new location %s is good); leaking disk space", old, new)
 
 
-class DirectoryVar(VarNode):
+class DirectoryVar(VarNode[str]):
     """A VarNode whose value is a directory path the agent owns.
 
     Editing `value` moves the directory before the new value is
@@ -136,9 +136,8 @@ class DirectoryVar(VarNode):
 
     def on_config_changed(self, old_config: dict, new_config: dict,
                           mode: ResolveMode) -> None:
-        # We only react to a change in `value`; the other VarNode
-        # fields (name, from_path, from_output) don't have on-disk
-        # consequences.
+        # We only react to a change in `value`. `name` doesn't have
+        # on-disk consequences.
         old_value = old_config.get("value")
         new_value = new_config.get("value")
         if old_value == new_value:
