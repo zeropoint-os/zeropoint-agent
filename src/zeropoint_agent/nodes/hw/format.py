@@ -21,12 +21,12 @@ class FormatResult:
     uuid: Optional[str] = None
 
 
+@dataclass
 class Format(INode[PartitionResult, FormatResult]):
     """Creates a filesystem on a parent partition."""
 
-    def __init__(self, filesystem: str = "ext4", label: Optional[str] = None):
-        self.filesystem = filesystem
-        self.label = label
+    filesystem: str = "ext4"
+    label: Optional[str] = None
 
     def resolve(self, input: PartitionResult, mode: ResolveMode) -> NodeResult[FormatResult]:
         result = FormatResult(

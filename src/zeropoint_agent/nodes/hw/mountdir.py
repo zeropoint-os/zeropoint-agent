@@ -19,12 +19,12 @@ class MountDirResult:
     is_dir: bool = True
 
 
+@dataclass
 class MountDir(INode[MountResult, MountDirResult]):
     """Creates a directory on a mounted filesystem."""
 
-    def __init__(self, path: str, mode: str = "0755"):
-        self.path = path
-        self.mode = mode
+    path: str
+    mode: str = "0755"
 
     def resolve(self, input: MountResult, mode: ResolveMode) -> NodeResult[MountDirResult]:
         result = MountDirResult(path=self.path, mode=self.mode)

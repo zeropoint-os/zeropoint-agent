@@ -41,6 +41,7 @@ def _version() -> Optional[str]:
     return None
 
 
+@dataclass
 class AmdGpu(INode[None, AmdGpuResult]):
 
     def resolve(self, input: None, mode: ResolveMode) -> NodeResult[AmdGpuResult]:

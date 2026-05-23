@@ -19,12 +19,12 @@ class MountResult:
     options: str = "defaults"
 
 
+@dataclass
 class Mount(INode[FormatResult, MountResult]):
     """Mounts a formatted partition at a mountpoint."""
 
-    def __init__(self, mountpoint: str, options: str = "defaults"):
-        self.mountpoint = mountpoint
-        self.options = options
+    mountpoint: str
+    options: str = "defaults"
 
     def resolve(self, input: FormatResult, mode: ResolveMode) -> NodeResult[MountResult]:
         result = MountResult(

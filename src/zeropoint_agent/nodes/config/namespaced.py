@@ -12,6 +12,7 @@ the next resolve — no literal strings to update.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from zeropoint_agent.inode import ResolveMode, NodeResult
@@ -65,15 +66,11 @@ def _inherited_path(input_val: Any) -> Optional[str]:
     return None
 
 
+@dataclass
 class NamespacedVar(Var[str]):
     """Var whose value is computed from its inherited namespace path."""
 
-    def __init__(self, name: str, spec: str, value: Optional[str] = None):
-        # `value` is accepted but ignored — NamespacedVar computes its
-        # value at resolve time. Tolerating it makes the store round-trip
-        # (which serializes every public attr) work without surgery.
-        super().__init__(name=name, value=None)
-        self.spec = spec
+    spec: str = "leaf"
 
     def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult[str]]:
         path = _inherited_path(input)

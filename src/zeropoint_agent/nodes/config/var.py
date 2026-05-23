@@ -57,6 +57,7 @@ def _passthrough_value(input_val: Any) -> Optional[Any]:
     return None
 
 
+@dataclass
 class Var(INode[Any, VarResult[T]], Generic[T]):
     """A named value of type T. Holds a literal OR forwards from a Var parent.
 
@@ -68,9 +69,8 @@ class Var(INode[Any, VarResult[T]], Generic[T]):
     runtime fallback then handles the value-walking.
     """
 
-    def __init__(self, name: str, value: Optional[T] = None):
-        self.name = name
-        self.value = value
+    name: str
+    value: Optional[T] = None
 
     def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult[T]]:
         # Literal mode.

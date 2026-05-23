@@ -1,7 +1,8 @@
 """Mutation endpoints — update and delete nodes."""
 
+import dataclasses
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, FrozenSet
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Request, HTTPException
@@ -34,6 +35,16 @@ def _node_config_dict(node) -> Dict[str, Any]:
     a clean before/after picture without leaking internal state.
     """
     return {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
+
+
+def _readonly_fields(cls: type) -> FrozenSet[str]:
+    """Names of dataclass fields marked readonly via `readonly()` helper."""
+    if not dataclasses.is_dataclass(cls):
+        return frozenset()
+    return frozenset(
+        f.name for f in dataclasses.fields(cls)
+        if f.metadata.get("readonly")
+    )
 
 
 def _resolve_mode(request: Request) -> ResolveMode:
@@ -90,11 +101,18 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
     if config is not None:
         if not isinstance(config, dict):
             raise HTTPException(status_code=400, detail="config must be an object")
+        readonly_fields = _readonly_fields(type(entry.node))
         for key in config:
             if not hasattr(entry.node, key):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unknown config field '{key}' for "
+                           f"{type(entry.node).__name__}",
+                )
+            if key in readonly_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field '{key}' is read-only on "
                            f"{type(entry.node).__name__}",
                 )
 

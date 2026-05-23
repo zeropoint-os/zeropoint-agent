@@ -22,13 +22,13 @@ class PartitionResult:
     label: Optional[str] = None
 
 
+@dataclass
 class Partition(INode[DiskResult, PartitionResult]):
     """Creates a partition on a parent disk."""
 
-    def __init__(self, number: int, size_mb: int, type: str = "83"):
-        self.number = number
-        self.size_mb = size_mb
-        self.type = type
+    number: int
+    size_mb: int
+    type: str = "83"
 
     def resolve(self, input: DiskResult, mode: ResolveMode) -> NodeResult[PartitionResult]:
         stable_id = f"{input.stable_id}-part{self.number}"

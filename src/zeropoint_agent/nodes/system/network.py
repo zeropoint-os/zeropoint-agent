@@ -19,11 +19,11 @@ class NetworkResult:
     up: bool = False
 
 
+@dataclass
 class Network(INode[None, NetworkResult]):
     """Observes network interface state. Read-only root node."""
 
-    def __init__(self, interface: str = "eth0"):
-        self.interface = interface
+    interface: str = "eth0"
 
     def _probe(self) -> NetworkResult:
         """Probe the real interface state."""

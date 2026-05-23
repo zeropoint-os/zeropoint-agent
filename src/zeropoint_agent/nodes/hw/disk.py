@@ -20,11 +20,11 @@ class DiskResult:
     sector_size: int = 512
 
 
+@dataclass
 class Disk(INode[None, DiskResult]):
     """Discovers/registers a disk by stable ID. Root node."""
 
-    def __init__(self, stable_id: str):
-        self.stable_id = stable_id
+    stable_id: str
 
     def _probe(self) -> Optional[DiskResult]:
         by_id = f"/dev/disk/by-id/{self.stable_id}"

@@ -10,12 +10,17 @@ Each schema describes:
   - `fields`   — the form fields the user fills in
   - extra metadata (default_perms for nodes, doc for both)
 
+Each field carries `readonly: bool`, derived from dataclass field
+metadata (set via the `readonly()` helper in inode.py). Fields with
+`readonly=true` cannot be PUT to — the mutation handler enforces this.
+
 The UI renders any schema uniformly; the only per-kind logic is how
 the form values are assembled into the request body when saving.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import typing
 from typing import Any, Dict, List, Optional
@@ -61,36 +66,47 @@ def _type_name(annotation: Any) -> str:
 
 
 def _is_optional(annotation: Any) -> bool:
-    if annotation is inspect.Parameter.empty:
-        return False
     origin = typing.get_origin(annotation)
     if origin is typing.Union:
         return type(None) in typing.get_args(annotation)
     return False
 
 
-def _field_schema(name: str, param: inspect.Parameter) -> Dict[str, Any]:
+def _dataclass_field_schema(f: dataclasses.Field, resolved_type: Any) -> Dict[str, Any]:
+    """Schema for one dataclass field.
+
+    `resolved_type` is the annotation resolved via `typing.get_type_hints`
+    (string annotations turned into types).
+    """
     schema: Dict[str, Any] = {
-        "name": name,
-        "type": _type_name(param.annotation),
+        "name": f.name,
+        "type": _type_name(resolved_type),
     }
-    has_default = param.default is not inspect.Parameter.empty
-    required = not has_default and not _is_optional(param.annotation)
-    schema["required"] = required
-    if has_default:
+    # Required = no default and no default_factory.
+    has_default = (f.default is not dataclasses.MISSING
+                   or f.default_factory is not dataclasses.MISSING)
+    schema["required"] = not has_default and not _is_optional(resolved_type)
+    if f.default is not dataclasses.MISSING:
         try:
             import json
-            json.dumps(param.default)
-            schema["default"] = param.default
+            json.dumps(f.default)
+            schema["default"] = f.default
         except (TypeError, ValueError):
             pass
-    if _is_optional(param.annotation):
+    if _is_optional(resolved_type):
         schema["nullable"] = True
+    if f.metadata.get("readonly"):
+        schema["readonly"] = True
     return schema
 
 
 def _class_schema(short_name: str, cls: type) -> Dict[str, Any]:
     """Schema for a node class — kind='node', endpoint=POST /api/dag/nodes.
+
+    Reads dataclass fields (not __init__) so the class is the single
+    source of truth for what the API surface looks like. Read-only
+    fields are marked via the `readonly()` helper in inode.py; the
+    schema surfaces the flag and the PUT handler enforces it.
 
     The "node" kind tells the UI to wrap the form fields into
     `{id, type, config: {...fields...}, parents, perms}` at save time.
@@ -98,22 +114,30 @@ def _class_schema(short_name: str, cls: type) -> Dict[str, Any]:
     field; `parents` is implicit (the parent namespace the user clicked
     "add" in); `perms` is a separate widget.
     """
-    sig = inspect.signature(cls.__init__)
+    if not dataclasses.is_dataclass(cls):
+        # Non-dataclass node — emit an empty field list. The UI will
+        # let the user create one if no required fields, or surface
+        # the type as not-creatable otherwise.
+        return {
+            "type": short_name,
+            "class_name": cls.__name__,
+            "kind": "node",
+            "endpoint": "/api/dag/nodes",
+            "module": cls.__module__,
+            "default_perms": getattr(cls, "default_perms", "***"),
+            "doc": (inspect.getdoc(cls) or "").split("\n\n", 1)[0],
+            "fields": [],
+        }
+
     try:
-        resolved = typing.get_type_hints(cls.__init__)
+        resolved = typing.get_type_hints(cls)
     except Exception:
         resolved = {}
 
     fields: List[Dict[str, Any]] = []
-    for pname, param in sig.parameters.items():
-        if pname == "self":
-            continue
-        if param.kind in (inspect.Parameter.VAR_POSITIONAL,
-                          inspect.Parameter.VAR_KEYWORD):
-            continue
-        if pname in resolved:
-            param = param.replace(annotation=resolved[pname])
-        fields.append(_field_schema(pname, param))
+    for f in dataclasses.fields(cls):
+        rtype = resolved.get(f.name, f.type)
+        fields.append(_dataclass_field_schema(f, rtype))
 
     return {
         "type": short_name,

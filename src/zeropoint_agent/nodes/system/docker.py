@@ -18,11 +18,9 @@ class DockerResult:
     version: Optional[str] = None
 
 
+@dataclass
 class Docker(INode[NetworkResult, DockerResult]):
     """Observes Docker daemon state. Read-only."""
-
-    def __init__(self):
-        pass
 
     def _probe(self) -> DockerResult:
         try:

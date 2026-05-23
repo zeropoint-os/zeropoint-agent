@@ -19,14 +19,13 @@ class LinkResult:
     resolved_bindings: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
 class Link(INode[TerraformResult, LinkResult]):
     """Binds outputs from one module as inputs to another. In-process."""
 
-    def __init__(self, from_module: str, to_module: str,
-                 bindings: Optional[Dict[str, str]] = None):
-        self.from_module = from_module
-        self.to_module = to_module
-        self.bindings = bindings or {}
+    from_module: str
+    to_module: str
+    bindings: Dict[str, str] = field(default_factory=dict)
 
     def resolve(self, input: TerraformResult, mode: ResolveMode) -> NodeResult[LinkResult]:
         result = LinkResult(from_module=self.from_module, to_module=self.to_module,

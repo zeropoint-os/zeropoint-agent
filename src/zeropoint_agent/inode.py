@@ -14,12 +14,39 @@ All node methods return NodeResult[O], which bundles:
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 from enum import Enum
-from typing import Generic, TypeVar, Optional, List
+from typing import Any, ClassVar, Generic, TypeVar, Optional, List
 
 I = TypeVar("I")  # Input type (parent's output contract)
 O = TypeVar("O")  # Output type (this node's contract)
+
+
+# ---------------------------------------------------------------------------
+# Field markers for node dataclasses.
+# ---------------------------------------------------------------------------
+
+def readonly(default: Any = MISSING, *,
+             default_factory: Any = MISSING,
+             **kwargs: Any) -> Any:
+    """Mark a dataclass field as read-only via the public API.
+
+    Behaves like ``dataclasses.field(...)`` but stamps
+    ``metadata['readonly'] = True``. Internal code can still assign;
+    the schema endpoint exposes the field as readonly and the PUT
+    handler refuses writes.
+
+    For required-readonly fields, pass no default — dataclass will
+    raise at construction time if the value isn't provided, which is
+    the right behavior (e.g. ``Terraform.source = readonly()``).
+    """
+    md = dict(kwargs.pop("metadata", {}))
+    md["readonly"] = True
+    if default_factory is not MISSING:
+        return field(default_factory=default_factory, metadata=md, **kwargs)
+    if default is MISSING:
+        return field(metadata=md, **kwargs)
+    return field(default=default, metadata=md, **kwargs)
 
 
 class ResolveMode(Enum):
@@ -176,7 +203,10 @@ class INode(ABC, Generic[I, O]):
     #   '*'     — wildcard; no opinion, defer to other layers
     #   '-'     — veto; hard lock, no descendant can override
     # Default: fully neutral. Class authors override to bake in invariants.
-    default_perms: str = "***"
+    #
+    # ClassVar so dataclass-based subclasses don't accidentally promote
+    # this to an init field.
+    default_perms: ClassVar[str] = "***"
 
     @abstractmethod
     def resolve(self, input: I, mode: ResolveMode) -> NodeResult[O]:

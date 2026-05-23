@@ -24,9 +24,9 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
-from zeropoint_agent.inode import INode, NodeResult, ResolveMode
+from zeropoint_agent.inode import INode, NodeResult, ResolveMode, readonly
 from zeropoint_agent.nodes.config.var import VarResult
 from zeropoint_agent.nodes.config.namespace import NamespaceResult
 from zeropoint_agent.terraform import TerraformError, TerraformExecutor
@@ -183,6 +183,7 @@ def _extract_container_ip(inspect: Dict[str, Any]) -> Optional[str]:
 # Terraform
 # ---------------------------------------------------------------------------
 
+@dataclass
 class Terraform(INode[Any, TerraformResult]):
     """A terraform-managed module install.
 
@@ -192,10 +193,9 @@ class Terraform(INode[Any, TerraformResult]):
 
     # No editable fields on this class — config flows from Var parents.
     # Hence type-level veto on `w`. Still deletable (calls remove()).
-    default_perms = "r-d"
+    default_perms: ClassVar[str] = "r-d"
 
-    def __init__(self, source: str):
-        self.source = source
+    source: str = readonly()
 
     def _required(self, tfvars: Dict[str, str], key: str) -> str:
         v = tfvars.get(key)

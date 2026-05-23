@@ -22,17 +22,15 @@ class ExposureResult:
     description: Optional[str] = None
 
 
+@dataclass
 class Exposure(INode[TerraformResult, ExposureResult]):
     """Exposes a module's port via Envoy reverse proxy. In-process."""
 
-    def __init__(self, module_id: str, port: int,
-                 protocol: str = "http", path_prefix: str = "/",
-                 description: Optional[str] = None):
-        self.module_id = module_id
-        self.port = port
-        self.protocol = protocol
-        self.path_prefix = path_prefix
-        self.description = description
+    module_id: str
+    port: int
+    protocol: str = "http"
+    path_prefix: str = "/"
+    description: Optional[str] = None
 
     def resolve(self, input: TerraformResult, mode: ResolveMode) -> NodeResult[ExposureResult]:
         result = ExposureResult(

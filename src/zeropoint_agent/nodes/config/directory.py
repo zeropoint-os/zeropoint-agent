@@ -34,6 +34,7 @@ import logging
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -127,6 +128,7 @@ def _safe_move(old: Path, new: Path) -> None:
             "(new location %s is good); leaking disk space", old, new)
 
 
+@dataclass
 class DirectoryVar(Var[str]):
     """A Var whose value is a directory path the agent owns.
 

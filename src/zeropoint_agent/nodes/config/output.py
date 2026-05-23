@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
 from zeropoint_agent.inode import ResolveMode, NodeResult
@@ -59,14 +60,11 @@ def _read_output(input_val: Any, key: str) -> Optional[Any]:
     return None
 
 
+@dataclass
 class OutputVar(Var[T]):
     """Var whose value is read from a parent's outputs dict."""
 
-    def __init__(self, name: str, key: str, value: Optional[T] = None):
-        # `value` is accepted but ignored — OutputVar reads at resolve
-        # time. Tolerating it makes the store round-trip work.
-        super().__init__(name=name, value=None)
-        self.key = key
+    key: str = ""
 
     def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult[T]]:
         val = _read_output(input, self.key)

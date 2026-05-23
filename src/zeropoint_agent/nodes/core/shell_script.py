@@ -34,6 +34,7 @@ class ShellScriptResult:
     verified: bool = False
 
 
+@dataclass
 class ShellScript(INode[None, ShellScriptResult]):
     """
     Wraps a shell command as a DAG node.
@@ -43,28 +44,25 @@ class ShellScript(INode[None, ShellScriptResult]):
     If verify fails after exec, returns PENDING_REBOOT with a systemd unit.
 
     Args:
-        exec: Command to run for resolve (string, passed to shell)
-        verify: Command to run for verify (string, exit 0 = converged)
+        exec_cmd: Command to run for resolve (string, passed to shell)
+        verify_cmd: Command to run for verify (string, exit 0 = converged)
         description: Human-readable description
         timeout: Seconds before the command is killed
         marker: If set, creates this marker file on success (relative to MARKER_DIR)
         env: Additional environment variables for the command
     """
 
-    # Allow any input type — ShellScript is flexible
-    def __init__(self, exec_cmd: str = "", verify_cmd: str = "/bin/true",
-                 description: str = "", timeout: int = 300,
-                 marker: Optional[str] = None,
-                 env: Optional[Dict[str, str]] = None,
-                 # Legacy keyword aliases for backward compatibility:
-                 exec: Optional[str] = None,
-                 verify: Optional[str] = None):
-        self.exec_cmd = exec if exec is not None else exec_cmd
-        self.verify_cmd = verify if verify is not None else verify_cmd
-        self.description = description or self.exec_cmd
-        self.timeout = timeout
-        self.marker = marker
-        self.env = env or {}
+    exec_cmd: str = ""
+    verify_cmd: str = "/bin/true"
+    description: str = ""
+    timeout: int = 300
+    marker: Optional[str] = None
+    env: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Default description to the exec command if not set explicitly.
+        if not self.description:
+            self.description = self.exec_cmd
 
     def _run(self, cmd: str) -> subprocess.CompletedProcess:
         """Run a shell command."""

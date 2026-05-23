@@ -31,6 +31,7 @@ class NamespaceResult:
     path: str
 
 
+@dataclass
 class Namespace(INode[Any, NamespaceResult]):
     """A structural node that contributes a path segment.
 
@@ -45,8 +46,7 @@ class Namespace(INode[Any, NamespaceResult]):
     addressing; its resolution just emits the path it represents.
     """
 
-    def __init__(self, name: str):
-        self.name = name
+    name: str
 
     def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[NamespaceResult]:
         inherited = _inherited_path(input)

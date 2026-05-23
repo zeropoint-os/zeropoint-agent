@@ -67,6 +67,7 @@ def _query() -> tuple:
     return version, gpus
 
 
+@dataclass
 class NvidiaGpu(INode[None, NvidiaGpuResult]):
 
     def resolve(self, input: None, mode: ResolveMode) -> NodeResult[NvidiaGpuResult]:
