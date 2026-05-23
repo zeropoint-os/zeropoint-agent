@@ -36,8 +36,13 @@ async def add_node(spec: NodeSpec, request: Request):
 
     Returns 409 if a node with the given id already exists.
     Returns 403 if a NamespaceNode parent isn't writable.
+
+    Wrapped in graph_transaction so a failure halfway through (e.g.
+    type-check rejection after the perms check passes) doesn't leave
+    a partial node lingering in the store.
     """
     from zeropoint_agent.dag import NodeExists
+    from zeropoint_agent.graph_transaction import graph_transaction
     try:
         dag = request.app.state.dag
         # Check w on every NamespaceNode parent before mutating.
@@ -55,9 +60,10 @@ async def add_node(spec: NodeSpec, request: Request):
                         detail=(f"parent namespace {pid!r} is not writable "
                                 f"(cannot add children; effective perms: {eff})")
                     )
-        node = _create_node(spec)
-        dag.add(spec.id, node, parents=spec.parents,
-                perms=getattr(spec, "perms", "***") or "***")
+        with graph_transaction(dag):
+            node = _create_node(spec)
+            dag.add(spec.id, node, parents=spec.parents,
+                    perms=getattr(spec, "perms", "***") or "***")
         return {"ok": True, "node_id": spec.id}
     except HTTPException:
         raise
