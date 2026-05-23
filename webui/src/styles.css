@@ -544,6 +544,23 @@ html, body, #root {
     color: var(--bg);
 }
 
+.btn:disabled,
+.btn[disabled] {
+    cursor: not-allowed;
+    /* Override any inline color set on disabled buttons (e.g. the
+       danger-colored remove button) so it reads as inactive. Uses
+       --fg-dim so it adapts to both light and dark themes. */
+    color: var(--fg-dim) !important;
+    border-color: var(--fg-dim) !important;
+    opacity: 0.6;
+}
+
+.btn:disabled:hover,
+.btn[disabled]:hover {
+    background: transparent;
+    color: var(--fg-dim) !important;
+}
+
 .btn.primary {
     background: var(--accent);
     border-color: var(--accent);

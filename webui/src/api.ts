@@ -90,3 +90,51 @@ export async function fetchNodeTypes(): Promise<NodeTypesResponse> {
     const r = await fetch(`${BASE}/node-types`);
     return r.json();
 }
+
+/** Wrap an HTTP response into either { ok: data } or { error: detail }. */
+async function asResult<T>(r: Response): Promise<{ ok?: T; error?: string; status: number }> {
+    if (r.ok) return { ok: (await r.json()) as T, status: r.status };
+    let detail = `HTTP ${r.status}`;
+    try {
+        const body = await r.json();
+        if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    return { error: detail, status: r.status };
+}
+
+/** PUT /api/dag/<id> with optional config and/or perms. */
+export async function updateNode(
+    id: string,
+    body: { config?: Record<string, any>; perms?: string },
+) {
+    const r = await fetch(`${BASE}/dag/${encodePath(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    return asResult<{ ok: boolean; node_id: string; invalidated: number }>(r);
+}
+
+/** DELETE /api/dag/<id>. */
+export async function deleteNode(id: string) {
+    const r = await fetch(`${BASE}/dag/${encodePath(id)}`, { method: 'DELETE' });
+    return asResult<{ ok: boolean; removed: string[]; count: number }>(r);
+}
+
+/** Resolve a single node (or all if id is empty). */
+export async function resolveNode(id: string, mode: string = 'live') {
+    const url = id
+        ? `${BASE}/dag/resolve/${encodePath(id)}`
+        : `${BASE}/dag/resolve`;
+    const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+    });
+    return asResult<ResolveResponse>(r);
+}
+
+/** Encode an id path, keeping the `/` separators readable. */
+function encodePath(id: string): string {
+    return id.split('/').map(encodeURIComponent).join('/');
+}

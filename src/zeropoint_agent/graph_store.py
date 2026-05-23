@@ -280,6 +280,22 @@ class GraphStore:
             queue.extend(self.get_children(child_id))
         return len(visited)
 
+    def set_config(self, node_id: str, config: Dict[str, Any]) -> None:
+        """Update a node's stored config JSON."""
+        self._conn.execute(
+            "MATCH (n:Node {id: $id}) SET n.config = $config",
+            parameters={"id": node_id, "config": json.dumps(config)},
+        )
+
+    def set_perms(self, node_id: str, perms: str) -> None:
+        """Update a node's instance-level permissions string."""
+        if not self._has_perms_column:
+            return
+        self._conn.execute(
+            "MATCH (n:Node {id: $id}) SET n.perms = $perms",
+            parameters={"id": node_id, "perms": perms},
+        )
+
     def remove_node(self, node_id: str) -> bool:
         """Remove a node and its edges."""
         self._conn.execute(

@@ -1,5 +1,6 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, NodeTypeSchema } from './api';
+import { updateNode, deleteNode, resolveNode } from './api';
 import { Tile } from './Tile';
 import { PropertyInspector } from './PropertyInspector';
 import { TypePicker } from './TypePicker';
@@ -12,30 +13,109 @@ interface Props {
     schema?: NodeTypeSchema;
     /** All schemas keyed by short picker name. */
     pickerSchemas: Record<string, NodeTypeSchema>;
+    /** Called after a server-side change (save/delete/resolve) to refresh. */
+    onChanged?: () => void;
 }
 
-export function NodeDetail({ node, allNodes, edges, onNavigate, schema, pickerSchemas }: Props) {
+export function NodeDetail({
+    node, allNodes, edges, onNavigate, schema, pickerSchemas, onChanged,
+}: Props) {
     const nodeMap = new Map(allNodes.map(n => [n.id, n]));
     const childrenOf = (id: string) => edges.filter(e => e.source === id).map(e => nodeMap.get(e.target)).filter(Boolean) as DagNode[];
     const children = childrenOf(node.id);
 
-    // Leaf name + parent path for the header.
     const lastSlash = node.id.lastIndexOf('/');
     const leaf = lastSlash >= 0 ? node.id.slice(lastSlash + 1) : node.id;
     const parentPath = lastSlash >= 0 ? node.id.slice(0, lastSlash) : '';
 
-    // We show an "add" tile in the children grid only when this node is
-    // a writable namespace: type is NamespaceNode AND effective_perms
-    // grants 'w'. The check is intentionally permissive — the server
-    // re-checks on POST and will 403 if the user is wrong.
     const effPerms = node.effective_perms || '';
     const canAddChildren = node.type === 'NamespaceNode' && effPerms.includes('w');
+    const canEdit = effPerms.includes('w');
+    const canDelete = effPerms.includes('d');
 
+    // --- Edit-mode state ---------------------------------------------
+    // `draft` holds the in-flight values; seeded from node.config + node.perms
+    // when entering edit mode and discarded on cancel.
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState<Record<string, any>>({});
+    const [busy, setBusy] = useState<null | 'save' | 'resolve' | 'delete'>(null);
+    const [opError, setOpError] = useState<string | null>(null);
+
+    // Reset edit state whenever we switch nodes.
+    useEffect(() => {
+        setEditing(false);
+        setDraft({});
+        setBusy(null);
+        setOpError(null);
+    }, [node.id]);
+
+    const startEdit = () => {
+        setEditing(true);
+        setOpError(null);
+        setDraft({ ...(node.config || {}), perms: node.perms ?? '***' });
+    };
+    const cancelEdit = () => {
+        setEditing(false);
+        setDraft({});
+        setOpError(null);
+    };
+    const onFieldChange = (name: string, value: any) => {
+        setDraft(d => ({ ...d, [name]: value }));
+    };
+
+    const onSave = async () => {
+        setBusy('save'); setOpError(null);
+        const { perms: newPerms, ...newConfig } = draft;
+        // Only send fields that actually changed, to keep the wire
+        // payload small and avoid no-op resets.
+        const currentConfig = node.config || {};
+        const changedConfig: Record<string, any> = {};
+        for (const [k, v] of Object.entries(newConfig)) {
+            if (JSON.stringify(currentConfig[k]) !== JSON.stringify(v)) {
+                changedConfig[k] = v;
+            }
+        }
+        const body: { config?: Record<string, any>; perms?: string } = {};
+        if (Object.keys(changedConfig).length > 0) body.config = changedConfig;
+        if (newPerms !== node.perms) body.perms = newPerms;
+
+        if (Object.keys(body).length === 0) {
+            // Nothing changed — just exit edit mode.
+            setBusy(null);
+            setEditing(false);
+            return;
+        }
+        const res = await updateNode(node.id, body);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        setEditing(false);
+        setDraft({});
+        onChanged?.();
+    };
+
+    const onResolve = async () => {
+        setBusy('resolve'); setOpError(null);
+        const res = await resolveNode(node.id);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+    };
+
+    const onRemove = async () => {
+        if (!window.confirm(`Remove ${node.id}? This cannot be undone.`)) return;
+        setBusy('delete'); setOpError(null);
+        const res = await deleteNode(node.id);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+        // Navigate up to the parent if there is one.
+        if (parentPath) onNavigate(parentPath);
+    };
+
+    // --- Add-child picker --------------------------------------------
     const [pickerOpen, setPickerOpen] = useState(false);
     const onPickType = (typeName: string) => {
         setPickerOpen(false);
-        // Encode parent id in the route — slashes are allowed in the
-        // hash, so just inline. Type name is always a simple identifier.
         window.location.hash = `#/_new/${node.id}/${typeName}`;
     };
 
@@ -56,9 +136,21 @@ export function NodeDetail({ node, allNodes, edges, onNavigate, schema, pickerSc
                 </div>
             )}
 
-            <PropertyInspector node={node} schema={schema} />
+            {opError && (
+                <div class="detail-section">
+                    <div class="detail-error">{opError}</div>
+                </div>
+            )}
 
-            {(children.length > 0 || canAddChildren) && (
+            <PropertyInspector
+                node={editing ? undefined : node}
+                schema={schema}
+                editable={editing}
+                values={editing ? draft : undefined}
+                onChange={editing ? onFieldChange : undefined}
+            />
+
+            {(children.length > 0 || canAddChildren) && !editing && (
                 <div class="detail-section">
                     <div class="detail-section-title">children</div>
                     <div class="tiles" style="padding: 0;">
@@ -86,11 +178,37 @@ export function NodeDetail({ node, allNodes, edges, onNavigate, schema, pickerSc
             )}
 
             <div class="actions">
-                <button class="btn">edit</button>
-                <button class="btn">retry</button>
-                <button class="btn" style="color: var(--status-error); border-color: var(--status-error);">
-                    remove
-                </button>
+                {editing ? (
+                    <>
+                        <button
+                            class="btn primary"
+                            onClick={onSave}
+                            disabled={busy !== null}
+                        >{busy === 'save' ? 'saving…' : 'save'}</button>
+                        <button class="btn" onClick={cancelEdit} disabled={busy !== null}>cancel</button>
+                    </>
+                ) : (
+                    <>
+                        <button
+                            class="btn"
+                            onClick={startEdit}
+                            disabled={!canEdit || busy !== null}
+                            title={canEdit ? '' : `not writable (effective perms: ${effPerms || '***'})`}
+                        >edit</button>
+                        <button
+                            class="btn"
+                            onClick={onResolve}
+                            disabled={busy !== null}
+                        >{busy === 'resolve' ? 'resolving…' : 'resolve'}</button>
+                        <button
+                            class="btn"
+                            onClick={onRemove}
+                            disabled={!canDelete || busy !== null}
+                            style={canDelete ? 'color: var(--status-error); border-color: var(--status-error);' : ''}
+                            title={canDelete ? '' : `not deletable (effective perms: ${effPerms || '***'})`}
+                        >{busy === 'delete' ? 'removing…' : 'remove'}</button>
+                    </>
+                )}
             </div>
 
             {pickerOpen && (

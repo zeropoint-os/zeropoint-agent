@@ -255,11 +255,23 @@ def node_ensure(node_type: str, node_id: str,
 @click.argument("node_id")
 @click.option("--config", "-c", "config_kvs", multiple=True,
               help="Config key=value to set (repeatable).")
-def node_update(node_id: str, config_kvs: Tuple[str, ...]):
-    """Edit a node's config. Resets it (and descendants) to PENDING."""
+@click.option("--perms", "perms",
+              help="New permissions string (3 chars from r/w/d/-/*).")
+def node_update(node_id: str, config_kvs: Tuple[str, ...], perms: Optional[str]):
+    """Edit a node's config and/or permissions.
+
+    Config changes reset the node (and descendants) to PENDING.
+    """
     from urllib.parse import quote
-    payload = _parse_kv(config_kvs)
-    _emit(_request("PUT", f"/api/dag/{quote(node_id, safe='/')}", json=payload))
+    body: Dict[str, Any] = {}
+    if config_kvs:
+        body["config"] = _parse_kv(config_kvs)
+    if perms is not None:
+        body["perms"] = perms
+    if not body:
+        click.echo("error: nothing to update (need --config or --perms)", err=True)
+        sys.exit(2)
+    _emit(_request("PUT", f"/api/dag/{quote(node_id, safe='/')}", json=body))
 
 
 @node.command("remove")

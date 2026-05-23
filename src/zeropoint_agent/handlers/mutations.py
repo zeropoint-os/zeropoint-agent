@@ -26,15 +26,18 @@ def _require_bit(dag, node_id: str, bit: str, action_label: str) -> None:
 
 
 @router.put("/{node_id:path}")
-async def update_node(node_id: str, config: Dict[str, Any], request: Request):
-    """Update a node's desired state (config).
+async def update_node(node_id: str, body: Dict[str, Any], request: Request):
+    """Update a node's desired state and/or permissions.
 
-    Requires `w` in the node's effective permissions.
+    Body shape: `{config?: {...}, perms?: "rwd"}` — both optional but
+    at least one required. Requires `w` in the node's effective
+    permissions.
 
-    Changes the node's config, resets it to PENDING, and
-    invalidates all descendants.
+    Changes the node's config, resets it to PENDING, and invalidates
+    all descendants. Perms updates persist but do not invalidate.
     """
     from urllib.parse import unquote
+    from zeropoint_agent.dag import _valid_perms
     node_id = unquote(node_id)
     dag = request.app.state.dag
     try:
@@ -44,33 +47,60 @@ async def update_node(node_id: str, config: Dict[str, Any], request: Request):
 
     _require_bit(dag, node_id, "w", "writable")
 
-    for key, value in config.items():
-        if hasattr(entry.node, key):
-            setattr(entry.node, key, value)
-        else:
+    config = body.get("config")
+    perms = body.get("perms")
+    if config is None and perms is None:
+        raise HTTPException(
+            status_code=400,
+            detail="PUT body must include at least one of: config, perms",
+        )
+
+    invalidated = 0
+    if config is not None:
+        if not isinstance(config, dict):
+            raise HTTPException(status_code=400, detail="config must be an object")
+        for key, value in config.items():
+            if hasattr(entry.node, key):
+                setattr(entry.node, key, value)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown config field '{key}' for {type(entry.node).__name__}"
+                )
+
+        entry.status = NodeStatus.PENDING
+        entry.output = None
+        entry.error = None
+
+        for desc_id in _get_all_descendants(dag, node_id):
+            desc = dag.get(desc_id)
+            desc.status = NodeStatus.PENDING
+            desc.output = None
+            desc.error = None
+
+        if dag._store:
+            # Persist the new config so it survives restart.
+            new_config = {k: v for k, v in entry.node.__dict__.items()
+                          if not k.startswith("_")}
+            dag._store.set_config(node_id, new_config)
+            dag._store.update_status(node_id, "pending")
+            dag._store.invalidate_descendants(node_id)
+        invalidated = len(_get_all_descendants(dag, node_id))
+
+    if perms is not None:
+        if not isinstance(perms, str) or not _valid_perms(perms):
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown config field '{key}' for {type(entry.node).__name__}"
+                detail=f"perms must be a 3-char string from r/w/d/-/*; got {perms!r}",
             )
-
-    entry.status = NodeStatus.PENDING
-    entry.output = None
-    entry.error = None
-
-    for desc_id in _get_all_descendants(dag, node_id):
-        desc = dag.get(desc_id)
-        desc.status = NodeStatus.PENDING
-        desc.output = None
-        desc.error = None
-
-    if dag._store:
-        dag._store.update_status(node_id, "pending")
-        dag._store.invalidate_descendants(node_id)
+        entry.perms = perms
+        if dag._store:
+            dag._store.set_perms(node_id, perms)
 
     return {
         "ok": True,
         "node_id": node_id,
-        "invalidated": len(_get_all_descendants(dag, node_id)),
+        "invalidated": invalidated,
     }
 
 

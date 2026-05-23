@@ -257,6 +257,7 @@ export function App() {
                         onNavigate={(id) => navigate(id)}
                         schema={schemasByClassName[current.type]}
                         pickerSchemas={schemasByPickerName}
+                        onChanged={load}
                     />
                 )}
             </div>
