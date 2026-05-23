@@ -209,3 +209,28 @@ class INode(ABC, Generic[I, O]):
         May return PENDING_REBOOT with systemd units for deferred teardown.
         """
         ...
+
+    def on_config_changed(self, old_config: dict, new_config: dict,
+                          mode: ResolveMode) -> None:
+        """
+        Hook called by the mutation handler **before** a config change is
+        persisted. Default: no-op.
+
+        Subclasses override to react to their own config changing (move a
+        directory, run a migration, drop a cache, etc.). The hook owns
+        any side effects: if it returns cleanly the change is persisted;
+        if it raises, the change is rejected and the user sees the error.
+
+        The hook MUST be idempotent or atomic — if it half-completes a
+        side effect and then raises, the system relies on the mutation
+        handler's snapshot guard to restore graph state, but the hook
+        itself is responsible for not leaving filesystem state corrupt.
+
+        Args:
+            old_config: the node's current (about-to-be-replaced) config
+                as a {field_name: value} dict.
+            new_config: the desired config.
+            mode: the agent's resolve mode (LIVE / DRY_RUN / MOCK). MOCK
+                hooks should not perform real side effects.
+        """
+        return None

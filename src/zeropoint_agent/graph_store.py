@@ -307,3 +307,81 @@ class GraphStore:
     def clear(self) -> None:
         """Remove all nodes and edges."""
         self._conn.execute("MATCH (n:Node) DETACH DELETE n")
+
+    # ---- lifecycle / snapshot ----------------------------------------------
+
+    def close(self) -> None:
+        """Release the underlying connection + database handles.
+
+        After close() the store must not be used. Used by the snapshot
+        guard to release the file lock before swapping the db file.
+        """
+        self._conn = None
+        self._db = None
+
+    def _all_files(self) -> List[Path]:
+        """Every file ryugraph currently owns for this database.
+
+        ryugraph keeps a single primary file plus WAL/lock sidecars
+        named graph.db.* — we glob for everything matching so the
+        snapshot includes any in-flight sidecars.
+        """
+        import glob
+        return [Path(p) for p in glob.glob(f"{self.db_path}*")
+                if not p.endswith(".snapshot")]
+
+    def snapshot_to(self, snapshot_path: str) -> None:
+        """Copy the current on-disk db state to `snapshot_path`.
+
+        Used by mutation handlers to bookmark a known-good state
+        before performing a multi-step change. The caller is
+        responsible for `restore_from(...)` if anything fails, and
+        for discarding the snapshot on success.
+        """
+        # ryugraph writes through; a copy under the connection's
+        # lock is safe because we hold the only writer.
+        snap = Path(snapshot_path)
+        snap.parent.mkdir(parents=True, exist_ok=True)
+        if snap.exists():
+            if snap.is_dir():
+                shutil.rmtree(snap)
+            else:
+                snap.unlink()
+        snap.mkdir(parents=True)
+        for src in self._all_files():
+            shutil.copy2(src, snap / src.name)
+
+    def restore_from(self, snapshot_path: str) -> None:
+        """Replace the current db file(s) with the snapshot copy.
+
+        Closes the connection first, swaps the files, then reopens
+        the database. After this call the store is usable again at
+        the original db_path.
+        """
+        snap = Path(snapshot_path)
+        if not snap.exists() or not snap.is_dir():
+            raise RuntimeError(f"snapshot not found: {snap}")
+
+        self.close()
+        # Remove any current db files (including stale sidecars from
+        # the failed operation we're rolling back).
+        for src in self._all_files():
+            try:
+                src.unlink()
+            except FileNotFoundError:
+                pass
+        # Copy snapshot contents back into place.
+        db_dir = Path(self.db_path).parent
+        for src in snap.iterdir():
+            shutil.copy2(src, db_dir / src.name)
+        # Re-open the connection at the original path.
+        self._db = ryugraph.Database(self.db_path)
+        self._conn = ryugraph.Connection(self._db)
+        # No _ensure_schema — the snapshot already has the right schema.
+        # _has_perms_column is set during __init__ and unchanged here.
+
+    def discard_snapshot(self, snapshot_path: str) -> None:
+        """Delete a snapshot directory; safe to call if it doesn't exist."""
+        snap = Path(snapshot_path)
+        if snap.exists():
+            shutil.rmtree(snap, ignore_errors=True)

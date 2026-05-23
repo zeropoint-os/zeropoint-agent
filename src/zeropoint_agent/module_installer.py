@@ -7,22 +7,37 @@ Layout produced under `modules/<module_id>`:
     modules/<module_id>                          NamespaceNode
     ├── zp_module_id                             VarNode from_path="leaf"
     ├── zp_network_name                          VarNode from_path="zeropoint-module-{full-dashed}"
+    ├── zp_module_path                           PathVarNode  (agent's terraform cwd)
+    ├── zp_storage_path                          PathVarNode  (module's isolated data root)
     ├── <each user var from variables.tf>        VarNode literal (or override)
     └── terraform                                TerraformNode
+
+Two PathVarNodes carry the agent's two filesystem promises about a module:
+
+  - `zp_module_path` — where the agent runs terraform (cloned source +
+    .terraform/ + state). The user MAY edit this; on edit the directory
+    is moved and terraform finds its state at the new location.
+
+  - `zp_storage_path` — the module's isolated data root. The module
+    bind-mounts user data under this path. On edit, the agent moves the
+    data tree (atomic rename when on the same FS, rsync to a sibling
+    .incoming + atomic swap when crossing filesystems — supporting the
+    "I added an HDD, move my photos there" workflow).
 
 The TerraformNode depends on:
   - the namespace (provides path)
   - every VarNode child of the namespace (user vars + auto-derived system vars)
-  - the system VarNodes living elsewhere (e.g. `settings/zp_module_storage`)
+  - any global system VarNodes living elsewhere (e.g. `settings/zp_arch`)
 
-No literal magic strings are stored — system vars derive from path at
-resolve time. This means renaming the namespace just works: zp_module_id
-and zp_network_name automatically reflect the new path on the next resolve.
+No literal magic strings are stored — `zp_module_id` and
+`zp_network_name` derive from the namespace path at resolve time. This
+means renaming the namespace just works.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -32,6 +47,7 @@ from typing import Any, Dict, List, Optional
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.nodes.config.namespace import NamespaceNode
+from zeropoint_agent.nodes.config.path import PathVarNode
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.user.module import (
     TerraformNode, _parse_git_source, _git_clone_at_sha,
@@ -153,13 +169,44 @@ _PER_MODULE_SYSTEM_VARS: Dict[str, str] = {
     "zp_network_name": "zeropoint-module-{full-dashed}",
 }
 
-# System VarNodes that live globally (typically under `settings`).
+# Global system VarNodes that live elsewhere (typically under `settings`).
 # When a module's variables.tf declares one of these, we wire to the
 # existing VarNode rather than auto-creating a per-module one.
-_GLOBAL_SYSTEM_VARS = ("zp_module_storage", "zp_arch", "zp_gpu_vendor")
+#
+# Note: zp_module_storage is NOT in this list anymore. Storage location
+# is now a per-module concern (`zp_storage_path`) — each module instance
+# can live in a different place, including a different filesystem.
+_GLOBAL_SYSTEM_VARS = ("zp_arch", "zp_gpu_vendor")
 
 # Parent path under which all module namespaces live.
 MODULES_NAMESPACE = "modules"
+
+
+def _agent_state_root() -> Path:
+    """Where the agent stores per-module terraform working dirs.
+
+    Override via ZP_AGENT_STATE_ROOT; defaults to a `modules/`
+    directory next to the graph.db data dir, which is itself rooted
+    by ZEROPOINT_ROOT_PATH (defaults to '.'). This keeps state and
+    graph collocated, which matters for backup/restore.
+    """
+    explicit = os.environ.get("ZP_AGENT_STATE_ROOT")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    root = Path(os.environ.get("ZEROPOINT_ROOT_PATH", ".")).expanduser().resolve()
+    return root / "data" / "modules"
+
+
+def _default_storage_root() -> Path:
+    """Where module data dirs default to live, before the user edits them.
+
+    Override via ZP_MODULE_STORAGE; defaults to /var/lib/zeropoint.
+    Each module's `zp_storage_path` is initialized to
+    `<storage_root>/<module_id>/` but is then independently editable.
+    """
+    return Path(
+        os.environ.get("ZP_MODULE_STORAGE", "/var/lib/zeropoint")
+    ).expanduser().resolve()
 
 
 @dataclass
@@ -238,16 +285,48 @@ def add_module(
         created.append(node_id)
         var_parent_ids.append(node_id)
 
-    # Find globally-available system VarNodes (zp_module_storage, etc.)
-    # by name and wire to them as TerraformNode parents.
+    # The agent's two filesystem promises: the module's working dir
+    # (zp_module_path, where terraform runs) and its data root
+    # (zp_storage_path, where the module bind-mounts user data). Both
+    # are PathVarNodes — editable by the user; the agent moves the
+    # directory before persisting the new path.
+    module_path_default = str(_agent_state_root() / module_id)
+    storage_path_default = str(_default_storage_root() / module_id)
+    for varname, default_path in (
+        ("zp_module_path",  module_path_default),
+        ("zp_storage_path", storage_path_default),
+    ):
+        node_id = f"{namespace_id}/{varname}"
+        dag.add(
+            node_id,
+            PathVarNode(name=varname, value=default_path),
+            parents=[namespace_id],
+            perms="rw-",
+        )
+        created.append(node_id)
+        var_parent_ids.append(node_id)
+
+    # Find globally-available system VarNodes (zp_arch, zp_gpu_vendor)
+    # by name and wire to them as TerraformNode parents. We restrict the
+    # search to nodes outside this module's namespace — per-module vars
+    # under modules/<id>/ are local and shouldn't be wired as globals.
     global_by_name: Dict[str, str] = {}
     for nid, entry in dag.nodes.items():
-        if isinstance(entry.node, VarNode):
-            global_by_name[entry.node.name] = nid
+        if not isinstance(entry.node, VarNode):
+            continue
+        if nid.startswith(f"{namespace_id}/"):
+            continue
+        global_by_name[entry.node.name] = nid
+
+    # Per-module system vars that the installer already injected above
+    # (path-derived ones + the two PathVarNodes). Any tf variable with
+    # one of these names is automatically wired and should be skipped
+    # in the loop below.
+    auto_injected = set(_PER_MODULE_SYSTEM_VARS) | {"zp_module_path", "zp_storage_path"}
 
     # Walk each declared variable from variables.tf
     for var in tf_vars:
-        if var.name in _PER_MODULE_SYSTEM_VARS:
+        if var.name in auto_injected:
             # Already auto-created above; just skip (already a parent).
             continue
 

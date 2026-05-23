@@ -200,12 +200,6 @@ class TerraformNode(INode[Any, TerraformResult]):
 
     def __init__(self, source: str):
         self.source = source
-        # Last-known module_dir from a successful resolve. Used to
-        # detect a zp_module_storage change and migrate the working
-        # dir (state files + .terraform/) without losing terraform
-        # state. Prefixed with underscore so DAG._compute_path /
-        # store serializer skip it (they filter `_` attrs).
-        self._previous_module_dir: Optional[Path] = None
 
     def _required(self, tfvars: Dict[str, str], key: str) -> str:
         v = tfvars.get(key)
@@ -216,9 +210,15 @@ class TerraformNode(INode[Any, TerraformResult]):
         return v
 
     def _module_dir(self, tfvars: Dict[str, str]) -> Path:
-        storage = self._required(tfvars, "zp_module_storage")
-        module_id = self._required(tfvars, "zp_module_id")
-        return Path(storage) / module_id
+        """The agent's working dir for this module — terraform state lives here.
+
+        Comes from the `zp_module_path` PathVarNode injected by the
+        module installer. If the user edits that PathVarNode, the
+        directory has already been moved by the PathVarNode's
+        on_config_changed hook by the time we get here; we just see
+        the new path.
+        """
+        return Path(self._required(tfvars, "zp_module_path"))
 
     def _build_result(self, tfvars: Dict[str, str],
                       outputs: Dict[str, dict]) -> TerraformResult:
@@ -289,23 +289,9 @@ class TerraformNode(INode[Any, TerraformResult]):
             network_name = self._required(tfvars, "zp_network_name")
             url, sha = _parse_git_source(self.source)
 
-            # The agent owns the module's working directory: every module
-            # lives at <zp_module_storage>/<module_id>/. If the user
-            # edits zp_module_storage, we relocate the working dir
-            # (which contains .terraform/ + state) to the new path so
-            # terraform can keep going without losing track of resources.
-            #
-            # This relies on the in-memory `_previous_module_dir` which
-            # is reset on rehydrate. Changing zp_module_storage *while
-            # the server is restarted* is not currently auto-migrated;
-            # the user can `mv` the dir manually if they hit that.
-            if self._previous_module_dir and self._previous_module_dir != module_dir:
-                if self._previous_module_dir.exists() and not module_dir.exists():
-                    logger.info("relocating module dir %s -> %s",
-                                self._previous_module_dir, module_dir)
-                    module_dir.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(self._previous_module_dir), str(module_dir))
-
+            # zp_module_path's PathVarNode handles any directory moves on
+            # edit, so by the time we get here the dir is at module_dir
+            # (or doesn't exist yet, on first install).
             if not module_dir.exists():
                 logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
                 _git_clone_at_sha(url, sha, module_dir)
@@ -326,9 +312,6 @@ class TerraformNode(INode[Any, TerraformResult]):
                 return NodeResult.failed(
                     "module must declare at least one '<container>_ports' output")
 
-            # Remember where we just applied, so the next resolve can
-            # detect a zp_module_storage change and migrate accordingly.
-            self._previous_module_dir = module_dir
             return NodeResult.success(self._build_result(tfvars, outputs))
 
         except (TerraformError, ValueError) as e:

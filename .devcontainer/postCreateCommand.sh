@@ -36,10 +36,11 @@ fi
 ARCH="$(zeropoint-agent detect arch       | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value","amd64"))')"
 GPU="$( zeropoint-agent detect gpu-vendor | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))')"
 
-ZP_MODULE_STORAGE="${ZP_MODULE_STORAGE:-/var/lib/zeropoint}"
-ZP_MARKER_DIR="${ZP_MARKER_DIR:-/etc/zeropoint}"
-
-mkdir -p "$ZP_MODULE_STORAGE" "$ZP_MARKER_DIR"
+# Default storage root for per-module data dirs. Each module's
+# zp_storage_path is initialized to <ZP_MODULE_STORAGE>/<module_id>/
+# by the installer; the user can then edit it independently.
+export ZP_MODULE_STORAGE="${ZP_MODULE_STORAGE:-/var/lib/zeropoint}"
+mkdir -p "$ZP_MODULE_STORAGE"
 
 # ---- the bootstrap (each line = one REST call) ---------------------------
 
@@ -51,17 +52,12 @@ zeropoint-agent node ensure namespace settings \
 zeropoint-agent node ensure namespace modules \
     -c name=modules  --perms rw*
 
-# zp_module_storage is the one settings entry the user can sensibly edit
-# — pointing it at a different on-disk location is a legitimate config
-# change. TerraformNode detects the change on next resolve and relocates
-# the module's working dir (state + .terraform/) to the new path. The
-# others are detected host-properties; making them editable would be a
-# footgun (e.g. lying to terraform about arch).
-zeropoint-agent node ensure var settings/zp_module_storage \
-    -p settings \
-    -c name=zp_module_storage -c "value=\"${ZP_MODULE_STORAGE}\"" \
-    --perms rw-
-
+# Settings is now minimal: only the genuinely-global, system-detected
+# values live here. Per-module storage location is a per-module
+# concern (modules/<id>/zp_storage_path) — each instance can live in
+# a different place, including a different filesystem. Per-module
+# terraform state lives at modules/<id>/zp_module_path. Both are
+# created automatically by the module installer.
 zeropoint-agent node ensure var settings/zp_arch \
     -p settings \
     -c name=zp_arch -c "value=\"${ARCH}\"" \
@@ -70,11 +66,6 @@ zeropoint-agent node ensure var settings/zp_arch \
 zeropoint-agent node ensure var settings/zp_gpu_vendor \
     -p settings \
     -c name=zp_gpu_vendor -c "value=\"${GPU}\"" \
-    --perms r--
-
-zeropoint-agent node ensure var settings/zp_marker_dir \
-    -p settings \
-    -c name=zp_marker_dir -c "value=\"${ZP_MARKER_DIR}\"" \
     --perms r--
 
 # ---- resolve -------------------------------------------------------------
@@ -87,7 +78,7 @@ zeropoint-agent dag resolve > /dev/null
 # clone @ pinned SHA -> terraform apply -> output VarNodes populated.
 # Idempotent via 'module add' returning 409 if echo is already installed.
 
-ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@5504795d3cf6f53fae8a12a6d860d44beb5e21f5"
+ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@16f0b34cccda8a200bf33c1206226e42423a8a28"
 
 echo "installing echo from $ECHO_SOURCE ..."
 set +e

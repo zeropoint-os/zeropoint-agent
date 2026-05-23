@@ -7,6 +7,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Request, HTTPException
 
 from zeropoint_agent.inode import NodeStatus, ResolveMode
+from zeropoint_agent.graph_transaction import graph_transaction
 from zeropoint_agent.query import query_dag, _get_all_descendants
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,28 @@ def _require_bit(dag, node_id: str, bit: str, action_label: str) -> None:
         )
 
 
+def _node_config_dict(node) -> Dict[str, Any]:
+    """Snapshot of a node's serializable config (matches what's persisted).
+
+    Same filter as DAG.add() and PUT use when writing to the store —
+    public instance attributes only. Used to give `on_config_changed`
+    a clean before/after picture without leaking internal state.
+    """
+    return {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
+
+
+def _resolve_mode(request: Request) -> ResolveMode:
+    """Pull the agent's configured default resolve mode, defaulting to LIVE."""
+    state = request.app.state
+    if not hasattr(state, "default_mode"):
+        return ResolveMode.LIVE
+    return {
+        "live": ResolveMode.LIVE,
+        "dry_run": ResolveMode.DRY_RUN,
+        "mock": ResolveMode.MOCK,
+    }.get(state.default_mode, ResolveMode.LIVE)
+
+
 @router.put("/{node_id:path}")
 async def update_node(node_id: str, body: Dict[str, Any], request: Request):
     """Update a node's desired state and/or permissions.
@@ -33,10 +56,18 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
     at least one required. Requires `w` in the node's effective
     permissions.
 
-    Changes the node's config, resets it to PENDING, and invalidates
-    all descendants. Perms updates persist but do not invalidate.
+    Sequence (transactional, all-or-nothing):
+      1. Validate body shape, perms format, field names.
+      2. Take a snapshot of graph.db.
+      3. Call the node's `on_config_changed(old, new)` hook — this
+         is where side effects like PathVarNode's directory move
+         happen. If the hook raises, we roll back and return the
+         error.
+      4. Apply the config + perms changes in memory.
+      5. Persist to the store; invalidate descendants.
+      6. On any exception in 3-5, the snapshot guard restores
+         graph.db and reloads the in-memory DAG.
     """
-    from urllib.parse import unquote
     from zeropoint_agent.dag import _valid_perms
     node_id = unquote(node_id)
     dag = request.app.state.dag
@@ -55,47 +86,68 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
             detail="PUT body must include at least one of: config, perms",
         )
 
-    invalidated = 0
+    # ---- validation -----------------------------------------------------
     if config is not None:
         if not isinstance(config, dict):
             raise HTTPException(status_code=400, detail="config must be an object")
-        for key, value in config.items():
-            if hasattr(entry.node, key):
-                setattr(entry.node, key, value)
-            else:
+        for key in config:
+            if not hasattr(entry.node, key):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unknown config field '{key}' for {type(entry.node).__name__}"
+                    detail=f"Unknown config field '{key}' for "
+                           f"{type(entry.node).__name__}",
                 )
-
-        entry.status = NodeStatus.PENDING
-        entry.output = None
-        entry.error = None
-
-        for desc_id in _get_all_descendants(dag, node_id):
-            desc = dag.get(desc_id)
-            desc.status = NodeStatus.PENDING
-            desc.output = None
-            desc.error = None
-
-        if dag._store:
-            # Persist the new config so it survives restart.
-            new_config = {k: v for k, v in entry.node.__dict__.items()
-                          if not k.startswith("_")}
-            dag._store.set_config(node_id, new_config)
-            dag._store.update_status(node_id, "pending")
-            dag._store.invalidate_descendants(node_id)
-        invalidated = len(_get_all_descendants(dag, node_id))
 
     if perms is not None:
         if not isinstance(perms, str) or not _valid_perms(perms):
             raise HTTPException(
                 status_code=400,
-                detail=f"perms must be a 3-char string from r/w/d/-/*; got {perms!r}",
+                detail=f"perms must be a 3-char string from r/w/d/-/*; "
+                       f"got {perms!r}",
             )
-        entry.perms = perms
-        if dag._store:
-            dag._store.set_perms(node_id, perms)
+
+    # ---- transactional apply -------------------------------------------
+    invalidated = 0
+    mode = _resolve_mode(request)
+    try:
+        with graph_transaction(dag):
+            if config is not None:
+                old_config = _node_config_dict(entry.node)
+                # Hook may raise — that aborts the whole transaction.
+                merged_config = {**old_config, **config}
+                try:
+                    entry.node.on_config_changed(old_config, merged_config, mode)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+
+                for key, value in config.items():
+                    setattr(entry.node, key, value)
+
+                entry.status = NodeStatus.PENDING
+                entry.output = None
+                entry.error = None
+                for desc_id in _get_all_descendants(dag, node_id):
+                    desc = dag.get(desc_id)
+                    desc.status = NodeStatus.PENDING
+                    desc.output = None
+                    desc.error = None
+
+                if dag._store:
+                    new_config = _node_config_dict(entry.node)
+                    dag._store.set_config(node_id, new_config)
+                    dag._store.update_status(node_id, "pending")
+                    dag._store.invalidate_descendants(node_id)
+                invalidated = len(_get_all_descendants(dag, node_id))
+
+            if perms is not None:
+                entry.perms = perms
+                if dag._store:
+                    dag._store.set_perms(node_id, perms)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("update_node failed for %s", node_id)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     return {
         "ok": True,
@@ -135,23 +187,17 @@ async def delete_nodes(pattern: str, request: Request):
             detail=f"the following nodes are not deletable: {details}",
         )
 
-    mode = ResolveMode.LIVE
-    if hasattr(request.app.state, "default_mode"):
-        mode_str = request.app.state.default_mode
-        mode = {
-            "live": ResolveMode.LIVE,
-            "dry_run": ResolveMode.DRY_RUN,
-            "mock": ResolveMode.MOCK,
-        }.get(mode_str, ResolveMode.LIVE)
+    mode = _resolve_mode(request)
 
     removed = []
-    for nid in reversed(matched_ids):
-        try:
-            entry = dag.get(nid)
-            entry.node.remove(mode)
-            dag.remove(nid)
-            removed.append(nid)
-        except Exception as e:
-            logger.error(f"Failed to remove {nid}: {e}")
+    with graph_transaction(dag):
+        for nid in reversed(matched_ids):
+            try:
+                entry = dag.get(nid)
+                entry.node.remove(mode)
+                dag.remove(nid)
+                removed.append(nid)
+            except Exception as e:
+                logger.error(f"Failed to remove {nid}: {e}")
 
     return {"ok": True, "removed": removed, "count": len(removed)}

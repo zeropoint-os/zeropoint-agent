@@ -38,7 +38,6 @@
 	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && npm install --prefix webui",
 	"containerEnv": {
 		"ZP_MODULE_STORAGE": "${containerWorkspaceFolder}/modules",
-		"ZP_MARKER_DIR": "${containerWorkspaceFolder}/markers",
 		"ZEROPOINT_MODE": "live"
 	},
 	"mounts": [

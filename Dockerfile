@@ -4,7 +4,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update &&\
     apt-get install -y \
-        jq curl wget git netcat-traditional gnupg2 lsb-release ca-certificates &&\
+        jq curl wget git netcat-traditional gnupg2 lsb-release ca-certificates rsync &&\
     apt-get clean &&\
     rm -rf /var/lib/apt/lists/*
 

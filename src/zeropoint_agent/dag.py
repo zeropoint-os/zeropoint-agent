@@ -89,7 +89,19 @@ class DAG:
         already present when it's added. Bypasses the duplicate check in
         `add()` via the internal `_load_one()` method.
         """
+        self._reload_from_store()
+
+    def _reload_from_store(self) -> None:
+        """Discard current in-memory state and rebuild from the store.
+
+        Used by the mutation snapshot guard to bring the DAG back in
+        sync with disk after a rollback. Safe to call on a DAG that
+        already has nodes — the slate is wiped first.
+        """
         import importlib
+
+        self._nodes.clear()
+        self._order.clear()
 
         try:
             all_nodes = self._store.get_all_nodes()
