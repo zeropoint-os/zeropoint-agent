@@ -212,13 +212,13 @@ class TerraformNode(INode[Any, TerraformResult]):
     def _module_dir(self, tfvars: Dict[str, str]) -> Path:
         """The agent's working dir for this module — terraform state lives here.
 
-        Comes from the `zp_module_path` PathVarNode injected by the
-        module installer. If the user edits that PathVarNode, the
-        directory has already been moved by the PathVarNode's
+        Comes from the `zp_module_dir` DirectoryVar injected by the
+        module installer. If the user edits that DirectoryVar, the
+        directory has already been moved by the DirectoryVar's
         on_config_changed hook by the time we get here; we just see
         the new path.
         """
-        return Path(self._required(tfvars, "zp_module_path"))
+        return Path(self._required(tfvars, "zp_module_dir"))
 
     def _build_result(self, tfvars: Dict[str, str],
                       outputs: Dict[str, dict]) -> TerraformResult:
@@ -289,7 +289,7 @@ class TerraformNode(INode[Any, TerraformResult]):
             network_name = self._required(tfvars, "zp_network_name")
             url, sha = _parse_git_source(self.source)
 
-            # zp_module_path's PathVarNode handles any directory moves on
+            # zp_module_dir's DirectoryVar handles any directory moves on
             # edit, so by the time we get here the dir is at module_dir
             # (or doesn't exist yet, on first install).
             if not module_dir.exists():

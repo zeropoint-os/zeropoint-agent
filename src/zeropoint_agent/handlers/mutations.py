@@ -60,7 +60,7 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
       1. Validate body shape, perms format, field names.
       2. Take a snapshot of graph.db.
       3. Call the node's `on_config_changed(old, new)` hook — this
-         is where side effects like PathVarNode's directory move
+         is where side effects like DirectoryVar's directory move
          happen. If the hook raises, we roll back and return the
          error.
       4. Apply the config + perms changes in memory.

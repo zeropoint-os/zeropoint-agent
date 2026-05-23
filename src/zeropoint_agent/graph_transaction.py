@@ -11,7 +11,7 @@ This means **the graph either fully reflects a mutation or doesn't
 reflect it at all** — a partially-applied state is never persisted.
 
 The transaction's scope is the graph store. Filesystem side effects
-(e.g. PathVarNode directory moves) are the responsibility of the
+(e.g. DirectoryVar directory moves) are the responsibility of the
 node's `on_config_changed` hook to make atomic-or-revertible; the
 transaction's job is the graph store and the in-memory DAG.
 """

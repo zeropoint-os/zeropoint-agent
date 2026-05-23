@@ -1,4 +1,4 @@
-"""PathNode — creates a directory on a mounted filesystem."""
+"""MountDir — creates a directory on a mounted filesystem."""
 
 import logging
 import os
@@ -12,22 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class PathResult:
+class MountDirResult:
     """Contract for a path/directory node."""
     path: str
     mode: str = "0755"
     is_dir: bool = True
 
 
-class PathNode(INode[MountResult, PathResult]):
+class MountDir(INode[MountResult, MountDirResult]):
     """Creates a directory on a mounted filesystem."""
 
     def __init__(self, path: str, mode: str = "0755"):
         self.path = path
         self.mode = mode
 
-    def resolve(self, input: MountResult, mode: ResolveMode) -> NodeResult[PathResult]:
-        result = PathResult(path=self.path, mode=self.mode)
+    def resolve(self, input: MountResult, mode: ResolveMode) -> NodeResult[MountDirResult]:
+        result = MountDirResult(path=self.path, mode=self.mode)
         if mode == ResolveMode.MOCK:
             return NodeResult.success(result)
 
@@ -37,15 +37,15 @@ class PathNode(INode[MountResult, PathResult]):
         except Exception as e:
             return NodeResult.failed(str(e), result)
 
-    def verify(self, mode: ResolveMode) -> NodeResult[PathResult]:
-        result = PathResult(path=self.path, mode=self.mode)
+    def verify(self, mode: ResolveMode) -> NodeResult[MountDirResult]:
+        result = MountDirResult(path=self.path, mode=self.mode)
         if mode == ResolveMode.MOCK:
             return NodeResult.success(result)
         if os.path.isdir(self.path):
             return NodeResult.success(result)
         return NodeResult.pending_reboot(result)
 
-    def remove(self, mode: ResolveMode) -> NodeResult[PathResult]:
+    def remove(self, mode: ResolveMode) -> NodeResult[MountDirResult]:
         if mode == ResolveMode.MOCK:
             return NodeResult.success()
         # Don't rm -rf from a node

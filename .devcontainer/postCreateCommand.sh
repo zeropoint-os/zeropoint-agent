@@ -37,7 +37,7 @@ ARCH="$(zeropoint-agent detect arch       | python3 -c 'import sys,json;print(js
 GPU="$( zeropoint-agent detect gpu-vendor | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))')"
 
 # Default storage root for per-module data dirs. Each module's
-# zp_storage_path is initialized to <ZP_MODULE_STORAGE>/<module_id>/
+# zp_storage_dir is initialized to <ZP_MODULE_STORAGE>/<module_id>/
 # by the installer; the user can then edit it independently.
 export ZP_MODULE_STORAGE="${ZP_MODULE_STORAGE:-/var/lib/zeropoint}"
 mkdir -p "$ZP_MODULE_STORAGE"
@@ -54,9 +54,9 @@ zeropoint-agent node ensure namespace modules \
 
 # Settings is now minimal: only the genuinely-global, system-detected
 # values live here. Per-module storage location is a per-module
-# concern (modules/<id>/zp_storage_path) — each instance can live in
+# concern (modules/<id>/zp_storage_dir) — each instance can live in
 # a different place, including a different filesystem. Per-module
-# terraform state lives at modules/<id>/zp_module_path. Both are
+# terraform state lives at modules/<id>/zp_module_dir. Both are
 # created automatically by the module installer.
 zeropoint-agent node ensure var settings/zp_arch \
     -p settings \
@@ -78,7 +78,7 @@ zeropoint-agent dag resolve > /dev/null
 # clone @ pinned SHA -> terraform apply -> output VarNodes populated.
 # Idempotent via 'module add' returning 409 if echo is already installed.
 
-ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@16f0b34cccda8a200bf33c1206226e42423a8a28"
+ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@61266f0673fa72bbf47ea0159e3351006f5a68c3"
 
 echo "installing echo from $ECHO_SOURCE ..."
 set +e

@@ -1,6 +1,6 @@
-"""PathVarNode — a VarNode whose value is a filesystem path the agent owns.
+"""DirectoryVar — a VarNode whose value is a filesystem path the agent owns.
 
-A PathVarNode is a regular VarNode in every observable way: it produces
+A DirectoryVar is a regular VarNode in every observable way: it produces
 a `VarResult(name, value)`, it can be literal, path-derived, output-
 derived, or passthrough, and downstream consumers can't tell the
 difference from a vanilla VarNode.
@@ -12,9 +12,9 @@ at the old path is moved to the new path. So consumers always see a
 value that points to a real directory with the live data inside it.
 
 Used for:
-  - `modules/<id>/zp_module_path` — the terraform working dir (state +
+  - `modules/<id>/zp_module_dir` — the terraform working dir (state +
     cloned source)
-  - `modules/<id>/zp_storage_path` — the module's isolated data root
+  - `modules/<id>/zp_storage_dir` — the module's isolated data root
 
 Move semantics:
   - Same filesystem  → atomic rename(2).
@@ -26,9 +26,6 @@ All side effects happen in `on_config_changed`, which is called by the
 mutation handler before the change is persisted. If the move fails the
 hook raises and the change is rejected; the user sees the error and
 nothing is persisted.
-
-(The name disambiguates from the unrelated PathNode in nodes/hw/path.py,
-which represents an OS mount path resource and predates this one.)
 """
 
 from __future__ import annotations
@@ -82,10 +79,10 @@ def _safe_move(old: Path, new: Path) -> None:
     new not in place" window is reduced to the rename, which is atomic.
     """
     if not old.exists():
-        # Nothing on disk to move. The PathNode's value can still be
+        # Nothing on disk to move. The DirectoryVar's value can still be
         # updated; the directory will be created lazily by whichever
         # downstream consumer needs it (terraform, docker bind mount).
-        logger.info("PathNode move: %s does not exist; nothing to move", old)
+        logger.info("DirectoryVar move: %s does not exist; nothing to move", old)
         return
 
     if new.exists():
@@ -99,7 +96,7 @@ def _safe_move(old: Path, new: Path) -> None:
     new.parent.mkdir(parents=True, exist_ok=True)
 
     if _same_filesystem(old, new.parent):
-        logger.info("PathNode move (atomic rename): %s -> %s", old, new)
+        logger.info("DirectoryVar move (atomic rename): %s -> %s", old, new)
         os.rename(old, new)
         return
 
@@ -108,11 +105,11 @@ def _safe_move(old: Path, new: Path) -> None:
     # files so an interrupted move resumes on retry.
     tmp = Path(f"{new}.incoming")
     if tmp.exists():
-        logger.info("PathNode move: resuming previous rsync into %s", tmp)
+        logger.info("DirectoryVar move: resuming previous rsync into %s", tmp)
     else:
         tmp.mkdir(parents=True)
 
-    logger.info("PathNode move (cross-fs rsync): %s -> %s (via %s)",
+    logger.info("DirectoryVar move (cross-fs rsync): %s -> %s (via %s)",
                 old, new, tmp)
     # Trailing slashes matter: rsync 'a/' -> 'b/' copies CONTENTS into b.
     subprocess.run(
@@ -126,11 +123,11 @@ def _safe_move(old: Path, new: Path) -> None:
         shutil.rmtree(old)
     except Exception:
         logger.exception(
-            "PathNode move: failed to remove old directory %s "
+            "DirectoryVar move: failed to remove old directory %s "
             "(new location %s is good); leaking disk space", old, new)
 
 
-class PathVarNode(VarNode):
+class DirectoryVar(VarNode):
     """A VarNode whose value is a directory path the agent owns.
 
     Editing `value` moves the directory before the new value is
@@ -151,7 +148,7 @@ class PathVarNode(VarNode):
             # directory will be created/abandoned lazily.
             return
         if mode == ResolveMode.MOCK:
-            logger.info("PathVarNode mock: would move %s -> %s",
+            logger.info("DirectoryVar mock: would move %s -> %s",
                         old_value, new_value)
             return
         _safe_move(Path(old_value), Path(new_value))

@@ -7,18 +7,18 @@ Layout produced under `modules/<module_id>`:
     modules/<module_id>                          NamespaceNode
     ├── zp_module_id                             VarNode from_path="leaf"
     ├── zp_network_name                          VarNode from_path="zeropoint-module-{full-dashed}"
-    ├── zp_module_path                           PathVarNode  (agent's terraform cwd)
-    ├── zp_storage_path                          PathVarNode  (module's isolated data root)
+    ├── zp_module_dir                           DirectoryVar  (agent's terraform cwd)
+    ├── zp_storage_dir                          DirectoryVar  (module's isolated data root)
     ├── <each user var from variables.tf>        VarNode literal (or override)
     └── terraform                                TerraformNode
 
-Two PathVarNodes carry the agent's two filesystem promises about a module:
+Two DirectoryVars carry the agent's two filesystem promises about a module:
 
-  - `zp_module_path` — where the agent runs terraform (cloned source +
+  - `zp_module_dir` — where the agent runs terraform (cloned source +
     .terraform/ + state). The user MAY edit this; on edit the directory
     is moved and terraform finds its state at the new location.
 
-  - `zp_storage_path` — the module's isolated data root. The module
+  - `zp_storage_dir` — the module's isolated data root. The module
     bind-mounts user data under this path. On edit, the agent moves the
     data tree (atomic rename when on the same FS, rsync to a sibling
     .incoming + atomic swap when crossing filesystems — supporting the
@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional
 
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.nodes.config.namespace import NamespaceNode
-from zeropoint_agent.nodes.config.path import PathVarNode
+from zeropoint_agent.nodes.config.directory import DirectoryVar
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.user.module import (
     TerraformNode, _parse_git_source, _git_clone_at_sha,
@@ -174,7 +174,7 @@ _PER_MODULE_SYSTEM_VARS: Dict[str, str] = {
 # existing VarNode rather than auto-creating a per-module one.
 #
 # Note: zp_module_storage is NOT in this list anymore. Storage location
-# is now a per-module concern (`zp_storage_path`) — each module instance
+# is now a per-module concern (`zp_storage_dir`) — each module instance
 # can live in a different place, including a different filesystem.
 _GLOBAL_SYSTEM_VARS = ("zp_arch", "zp_gpu_vendor")
 
@@ -201,7 +201,7 @@ def _default_storage_root() -> Path:
     """Where module data dirs default to live, before the user edits them.
 
     Override via ZP_MODULE_STORAGE; defaults to /var/lib/zeropoint.
-    Each module's `zp_storage_path` is initialized to
+    Each module's `zp_storage_dir` is initialized to
     `<storage_root>/<module_id>/` but is then independently editable.
     """
     return Path(
@@ -286,20 +286,20 @@ def add_module(
         var_parent_ids.append(node_id)
 
     # The agent's two filesystem promises: the module's working dir
-    # (zp_module_path, where terraform runs) and its data root
-    # (zp_storage_path, where the module bind-mounts user data). Both
-    # are PathVarNodes — editable by the user; the agent moves the
+    # (zp_module_dir, where terraform runs) and its data root
+    # (zp_storage_dir, where the module bind-mounts user data). Both
+    # are DirectoryVars — editable by the user; the agent moves the
     # directory before persisting the new path.
     module_path_default = str(_agent_state_root() / module_id)
     storage_path_default = str(_default_storage_root() / module_id)
     for varname, default_path in (
-        ("zp_module_path",  module_path_default),
-        ("zp_storage_path", storage_path_default),
+        ("zp_module_dir",  module_path_default),
+        ("zp_storage_dir", storage_path_default),
     ):
         node_id = f"{namespace_id}/{varname}"
         dag.add(
             node_id,
-            PathVarNode(name=varname, value=default_path),
+            DirectoryVar(name=varname, value=default_path),
             parents=[namespace_id],
             perms="rw-",
         )
@@ -319,10 +319,10 @@ def add_module(
         global_by_name[entry.node.name] = nid
 
     # Per-module system vars that the installer already injected above
-    # (path-derived ones + the two PathVarNodes). Any tf variable with
+    # (path-derived ones + the two DirectoryVars). Any tf variable with
     # one of these names is automatically wired and should be skipped
     # in the loop below.
-    auto_injected = set(_PER_MODULE_SYSTEM_VARS) | {"zp_module_path", "zp_storage_path"}
+    auto_injected = set(_PER_MODULE_SYSTEM_VARS) | {"zp_module_dir", "zp_storage_dir"}
 
     # Walk each declared variable from variables.tf
     for var in tf_vars:

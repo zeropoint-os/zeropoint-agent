@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from zeropoint_agent import (
     ShellScriptNode,
     NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
-    DiskNode, PartitionNode, FormatNode, MountNode,
-    PathNode, VarNode, PathVarNode, NamespaceNode,
+    DiskNode, PartitionNode, FormatNode, MountNode, MountDir,
+    VarNode, DirectoryVar, NamespaceNode,
     ModuleNode, TerraformNode, LinkNode, ExposureNode,
 )
 
@@ -24,9 +24,9 @@ NODE_REGISTRY = {
     "partition": PartitionNode,
     "format": FormatNode,
     "mount": MountNode,
-    "path": PathNode,
+    "mountdir": MountDir,
     "var": VarNode,
-    "pathvar": PathVarNode,
+    "dir": DirectoryVar,
     "namespace": NamespaceNode,
     "module": ModuleNode,         # back-compat alias for terraform
     "terraform": TerraformNode,
