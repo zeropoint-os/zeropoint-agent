@@ -13,7 +13,7 @@ Layout produced under `modules/<module_id>`:
 The TerraformNode depends on:
   - the namespace (provides path)
   - every VarNode child of the namespace (user vars + auto-derived system vars)
-  - the system VarNodes living elsewhere (e.g. `global-settings/zp_module_storage`)
+  - the system VarNodes living elsewhere (e.g. `settings/zp_module_storage`)
 
 No literal magic strings are stored — system vars derive from path at
 resolve time. This means renaming the namespace just works: zp_module_id
@@ -35,7 +35,6 @@ from zeropoint_agent.nodes.config.namespace import NamespaceNode
 from zeropoint_agent.nodes.config.var import VarNode
 from zeropoint_agent.nodes.user.module import (
     TerraformNode, _parse_git_source, _git_clone_at_sha,
-    _is_local_source, _local_source_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,7 +153,7 @@ _PER_MODULE_SYSTEM_VARS: Dict[str, str] = {
     "zp_network_name": "zeropoint-module-{full-dashed}",
 }
 
-# System VarNodes that live globally (typically under `global-settings`).
+# System VarNodes that live globally (typically under `settings`).
 # When a module's variables.tf declares one of these, we wire to the
 # existing VarNode rather than auto-creating a per-module one.
 _GLOBAL_SYSTEM_VARS = ("zp_module_storage", "zp_arch", "zp_gpu_vendor")
@@ -199,22 +198,16 @@ def add_module(
         raise KeyError(
             f"parent namespace {parent_namespace!r} not found in graph")
 
-    # Inspect the module (variables.tf + outputs). For local sources we read
-    # the directory directly; for git sources we shallow-clone to a temp
-    # location and read from there.
-    if _is_local_source(source):
-        inspection_dir = _local_source_path(source)
-        cleanup = False
-    else:
-        url, sha = _parse_git_source(source)
-        inspection_dir = _shallow_clone_for_inspection(url, sha)
-        cleanup = True
+    # Inspect the module (variables.tf + outputs) by shallow-cloning to a
+    # temp location and reading its .tf files. We always go through git;
+    # local paths aren't supported (see TerraformNode._parse_git_source).
+    url, sha = _parse_git_source(source)
+    inspection_dir = _shallow_clone_for_inspection(url, sha)
     try:
         tf_vars = parse_variables_tf(inspection_dir)
         tf_outputs = parse_outputs_tf(inspection_dir)
     finally:
-        if cleanup:
-            shutil.rmtree(inspection_dir.parent, ignore_errors=True)
+        shutil.rmtree(inspection_dir.parent, ignore_errors=True)
 
     logger.info("module %s declares %d variables, %d outputs",
                 module_id, len(tf_vars), len(tf_outputs))

@@ -70,30 +70,14 @@ ModuleResult = TerraformResult
 # helpers
 # ---------------------------------------------------------------------------
 
-def _is_local_source(source: str) -> bool:
-    """True if source refers to a local filesystem path, not a git URL."""
-    if source.startswith("file://"):
-        return True
-    if source.startswith(("/", "./", "../", "~/")):
-        return True
-    return False
-
-
-def _local_source_path(source: str) -> Path:
-    """Resolve a local source string to an absolute Path."""
-    s = source[len("file://"):] if source.startswith("file://") else source
-    p = Path(s).expanduser().resolve()
-    if not p.exists():
-        raise ValueError(f"local module source does not exist: {p}")
-    if not p.is_dir():
-        raise ValueError(f"local module source is not a directory: {p}")
-    return p
-
-
 def _parse_git_source(source: str) -> tuple[str, str]:
     """Split 'https://…/repo.git@<sha>' into (url, sha). Raises on invalid.
 
-    For local paths use `_is_local_source` + `_local_source_path` instead.
+    Every module source MUST be a git URL pinned to a 40-character commit
+    SHA. Local paths, branches, tags and HEAD are not allowed: they would
+    make terraform state non-reproducible and the on-disk module dir
+    non-canonical. The agent owns the working directory; the source URL
+    is purely a pointer to immutable upstream content.
     """
     if "@" not in source:
         raise ValueError(
@@ -216,6 +200,12 @@ class TerraformNode(INode[Any, TerraformResult]):
 
     def __init__(self, source: str):
         self.source = source
+        # Last-known module_dir from a successful resolve. Used to
+        # detect a zp_module_storage change and migrate the working
+        # dir (state files + .terraform/) without losing terraform
+        # state. Prefixed with underscore so DAG._compute_path /
+        # store serializer skip it (they filter `_` attrs).
+        self._previous_module_dir: Optional[Path] = None
 
     def _required(self, tfvars: Dict[str, str], key: str) -> str:
         v = tfvars.get(key)
@@ -297,22 +287,29 @@ class TerraformNode(INode[Any, TerraformResult]):
         try:
             module_dir = self._module_dir(tfvars)
             network_name = self._required(tfvars, "zp_network_name")
+            url, sha = _parse_git_source(self.source)
 
-            if _is_local_source(self.source):
-                # Local module: terraform runs from the source path directly
-                # (no clone, no copy). Edits to the local tree are picked up
-                # on the next resolve. State (.terraform/, *.tfstate) lives
-                # under the local path too — module_storage isn't used for
-                # local sources beyond providing zp_module_storage to the
-                # module's variables.
-                tf_cwd = _local_source_path(self.source)
-                logger.info("using local module at %s", tf_cwd)
-            else:
-                url, sha = _parse_git_source(self.source)
-                if not module_dir.exists():
-                    logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
-                    _git_clone_at_sha(url, sha, module_dir)
-                tf_cwd = module_dir
+            # The agent owns the module's working directory: every module
+            # lives at <zp_module_storage>/<module_id>/. If the user
+            # edits zp_module_storage, we relocate the working dir
+            # (which contains .terraform/ + state) to the new path so
+            # terraform can keep going without losing track of resources.
+            #
+            # This relies on the in-memory `_previous_module_dir` which
+            # is reset on rehydrate. Changing zp_module_storage *while
+            # the server is restarted* is not currently auto-migrated;
+            # the user can `mv` the dir manually if they hit that.
+            if self._previous_module_dir and self._previous_module_dir != module_dir:
+                if self._previous_module_dir.exists() and not module_dir.exists():
+                    logger.info("relocating module dir %s -> %s",
+                                self._previous_module_dir, module_dir)
+                    module_dir.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(self._previous_module_dir), str(module_dir))
+
+            if not module_dir.exists():
+                logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
+                _git_clone_at_sha(url, sha, module_dir)
+            tf_cwd = module_dir
 
             _ensure_network(network_name)
 
@@ -329,6 +326,9 @@ class TerraformNode(INode[Any, TerraformResult]):
                 return NodeResult.failed(
                     "module must declare at least one '<container>_ports' output")
 
+            # Remember where we just applied, so the next resolve can
+            # detect a zp_module_storage change and migrate accordingly.
+            self._previous_module_dir = module_dir
             return NodeResult.success(self._build_result(tfvars, outputs))
 
         except (TerraformError, ValueError) as e:

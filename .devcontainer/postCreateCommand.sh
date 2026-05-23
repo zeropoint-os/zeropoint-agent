@@ -19,6 +19,18 @@
 
 set -euo pipefail
 
+# ---- wipe stale graph state so the bootstrap is canonical ----------------
+# The graph store persists in data/. If you change a node's id (e.g. a
+# rename like global-settings -> settings) old entries linger. Wiping
+# here keeps postCreate as the single source of truth for what the DAG
+# looks like out of the box.
+
+WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -d "$WORKSPACE_ROOT/data" ]]; then
+    echo "wiping existing graph state in $WORKSPACE_ROOT/data ..."
+    rm -rf "$WORKSPACE_ROOT/data"
+fi
+
 # ---- probe host values from the agent (single source of truth) -----------
 
 ARCH="$(zeropoint-agent detect arch       | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value","amd64"))')"
@@ -33,29 +45,35 @@ mkdir -p "$ZP_MODULE_STORAGE" "$ZP_MARKER_DIR"
 
 echo "seeding default DAG (arch=$ARCH gpu=${GPU:-<none>}) ..."
 
-zeropoint-agent node ensure namespace global-settings \
-    -c name=global-settings --perms rw*
+zeropoint-agent node ensure namespace settings \
+    -c name=settings --perms rw*
 
 zeropoint-agent node ensure namespace modules \
-    -c name=modules         --perms rw*
+    -c name=modules  --perms rw*
 
-zeropoint-agent node ensure var global-settings/zp_module_storage \
-    -p global-settings \
+# zp_module_storage is the one settings entry the user can sensibly edit
+# — pointing it at a different on-disk location is a legitimate config
+# change. TerraformNode detects the change on next resolve and relocates
+# the module's working dir (state + .terraform/) to the new path. The
+# others are detected host-properties; making them editable would be a
+# footgun (e.g. lying to terraform about arch).
+zeropoint-agent node ensure var settings/zp_module_storage \
+    -p settings \
     -c name=zp_module_storage -c "value=\"${ZP_MODULE_STORAGE}\"" \
-    --perms r--
+    --perms rw-
 
-zeropoint-agent node ensure var global-settings/zp_arch \
-    -p global-settings \
+zeropoint-agent node ensure var settings/zp_arch \
+    -p settings \
     -c name=zp_arch -c "value=\"${ARCH}\"" \
     --perms r--
 
-zeropoint-agent node ensure var global-settings/zp_gpu_vendor \
-    -p global-settings \
+zeropoint-agent node ensure var settings/zp_gpu_vendor \
+    -p settings \
     -c name=zp_gpu_vendor -c "value=\"${GPU}\"" \
     --perms r--
 
-zeropoint-agent node ensure var global-settings/marker_dir \
-    -p global-settings \
+zeropoint-agent node ensure var settings/zp_marker_dir \
+    -p settings \
     -c name=zp_marker_dir -c "value=\"${ZP_MARKER_DIR}\"" \
     --perms r--
 
@@ -64,24 +82,22 @@ zeropoint-agent node ensure var global-settings/marker_dir \
 echo "resolving ..."
 zeropoint-agent dag resolve > /dev/null
 
-# ---- install the local test module ---------------------------------------
-# Confirms the full happy path: bootstrap -> module add (local source) ->
-# terraform apply -> output VarNodes populated. Idempotent via 'module add'
-# returning 409 if zp-test is already installed.
+# ---- install the echo module ---------------------------------------------
+# Verifies the full happy path: bootstrap -> module add (git source) ->
+# clone @ pinned SHA -> terraform apply -> output VarNodes populated.
+# Idempotent via 'module add' returning 409 if echo is already installed.
 
-TEST_MODULE_DIR="$(cd "$(dirname "$0")/.." && pwd)/test-module"
+ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@5504795d3cf6f53fae8a12a6d860d44beb5e21f5"
 
-if [[ -d "$TEST_MODULE_DIR" ]]; then
-  echo "installing zp-test from $TEST_MODULE_DIR ..."
-  set +e
-  zeropoint-agent module add zp-test "$TEST_MODULE_DIR" --resolve > /tmp/zp-test-install.log 2>&1
-  rc=$?
-  set -e
-  case $rc in
-    0)   echo "  installed.";;
-    409) echo "  already installed; skipping.";;
-    *)   echo "  WARNING: install failed (exit $rc); see /tmp/zp-test-install.log" >&2;;
-  esac
-fi
+echo "installing echo from $ECHO_SOURCE ..."
+set +e
+zeropoint-agent module add echo "$ECHO_SOURCE" --resolve > /tmp/echo-install.log 2>&1
+rc=$?
+set -e
+case $rc in
+  0)   echo "  installed.";;
+  409) echo "  already installed; skipping.";;
+  *)   echo "  WARNING: install failed (exit $rc); see /tmp/echo-install.log" >&2;;
+esac
 
 echo "done."
