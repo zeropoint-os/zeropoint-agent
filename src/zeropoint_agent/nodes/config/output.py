@@ -1,8 +1,8 @@
-"""OutputVar — a VarNode whose value comes from a parent's `outputs` dict.
+"""OutputVar — a Var whose value comes from a parent's `outputs` dict.
 
 Installer-created. For every terraform output, the module installer
-creates one `OutputVar` parented to the TerraformNode, so each output
-becomes a first-class `VarNode[T]` in the graph — pickable, linkable,
+creates one `OutputVar` parented to the Terraform, so each output
+becomes a first-class `Var[T]` in the graph — pickable, linkable,
 inspectable.
 
 Not specific to terraform; any node whose result has an `outputs`
@@ -17,7 +17,7 @@ import logging
 from typing import Any, Optional, TypeVar
 
 from zeropoint_agent.inode import ResolveMode, NodeResult
-from zeropoint_agent.nodes.config.var import VarNode, VarResult
+from zeropoint_agent.nodes.config.var import Var, VarResult
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ def _read_output(input_val: Any, key: str) -> Optional[Any]:
     return None
 
 
-class OutputVar(VarNode[T]):
-    """VarNode whose value is read from a parent's outputs dict."""
+class OutputVar(Var[T]):
+    """Var whose value is read from a parent's outputs dict."""
 
     def __init__(self, name: str, key: str, value: Optional[T] = None):
         # `value` is accepted but ignored — OutputVar reads at resolve

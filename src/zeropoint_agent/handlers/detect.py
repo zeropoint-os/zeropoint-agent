@@ -1,7 +1,7 @@
 """Detection endpoints — small helpers for boot scripts.
 
 Used by `zeropoint-agent detect <kind>` and by bash bootstrap scripts to
-populate system VarNodes with host-derived values (arch, GPU vendor).
+populate system Vars with host-derived values (arch, GPU vendor).
 
 Detection logic lives here so the agent and any boot script agree on
 the same probes.

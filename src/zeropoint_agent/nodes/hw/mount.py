@@ -1,4 +1,4 @@
-"""MountNode — mounts a formatted partition."""
+"""Mount — mounts a formatted partition."""
 
 import logging
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ class MountResult:
     options: str = "defaults"
 
 
-class MountNode(INode[FormatResult, MountResult]):
+class Mount(INode[FormatResult, MountResult]):
     """Mounts a formatted partition at a mountpoint."""
 
     def __init__(self, mountpoint: str, options: str = "defaults"):

@@ -1,10 +1,10 @@
-"""NamespaceNode — a structural / addressing node.
+"""Namespace — a structural / addressing node.
 
-NamespaceNodes contribute path segments. When a NamespaceNode resolves,
+Namespaces contribute path segments. When a Namespace resolves,
 its output carries the accumulated path (inherited + own name). Other
-nodes that have a NamespaceNode parent inherit its path verbatim.
+nodes that have a Namespace parent inherit its path verbatim.
 
-The DAG executor handles the actual propagation. NamespaceNode's only
+The DAG executor handles the actual propagation. Namespace's only
 job is to declare what segment it adds.
 """
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NamespaceResult:
-    """Contract for a NamespaceNode.
+    """Contract for a Namespace.
 
     Carries the accumulated path so children can inherit it. The
     `name` field is just the leaf segment; `path` is the full address
@@ -31,17 +31,17 @@ class NamespaceResult:
     path: str
 
 
-class NamespaceNode(INode[Any, NamespaceResult]):
+class Namespace(INode[Any, NamespaceResult]):
     """A structural node that contributes a path segment.
 
-    Children of a NamespaceNode inherit the namespace's full path.
-    Nesting NamespaceNodes composes:
+    Children of a Namespace inherit the namespace's full path.
+    Nesting Namespaces composes:
 
         modules (path="modules")
         └── redis (path="modules/redis")
             └── zp_module_id (inherits "modules/redis")
 
-    NamespaceNode does no other work. Its presence in the graph defines
+    Namespace does no other work. Its presence in the graph defines
     addressing; its resolution just emits the path it represents.
     """
 

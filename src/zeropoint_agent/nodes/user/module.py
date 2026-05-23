@@ -1,17 +1,17 @@
-"""TerraformNode — installs a Terraform-managed containerized module.
+"""Terraform — installs a Terraform-managed containerized module.
 
 Port of internal/modules/installer.go.
 
 This node is purely the *terraform runner*. It has no constructor-level
 config beyond the git source URL. Everything else (module_id, network
-name, storage path, user vars) flows in from VarNode parents.
+name, storage path, user vars) flows in from Var parents.
 
 The DAG executor delivers parents as a dict {parent_id: parent_output}
-because TerraformNode always has multiple parents:
-  - its enclosing NamespaceNode (provides path)
-  - the per-module/system VarNodes (provide tfvars)
+because Terraform always has multiple parents:
+  - its enclosing Namespace (provides path)
+  - the per-module/system Vars (provide tfvars)
 
-TerraformNode flattens VarResult parents into a single tfvars dict
+Terraform flattens VarResult parents into a single tfvars dict
 keyed by VarResult.name. NamespaceResult parents are ignored at the
 tfvars level (they're only there for path/structure).
 """
@@ -49,7 +49,7 @@ class ContainerInfo:
 
 @dataclass
 class TerraformResult:
-    """Contract for a TerraformNode."""
+    """Contract for a Terraform."""
     source: str
     module_id: str = ""
     module_dir: str = ""
@@ -58,12 +58,8 @@ class TerraformResult:
     main: Optional[str] = None
     containers: Dict[str, ContainerInfo] = field(default_factory=dict)
     # Raw terraform outputs as {name: value}. Complex values (dicts, lists)
-    # are preserved as-is. VarNodes with from_output=<name> read this dict.
+    # are preserved as-is. Vars with from_output=<name> read this dict.
     outputs: Dict[str, Any] = field(default_factory=dict)
-
-
-# Back-compat alias for the old name; remove once nothing imports it.
-ModuleResult = TerraformResult
 
 
 # ---------------------------------------------------------------------------
@@ -184,17 +180,17 @@ def _extract_container_ip(inspect: Dict[str, Any]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# TerraformNode
+# Terraform
 # ---------------------------------------------------------------------------
 
-class TerraformNode(INode[Any, TerraformResult]):
+class Terraform(INode[Any, TerraformResult]):
     """A terraform-managed module install.
 
     Carries only the git source URL. Everything else is read from
-    VarNode parents at resolve time.
+    Var parents at resolve time.
     """
 
-    # No editable fields on this class — config flows from VarNode parents.
+    # No editable fields on this class — config flows from Var parents.
     # Hence type-level veto on `w`. Still deletable (calls remove()).
     default_perms = "r-d"
 
@@ -206,7 +202,7 @@ class TerraformNode(INode[Any, TerraformResult]):
         if not v:
             raise RuntimeError(
                 f"required system var {key!r} not provided "
-                f"(expected a VarNode parent with this name)")
+                f"(expected a Var parent with this name)")
         return v
 
     def _module_dir(self, tfvars: Dict[str, str]) -> Path:
@@ -229,7 +225,7 @@ class TerraformNode(INode[Any, TerraformResult]):
             network_name=self._required(tfvars, "zp_network_name"),
             variables=dict(tfvars),
             # Flatten {name: {sensitive, type, value}} → {name: value} so
-            # VarNodes downstream can read outputs directly.
+            # Vars downstream can read outputs directly.
             outputs={k: (v.get("value") if isinstance(v, dict) else v)
                      for k, v in outputs.items()},
         )
@@ -320,7 +316,7 @@ class TerraformNode(INode[Any, TerraformResult]):
             return NodeResult.failed(
                 f"command failed: {e}\nstderr: {e.stderr}")
         except Exception as e:
-            logger.exception("TerraformNode resolve failed")
+            logger.exception("Terraform resolve failed")
             return NodeResult.failed(str(e))
 
     def verify(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
@@ -338,7 +334,3 @@ class TerraformNode(INode[Any, TerraformResult]):
         # walking the namespace can clean up the module dir + network
         # after destroy. (TODO: thread input into remove() too.)
         return NodeResult.success()
-
-
-# Back-compat alias.
-ModuleNode = TerraformNode

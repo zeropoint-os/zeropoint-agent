@@ -1,4 +1,4 @@
-"""NvidiaGpuNode — detects NVIDIA GPU and driver status."""
+"""NvidiaGpu — detects NVIDIA GPU and driver status."""
 
 import subprocess
 from dataclasses import dataclass, field
@@ -67,7 +67,7 @@ def _query() -> tuple:
     return version, gpus
 
 
-class NvidiaGpuNode(INode[None, NvidiaGpuResult]):
+class NvidiaGpu(INode[None, NvidiaGpuResult]):
 
     def resolve(self, input: None, mode: ResolveMode) -> NodeResult[NvidiaGpuResult]:
         if mode == ResolveMode.MOCK:

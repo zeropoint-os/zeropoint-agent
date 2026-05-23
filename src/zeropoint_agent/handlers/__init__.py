@@ -6,34 +6,33 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from zeropoint_agent import (
-    ShellScriptNode,
-    NetworkNode, DockerNode, NvidiaGpuNode, AmdGpuNode,
-    DiskNode, PartitionNode, FormatNode, MountNode, MountDir,
-    VarNode, NamespacedVar, OutputVar, DirectoryVar, NamespaceNode,
-    ModuleNode, TerraformNode, LinkNode, ExposureNode,
+    ShellScript,
+    Network, Docker, NvidiaGpu, AmdGpu,
+    Disk, Partition, Format, Mount, MountDir,
+    Var, NamespacedVar, OutputVar, DirectoryVar, Namespace,
+    Terraform, Link, Exposure,
 )
 
 
 NODE_REGISTRY = {
-    "shell": ShellScriptNode,
-    "network": NetworkNode,
-    "docker": DockerNode,
-    "nvidia": NvidiaGpuNode,
-    "amd": AmdGpuNode,
-    "disk": DiskNode,
-    "partition": PartitionNode,
-    "format": FormatNode,
-    "mount": MountNode,
+    "shell": ShellScript,
+    "network": Network,
+    "docker": Docker,
+    "nvidia": NvidiaGpu,
+    "amd": AmdGpu,
+    "disk": Disk,
+    "partition": Partition,
+    "format": Format,
+    "mount": Mount,
     "mountdir": MountDir,
-    "var": VarNode,
+    "var": Var,
     "namespaced": NamespacedVar,
     "output": OutputVar,
     "dir": DirectoryVar,
-    "namespace": NamespaceNode,
-    "module": ModuleNode,         # back-compat alias for terraform
-    "terraform": TerraformNode,
-    "link": LinkNode,
-    "exposure": ExposureNode,
+    "namespace": Namespace,
+    "terraform": Terraform,
+    "link": Link,
+    "exposure": Exposure,
 }
 
 

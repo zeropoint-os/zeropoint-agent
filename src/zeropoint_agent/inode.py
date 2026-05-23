@@ -168,7 +168,7 @@ class INode(ABC, Generic[I, O]):
     permissions string (3 chars from {r,w,d,*,-}). See
     zeropoint-agent/permissions-model in the mind-map for full semantics.
     Subclasses override this to express fundamental class-level rules
-    (e.g., TerraformNode = "r-d" because it has no editable fields).
+    (e.g., Terraform = "r-d" because it has no editable fields).
     """
 
     # Type-level default permissions. Three characters in r/w/d/*/- alphabet:

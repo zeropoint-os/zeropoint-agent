@@ -1,4 +1,4 @@
-"""FormatNode — creates a filesystem on a parent partition."""
+"""Format — creates a filesystem on a parent partition."""
 
 import logging
 from dataclasses import dataclass
@@ -21,7 +21,7 @@ class FormatResult:
     uuid: Optional[str] = None
 
 
-class FormatNode(INode[PartitionResult, FormatResult]):
+class Format(INode[PartitionResult, FormatResult]):
     """Creates a filesystem on a parent partition."""
 
     def __init__(self, filesystem: str = "ext4", label: Optional[str] = None):

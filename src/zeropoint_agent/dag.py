@@ -42,8 +42,8 @@ def _get_io_types(node: INode) -> tuple:
     """Extract (I, O) type params from an INode subclass.
 
     Walks the MRO to handle indirect parameterization, e.g.
-    NamespacedVar(VarNode[str]) where INode[Any, VarResult[T]] is
-    declared on VarNode, not on NamespacedVar directly.
+    NamespacedVar(Var[str]) where INode[Any, VarResult[T]] is
+    declared on Var, not on NamespacedVar directly.
     """
     for cls in type(node).__mro__:
         for base in getattr(cls, "__orig_bases__", ()):
@@ -267,35 +267,35 @@ class DAG:
             f"path={entry.path!r}, perms={entry.perms})")
 
     def _compute_path(self, node: INode, parents: List[str]) -> str:
-        """Compute a node's path from its NamespaceNode parents.
+        """Compute a node's path from its Namespace parents.
 
-        - If `node` is itself a NamespaceNode, the path is
+        - If `node` is itself a Namespace, the path is
           `<namespace-parent's path>/<self.name>` (or just `self.name` for root).
-        - Otherwise, the path is the path of the (at most one) NamespaceNode parent.
+        - Otherwise, the path is the path of the (at most one) Namespace parent.
         """
-        from zeropoint_agent.nodes.config.namespace import NamespaceNode
+        from zeropoint_agent.nodes.config.namespace import Namespace
 
         ns_parent_paths = [
             self._nodes[pid].path
             for pid in parents
-            if isinstance(self._nodes[pid].node, NamespaceNode)
+            if isinstance(self._nodes[pid].node, Namespace)
         ]
         if len(ns_parent_paths) > 1:
             raise ValueError(
-                f"node has more than one NamespaceNode parent: {parents}")
+                f"node has more than one Namespace parent: {parents}")
         inherited = ns_parent_paths[0] if ns_parent_paths else ""
 
-        if isinstance(node, NamespaceNode):
+        if isinstance(node, Namespace):
             name = getattr(node, "name", "")
             return f"{inherited}/{name}" if inherited else name
         return inherited
 
     def _find_namespace_parent(self, entry: NodeEntry) -> Optional[NodeEntry]:
-        """Return the (at most one) NamespaceNode parent of an entry, or None."""
-        from zeropoint_agent.nodes.config.namespace import NamespaceNode
+        """Return the (at most one) Namespace parent of an entry, or None."""
+        from zeropoint_agent.nodes.config.namespace import Namespace
         for pid in entry.parents:
             p = self._nodes.get(pid)
-            if p is not None and isinstance(p.node, NamespaceNode):
+            if p is not None and isinstance(p.node, Namespace):
                 return p
         return None
 

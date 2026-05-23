@@ -4,14 +4,14 @@ After this returns, calling `dag.resolve()` will run terraform.
 
 Layout produced under `modules/<module_id>`:
 
-    modules/<module_id>                          NamespaceNode
+    modules/<module_id>                          Namespace
     ├── zp_module_id                             NamespacedVar  spec="leaf"
     ├── zp_network_name                          NamespacedVar  spec="zeropoint-module-{full-dashed}"
     ├── zp_module_dir                            DirectoryVar   (agent's terraform cwd)
     ├── zp_storage_dir                           DirectoryVar   (module's isolated data root)
-    ├── <each user var from variables.tf>        VarNode        literal (or override)
+    ├── <each user var from variables.tf>        Var        literal (or override)
     ├── <each terraform output>                  OutputVar      reads parent.outputs[<name>]
-    └── terraform                                TerraformNode
+    └── terraform                                Terraform
 
 Two DirectoryVars carry the agent's two filesystem promises about a module:
 
@@ -25,10 +25,10 @@ Two DirectoryVars carry the agent's two filesystem promises about a module:
     .incoming + atomic swap when crossing filesystems — supporting the
     "I added an HDD, move my photos there" workflow).
 
-The TerraformNode depends on:
+The Terraform depends on:
   - the namespace (provides path)
-  - every VarNode-like child of the namespace (user vars + system vars)
-  - any global system VarNodes living elsewhere (e.g. `settings/zp_arch`)
+  - every Var-like child of the namespace (user vars + system vars)
+  - any global system Vars living elsewhere (e.g. `settings/zp_arch`)
 
 No literal magic strings are stored — `zp_module_id` and
 `zp_network_name` derive from the namespace path at resolve time. This
@@ -47,13 +47,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from zeropoint_agent.dag import DAG
-from zeropoint_agent.nodes.config.namespace import NamespaceNode
+from zeropoint_agent.nodes.config.namespace import Namespace
 from zeropoint_agent.nodes.config.namespaced import NamespacedVar
 from zeropoint_agent.nodes.config.output import OutputVar
 from zeropoint_agent.nodes.config.directory import DirectoryVar
-from zeropoint_agent.nodes.config.var import VarNode
+from zeropoint_agent.nodes.config.var import Var
 from zeropoint_agent.nodes.user.module import (
-    TerraformNode, _parse_git_source, _git_clone_at_sha,
+    Terraform, _parse_git_source, _git_clone_at_sha,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,16 +165,16 @@ def _shallow_clone_for_inspection(url: str, sha: str) -> Path:
 # Public API
 # ---------------------------------------------------------------------------
 
-# Per-module path-derived system VarNodes. These are auto-created
+# Per-module path-derived system Vars. These are auto-created
 # under the module's namespace; their values come from the inherited path.
 _PER_MODULE_SYSTEM_VARS: Dict[str, str] = {
     "zp_module_id":    "leaf",
     "zp_network_name": "zeropoint-module-{full-dashed}",
 }
 
-# Global system VarNodes that live elsewhere (typically under `settings`).
+# Global system Vars that live elsewhere (typically under `settings`).
 # When a module's variables.tf declares one of these, we wire to the
-# existing VarNode rather than auto-creating a per-module one.
+# existing Var rather than auto-creating a per-module one.
 #
 # Note: zp_module_storage is NOT in this list anymore. Storage location
 # is now a per-module concern (`zp_storage_dir`) — each module instance
@@ -250,7 +250,7 @@ def add_module(
 
     # Inspect the module (variables.tf + outputs) by shallow-cloning to a
     # temp location and reading its .tf files. We always go through git;
-    # local paths aren't supported (see TerraformNode._parse_git_source).
+    # local paths aren't supported (see Terraform._parse_git_source).
     url, sha = _parse_git_source(source)
     inspection_dir = _shallow_clone_for_inspection(url, sha)
     try:
@@ -266,12 +266,12 @@ def add_module(
     # is fully manipulable by the user (rwd) — users can rename, edit, or
     # remove the whole module.
     namespace_id = f"{parent_namespace}/{module_id}"
-    dag.add(namespace_id, NamespaceNode(name=module_id),
+    dag.add(namespace_id, Namespace(name=module_id),
             parents=[parent_namespace], perms="rwd")
 
     created: List[str] = [namespace_id]
     wired_existing: List[str] = []
-    var_parent_ids: List[str] = []  # all VarNodes that feed the TerraformNode
+    var_parent_ids: List[str] = []  # all Vars that feed the Terraform
 
     # Auto-create per-module path-derived system vars under the namespace.
     # These are system-managed: their value is derived from the namespace
@@ -309,13 +309,13 @@ def add_module(
         created.append(node_id)
         var_parent_ids.append(node_id)
 
-    # Find globally-available system VarNodes (zp_arch, zp_gpu_vendor)
-    # by name and wire to them as TerraformNode parents. We restrict the
+    # Find globally-available system Vars (zp_arch, zp_gpu_vendor)
+    # by name and wire to them as Terraform parents. We restrict the
     # search to nodes outside this module's namespace — per-module vars
     # under modules/<id>/ are local and shouldn't be wired as globals.
     global_by_name: Dict[str, str] = {}
     for nid, entry in dag.nodes.items():
-        if not isinstance(entry.node, VarNode):
+        if not isinstance(entry.node, Var):
             continue
         if nid.startswith(f"{namespace_id}/"):
             continue
@@ -334,18 +334,18 @@ def add_module(
             continue
 
         if var.name in _GLOBAL_SYSTEM_VARS:
-            # Wire to the existing global system VarNode.
+            # Wire to the existing global system Var.
             gid = global_by_name.get(var.name)
             if not gid:
                 raise RuntimeError(
                     f"module declares system var {var.name!r} but no "
-                    f"VarNode with that name exists in the graph")
+                    f"Var with that name exists in the graph")
             if gid not in var_parent_ids:
                 var_parent_ids.append(gid)
                 wired_existing.append(gid)
             continue
 
-        # User-defined var: create a VarNode under the namespace with the
+        # User-defined var: create a Var under the namespace with the
         # module's default or an override. User vars are freely editable
         # (defer to namespace context).
         var_node_id = f"{namespace_id}/{var.name}"
@@ -353,7 +353,7 @@ def add_module(
                  else _hcl_variable_to_str(var.default))
         dag.add(
             var_node_id,
-            VarNode(name=var.name, value=value),
+            Var(name=var.name, value=value),
             parents=[namespace_id],
         )
         created.append(var_node_id)
@@ -367,20 +367,20 @@ def add_module(
             var_parent_ids.append(gid)
             wired_existing.append(gid)
 
-    # The TerraformNode: lives under the namespace, depends on it (for
+    # The Terraform: lives under the namespace, depends on it (for
     # path/ordering) + all var parents.
     # Type default r-d (w vetoed by class) is sufficient; no instance override.
     terraform_id = f"{namespace_id}/terraform"
     dag.add(
         terraform_id,
-        TerraformNode(source=source),
+        Terraform(source=source),
         parents=[namespace_id, *var_parent_ids],
     )
     created.append(terraform_id)
 
-    # Output VarNodes — one per declared terraform output. Each is r--
+    # Output Vars — one per declared terraform output. Each is r--
     # (system-managed; its value comes from terraform's output, not the
-    # user) and lives under the module's namespace, with the TerraformNode
+    # user) and lives under the module's namespace, with the Terraform
     # as a data-flow parent so the value flows through at resolve time.
     for out_name in tf_outputs:
         out_id = f"{namespace_id}/{out_name}"

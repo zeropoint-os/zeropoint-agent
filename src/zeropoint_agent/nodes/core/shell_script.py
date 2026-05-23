@@ -1,11 +1,11 @@
-"""ShellScriptNode — wraps any shell command as a DAG node.
+"""ShellScript — wraps any shell command as a DAG node.
 
 The escape hatch: any operation that's "run this command, check exit code"
 doesn't need a custom node class. Wraps existing boot scripts, one-off
 commands, or any process as a typed DAG node.
 
 Usage:
-    dag.add("resize-rootfs", ShellScriptNode(
+    dag.add("resize-rootfs", ShellScript(
         exec="/usr/local/bin/zeropoint-resize-rootfs.sh",
         verify="test -f /etc/zeropoint/.zeropoint-resize-rootfs",
         description="Expand root filesystem",
@@ -34,7 +34,7 @@ class ShellScriptResult:
     verified: bool = False
 
 
-class ShellScriptNode(INode[None, ShellScriptResult]):
+class ShellScript(INode[None, ShellScriptResult]):
     """
     Wraps a shell command as a DAG node.
 
@@ -51,7 +51,7 @@ class ShellScriptNode(INode[None, ShellScriptResult]):
         env: Additional environment variables for the command
     """
 
-    # Allow any input type — ShellScriptNode is flexible
+    # Allow any input type — ShellScript is flexible
     def __init__(self, exec_cmd: str = "", verify_cmd: str = "/bin/true",
                  description: str = "", timeout: int = 300,
                  marker: Optional[str] = None,

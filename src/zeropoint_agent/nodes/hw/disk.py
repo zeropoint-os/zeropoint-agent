@@ -1,4 +1,4 @@
-"""DiskNode — discovers/registers a disk by stable ID."""
+"""Disk — discovers/registers a disk by stable ID."""
 
 import logging
 import os
@@ -20,7 +20,7 @@ class DiskResult:
     sector_size: int = 512
 
 
-class DiskNode(INode[None, DiskResult]):
+class Disk(INode[None, DiskResult]):
     """Discovers/registers a disk by stable ID. Root node."""
 
     def __init__(self, stable_id: str):

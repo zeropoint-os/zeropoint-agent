@@ -140,8 +140,8 @@ _OPERATION_SCHEMAS: List[Dict[str, Any]] = [
         "kind": "operation",
         "endpoint": "/api/modules",
         "doc": ("Install a Terraform-managed module. Creates a namespace "
-                "under the chosen parent (default 'modules'), VarNodes "
-                "for every declared variable, and a TerraformNode that "
+                "under the chosen parent (default 'modules'), Vars "
+                "for every declared variable, and a Terraform that "
                 "runs terraform apply."),
         "fields": [
             {"name": "module_id", "type": "string", "required": True,

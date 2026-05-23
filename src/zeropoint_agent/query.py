@@ -10,7 +10,7 @@ Supports:
     
 Filters via query params:
     ?status=error
-    ?type=ModuleNode
+    ?type=Terraform
 """
 
 import fnmatch

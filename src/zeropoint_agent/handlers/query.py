@@ -26,7 +26,7 @@ async def query_graph(pattern: str, request: Request,
         /api/dag/query/disk-sda/**         → entire subtree
         /api/dag/query/**/ollama           → find anywhere
         /api/dag/query/**?status=error     → all errors
-        /api/dag/query/**?type=ModuleNode  → all modules
+        /api/dag/query/**?type=Terraform  → all modules
     """
     pattern = unquote(pattern)
     dag = request.app.state.dag

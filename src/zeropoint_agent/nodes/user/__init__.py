@@ -1,3 +1,3 @@
-from .module import ModuleNode, ModuleResult, TerraformNode, TerraformResult
-from .link import LinkNode, LinkResult
-from .exposure import ExposureNode, ExposureResult
+from .module import Terraform, TerraformResult
+from .link import Link, LinkResult
+from .exposure import Exposure, ExposureResult

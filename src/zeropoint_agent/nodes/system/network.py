@@ -1,4 +1,4 @@
-"""NetworkNode — observes network interface state."""
+"""Network — observes network interface state."""
 
 import json
 import logging
@@ -19,7 +19,7 @@ class NetworkResult:
     up: bool = False
 
 
-class NetworkNode(INode[None, NetworkResult]):
+class Network(INode[None, NetworkResult]):
     """Observes network interface state. Read-only root node."""
 
     def __init__(self, interface: str = "eth0"):

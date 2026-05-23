@@ -29,7 +29,7 @@ export function NodeDetail({
     const parentPath = lastSlash >= 0 ? node.id.slice(0, lastSlash) : '';
 
     const effPerms = node.effective_perms || '';
-    const canAddChildren = node.type === 'NamespaceNode' && effPerms.includes('w');
+    const canAddChildren = node.type === 'Namespace' && effPerms.includes('w');
     const canEdit = effPerms.includes('w');
     const canDelete = effPerms.includes('d');
 

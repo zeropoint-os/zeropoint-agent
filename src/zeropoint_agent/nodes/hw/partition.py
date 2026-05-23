@@ -1,4 +1,4 @@
-"""PartitionNode — creates a partition on a parent disk."""
+"""Partition — creates a partition on a parent disk."""
 
 import logging
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ class PartitionResult:
     label: Optional[str] = None
 
 
-class PartitionNode(INode[DiskResult, PartitionResult]):
+class Partition(INode[DiskResult, PartitionResult]):
     """Creates a partition on a parent disk."""
 
     def __init__(self, number: int, size_mb: int, type: str = "83"):

@@ -1,4 +1,4 @@
-"""DockerNode — observes Docker daemon state."""
+"""Docker — observes Docker daemon state."""
 
 import logging
 import subprocess
@@ -18,7 +18,7 @@ class DockerResult:
     version: Optional[str] = None
 
 
-class DockerNode(INode[NetworkResult, DockerResult]):
+class Docker(INode[NetworkResult, DockerResult]):
     """Observes Docker daemon state. Read-only."""
 
     def __init__(self):

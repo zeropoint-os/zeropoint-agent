@@ -2,7 +2,7 @@
 
 Any handler that performs a multi-step graph mutation (a PUT that
 fires a node hook AND writes config + perms; a module install that
-creates a namespace + many VarNodes + a TerraformNode; a delete
+creates a namespace + many Vars + a Terraform; a delete
 cascade) wraps its work in `graph_transaction`. The transaction
 snapshots `graph.db` before the work runs and restores it if anything
 raises.

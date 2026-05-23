@@ -1,11 +1,11 @@
-"""LinkNode — binds outputs from one module as inputs to another."""
+"""Link — binds outputs from one module as inputs to another."""
 
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
 from zeropoint_agent.inode import INode, ResolveMode, NodeResult
-from zeropoint_agent.nodes.user.module import ModuleResult
+from zeropoint_agent.nodes.user.module import TerraformResult
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class LinkResult:
     resolved_bindings: Dict[str, Any] = field(default_factory=dict)
 
 
-class LinkNode(INode[ModuleResult, LinkResult]):
+class Link(INode[TerraformResult, LinkResult]):
     """Binds outputs from one module as inputs to another. In-process."""
 
     def __init__(self, from_module: str, to_module: str,
@@ -28,7 +28,7 @@ class LinkNode(INode[ModuleResult, LinkResult]):
         self.to_module = to_module
         self.bindings = bindings or {}
 
-    def resolve(self, input: ModuleResult, mode: ResolveMode) -> NodeResult[LinkResult]:
+    def resolve(self, input: TerraformResult, mode: ResolveMode) -> NodeResult[LinkResult]:
         result = LinkResult(from_module=self.from_module, to_module=self.to_module,
                             bindings=self.bindings)
         if mode == ResolveMode.MOCK:

@@ -30,9 +30,9 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
     Requires `w` on the target parent namespace (default ``modules``).
 
     Clones the module to inspect ``variables.tf``, wires each declared
-    variable to an existing VarNode (by name) or auto-creates a new
-    ``{namespace}/{varname}`` VarNode with the module's default. Adds the
-    TerraformNode under the namespace.
+    variable to an existing Var (by name) or auto-creates a new
+    ``{namespace}/{varname}`` Var with the module's default. Adds the
+    Terraform under the namespace.
 
     The structural install (~15 dag.add calls) is wrapped in a
     graph_transaction so any failure halfway through rolls back the

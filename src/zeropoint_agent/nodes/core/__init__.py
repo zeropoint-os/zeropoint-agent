@@ -1,1 +1,1 @@
-from .shell_script import ShellScriptNode, ShellScriptResult
+from .shell_script import ShellScript, ShellScriptResult

@@ -75,7 +75,7 @@ zeropoint-agent dag resolve > /dev/null
 
 # ---- install the echo module ---------------------------------------------
 # Verifies the full happy path: bootstrap -> module add (git source) ->
-# clone @ pinned SHA -> terraform apply -> output VarNodes populated.
+# clone @ pinned SHA -> terraform apply -> output Vars populated.
 # Idempotent via 'module add' returning 409 if echo is already installed.
 
 ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@61266f0673fa72bbf47ea0159e3351006f5a68c3"

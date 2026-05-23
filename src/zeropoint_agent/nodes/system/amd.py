@@ -1,4 +1,4 @@
-"""AmdGpuNode — detects AMD GPU and ROCm driver status."""
+"""AmdGpu — detects AMD GPU and ROCm driver status."""
 
 import subprocess
 from dataclasses import dataclass
@@ -41,7 +41,7 @@ def _version() -> Optional[str]:
     return None
 
 
-class AmdGpuNode(INode[None, AmdGpuResult]):
+class AmdGpu(INode[None, AmdGpuResult]):
 
     def resolve(self, input: None, mode: ResolveMode) -> NodeResult[AmdGpuResult]:
         if mode == ResolveMode.MOCK:

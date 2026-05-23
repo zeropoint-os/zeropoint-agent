@@ -23,8 +23,8 @@ SCHEMA_VERSION = 1
 class StoredNode:
     """A node as stored in the graph DB."""
     id: str
-    node_type: str       # class name (e.g. "DiskNode")
-    node_class: str      # fully qualified (e.g. "zeropoint_agent.nodes.DiskNode")
+    node_type: str       # class name (e.g. "Disk")
+    node_class: str      # fully qualified (e.g. "zeropoint_agent.nodes.Disk")
     config: Dict[str, Any]
     status: str = "pending"
     output: Optional[Dict[str, Any]] = None

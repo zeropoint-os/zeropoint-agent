@@ -1,11 +1,11 @@
-"""ExposureNode — exposes a module's port via Envoy reverse proxy."""
+"""Exposure — exposes a module's port via Envoy reverse proxy."""
 
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from zeropoint_agent.inode import INode, ResolveMode, NodeResult
-from zeropoint_agent.nodes.user.module import ModuleResult
+from zeropoint_agent.nodes.user.module import TerraformResult
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class ExposureResult:
     description: Optional[str] = None
 
 
-class ExposureNode(INode[ModuleResult, ExposureResult]):
+class Exposure(INode[TerraformResult, ExposureResult]):
     """Exposes a module's port via Envoy reverse proxy. In-process."""
 
     def __init__(self, module_id: str, port: int,
@@ -34,7 +34,7 @@ class ExposureNode(INode[ModuleResult, ExposureResult]):
         self.path_prefix = path_prefix
         self.description = description
 
-    def resolve(self, input: ModuleResult, mode: ResolveMode) -> NodeResult[ExposureResult]:
+    def resolve(self, input: TerraformResult, mode: ResolveMode) -> NodeResult[ExposureResult]:
         result = ExposureResult(
             module_id=self.module_id, port=self.port,
             protocol=self.protocol, path_prefix=self.path_prefix,

@@ -1,10 +1,10 @@
-"""VarNode — a named, typed value.
+"""Var — a named, typed value.
 
-A VarNode produces a `VarResult[T](name, value)`. There are three
+A Var produces a `VarResult[T](name, value)`. There are three
 concrete shapes — each genuinely different, hence its own class:
 
-  - **VarNode** (this file) — holds a literal `T`, OR forwards from a
-    VarNode parent ("passthrough"). The user-editable case.
+  - **Var** (this file) — holds a literal `T`, OR forwards from a
+    Var parent ("passthrough"). The user-editable case.
 
   - **NamespacedVar** (`namespaced.py`) — derives its value from its
     inherited namespace path via a template spec like "leaf",
@@ -15,13 +15,13 @@ concrete shapes — each genuinely different, hence its own class:
     `outputs` dict. Installer-created (e.g. one per terraform
     output); not user-authored.
 
-VarResult and VarNode are generic over `T` so the type system knows
-what a VarNode produces. Pickers and consumers use the parameter to
+VarResult and Var are generic over `T` so the type system knows
+what a Var produces. Pickers and consumers use the parameter to
 filter compatible link targets.
 
-The base VarNode runtime is two-mode: literal first, passthrough as
-fallback. The mode is implicit in graph structure — a VarNode with a
-VarNode parent and no literal forwards; one with a literal emits it.
+The base Var runtime is two-mode: literal first, passthrough as
+fallback. The mode is implicit in graph structure — a Var with a
+Var parent and no literal forwards; one with a literal emits it.
 No flags, no special cases beyond the single fallback.
 """
 
@@ -57,12 +57,12 @@ def _passthrough_value(input_val: Any) -> Optional[Any]:
     return None
 
 
-class VarNode(INode[Any, VarResult[T]], Generic[T]):
-    """A named value of type T. Holds a literal OR forwards from a VarNode parent.
+class Var(INode[Any, VarResult[T]], Generic[T]):
+    """A named value of type T. Holds a literal OR forwards from a Var parent.
 
     The mode is implicit:
       - `value` is set    → literal mode; emit it.
-      - `value` is None   → passthrough mode; emit the parent VarNode's value.
+      - `value` is None   → passthrough mode; emit the parent Var's value.
 
     Linking (picker UX) sets value to None and adds a parent edge; the
     runtime fallback then handles the value-walking.
@@ -77,13 +77,13 @@ class VarNode(INode[Any, VarResult[T]], Generic[T]):
         if self.value is not None:
             return NodeResult.success(VarResult(name=self.name, value=self.value))
 
-        # Passthrough mode (linked to another VarNode).
+        # Passthrough mode (linked to another Var).
         pv = _passthrough_value(input)
         if pv is not None:
             return NodeResult.success(VarResult(name=self.name, value=pv))
 
         return NodeResult.failed(
-            f"VarNode {self.name} has no value and no VarNode parent to forward from")
+            f"Var {self.name} has no value and no Var parent to forward from")
 
     def verify(self, mode: ResolveMode) -> NodeResult[VarResult[T]]:
         # Literal is always verified; anything else needs resolve.

@@ -1,9 +1,9 @@
-"""DirectoryVar — a VarNode whose value is a filesystem path the agent owns.
+"""DirectoryVar — a Var whose value is a filesystem path the agent owns.
 
-A DirectoryVar is a regular VarNode[str] in every observable way: it
+A DirectoryVar is a regular Var[str] in every observable way: it
 produces a `VarResult[str](name, value)`, can hold a literal path or
-be linked to another VarNode[str], and downstream consumers can't
-tell the difference from a vanilla VarNode.
+be linked to another Var[str], and downstream consumers can't
+tell the difference from a vanilla Var.
 
 What's special is what happens **when its `value` is edited**. The
 agent treats `value` as the canonical location of a directory it owns:
@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.nodes.config.var import VarNode
+from zeropoint_agent.nodes.config.var import Var
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +127,8 @@ def _safe_move(old: Path, new: Path) -> None:
             "(new location %s is good); leaking disk space", old, new)
 
 
-class DirectoryVar(VarNode[str]):
-    """A VarNode whose value is a directory path the agent owns.
+class DirectoryVar(Var[str]):
+    """A Var whose value is a directory path the agent owns.
 
     Editing `value` moves the directory before the new value is
     persisted. See module docstring for full move semantics.

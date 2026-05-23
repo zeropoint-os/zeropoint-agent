@@ -1,4 +1,4 @@
-from .network import NetworkNode, NetworkResult
-from .docker import DockerNode, DockerResult
-from .nvidia import NvidiaGpuNode, NvidiaGpuResult
-from .amd import AmdGpuNode, AmdGpuResult
+from .network import Network, NetworkResult
+from .docker import Docker, DockerResult
+from .nvidia import NvidiaGpu, NvidiaGpuResult
+from .amd import AmdGpu, AmdGpuResult

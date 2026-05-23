@@ -1,10 +1,10 @@
-"""NamespacedVar — a VarNode whose value derives from its namespace path.
+"""NamespacedVar — a Var whose value derives from its namespace path.
 
 Installer-created. Each module gets two:
   - `zp_module_id`     spec="leaf"
   - `zp_network_name`  spec="zeropoint-module-{full-dashed}"
 
-The user never authors these directly. Renaming a NamespaceNode in
+The user never authors these directly. Renaming a Namespace in
 the user's tree causes every NamespacedVar under it to re-derive on
 the next resolve — no literal strings to update.
 """
@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from zeropoint_agent.inode import ResolveMode, NodeResult
 from zeropoint_agent.nodes.config.namespace import NamespaceResult
-from zeropoint_agent.nodes.config.var import VarNode, VarResult
+from zeropoint_agent.nodes.config.var import Var, VarResult
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ def _inherited_path(input_val: Any) -> Optional[str]:
     return None
 
 
-class NamespacedVar(VarNode[str]):
-    """VarNode whose value is computed from its inherited namespace path."""
+class NamespacedVar(Var[str]):
+    """Var whose value is computed from its inherited namespace path."""
 
     def __init__(self, name: str, spec: str, value: Optional[str] = None):
         # `value` is accepted but ignored — NamespacedVar computes its
@@ -80,5 +80,5 @@ class NamespacedVar(VarNode[str]):
         if path is None:
             return NodeResult.failed(
                 f"NamespacedVar {self.name} (spec={self.spec!r}) "
-                f"needs a NamespaceNode parent providing a path")
+                f"needs a Namespace parent providing a path")
         return NodeResult.success(VarResult(name=self.name, value=_derive(path, self.spec)))
