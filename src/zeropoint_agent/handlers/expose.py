@@ -30,6 +30,7 @@ from zeropoint_agent.inode import NodeStatus
 from zeropoint_agent.nodes.config.namespace import Namespace
 from zeropoint_agent.nodes.config.var import Var
 from zeropoint_agent.nodes.user.endpoint import Endpoint
+from zeropoint_agent.xds.reconciler import reconcile as xds_reconcile
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,13 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         logger.exception("expose failed for %s", port_var_id)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    runner = getattr(request.app.state, "xds", None)
+    if runner is not None:
+        try:
+            await xds_reconcile(dag, runner)
+        except Exception as e:
+            logger.warning("xDS reconcile after expose failed: %s", e)
+
     return {
         "ok": True,
         "endpoint_id": endpoint_id,
@@ -232,5 +240,12 @@ async def unexpose(body: UnexposeRequest, request: Request) -> Dict[str, Any]:
     except Exception as e:
         logger.exception("unexpose failed for %s", port_var_id)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+    runner = getattr(request.app.state, "xds", None)
+    if runner is not None:
+        try:
+            await xds_reconcile(dag, runner)
+        except Exception as e:
+            logger.warning("xDS reconcile after unexpose failed: %s", e)
 
     return {"ok": True, "deleted": to_delete}

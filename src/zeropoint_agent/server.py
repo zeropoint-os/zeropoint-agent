@@ -13,6 +13,7 @@ from zeropoint_agent.dag import DAG
 from zeropoint_agent.graph_store import GraphStore
 from zeropoint_agent.inode import ResolveMode
 from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules, detect, node_types, links, expose
+from zeropoint_agent.xds.runner import XdsRunner
 
 
 class _ColoredFormatter(logging.Formatter):
@@ -82,7 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(expose.router)
 
     @app.on_event("startup")
-    def _init():
+    async def _init():
         store_path = os.environ.get("ZEROPOINT_ROOT_PATH", ".")
         data_dir = Path(store_path) / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -99,10 +100,27 @@ def create_app() -> FastAPI:
         app.state.default_mode = mode_str
         logger.info("Default resolve mode: %s", mode_str)
 
+        # xDS server: skipped in mock mode (no real Envoy to feed).
+        app.state.xds = None
+        if mode_str != "mock" or os.environ.get("ZEROPOINT_XDS_FORCE"):
+            xds_port = int(os.environ.get("ZEROPOINT_XDS_PORT", "18000"))
+            try:
+                runner = XdsRunner(port=xds_port)
+                await runner.start()
+                app.state.xds = runner
+            except Exception as e:
+                logger.warning("xDS server start failed (continuing without): %s", e)
+
         webui_dist = Path("webui/dist")
         if webui_dist.exists():
             app.mount("/", StaticFiles(directory=str(webui_dist), html=True), name="webui")
             logger.info("WebUI mounted at /")
+
+    @app.on_event("shutdown")
+    async def _shutdown():
+        runner = getattr(app.state, "xds", None)
+        if runner is not None:
+            await runner.stop()
 
     return app
 

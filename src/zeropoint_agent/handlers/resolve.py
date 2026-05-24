@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request, HTTPException
 from zeropoint_agent.inode import ResolveMode, NodeStatus
 from zeropoint_agent.query import query_dag
 from zeropoint_agent.module_ports import sync_module_ports
+from zeropoint_agent.xds.reconciler import reconcile as xds_reconcile
 from zeropoint_agent.handlers import ResolveRequest
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,13 @@ async def resolve_graph(body: ResolveRequest, request: Request):
                 logger.info("synced %d port nodes after resolve", n)
         except Exception as e:
             logger.warning("port sync failed (continuing): %s", e)
+        runner = getattr(request.app.state, "xds", None)
+        if runner is not None:
+            try:
+                pushed = await xds_reconcile(dag, runner)
+                logger.info("xDS reconcile pushed %d endpoints", pushed)
+            except Exception as e:
+                logger.warning("xDS reconcile failed (continuing): %s", e)
         return _results_to_response(dag, results, mode.value)
     except HTTPException:
         raise
@@ -127,6 +135,13 @@ async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request)
                 logger.info("synced %d port nodes after resolve", n)
         except Exception as e:
             logger.warning("port sync failed (continuing): %s", e)
+        runner = getattr(request.app.state, "xds", None)
+        if runner is not None:
+            try:
+                pushed = await xds_reconcile(dag, runner)
+                logger.info("xDS reconcile pushed %d endpoints", pushed)
+            except Exception as e:
+                logger.warning("xDS reconcile failed (continuing): %s", e)
         return _results_to_response(dag, results, mode.value, pattern)
     except HTTPException:
         raise
