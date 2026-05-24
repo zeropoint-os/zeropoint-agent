@@ -128,10 +128,23 @@ def collect_resolved_endpoints(dag: "DAG") -> List[ResolvedEndpoint]:
 async def reconcile(dag: "DAG", runner: "XdsRunner") -> int:
     """Build a snapshot from the current graph and push it to the xDS server.
 
+    Also reconciles mDNS: every http endpoint gets `<name>.local`
+    advertised on the LAN; removed endpoints get unregistered.
+
     Returns the number of endpoints in the new snapshot.
     """
     endpoints = collect_resolved_endpoints(dag)
     version = runner.ads.next_version()
     snapshot = build_snapshot(version, endpoints)
     await runner.ads.update_snapshot(snapshot)
+
+    try:
+        from zeropoint_agent.mdns import get_registry
+        registry = get_registry()
+        registry.reconcile([
+            (ep.name, 80) for ep in endpoints if ep.protocol == "http"
+        ])
+    except Exception as e:
+        logger.warning("mDNS reconcile failed (continuing): %s", e)
+
     return len(endpoints)

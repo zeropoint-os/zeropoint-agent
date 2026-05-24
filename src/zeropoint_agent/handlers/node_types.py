@@ -194,8 +194,9 @@ _OPERATION_SCHEMAS: List[Dict[str, Any]] = [
 # --- endpoints -----------------------------------------------------------
 
 # Type names that exist as nodes but shouldn't appear in the free-form
-# type picker. They're created only via dedicated actions (e.g. /api/expose).
-_PICKER_HIDDEN: set = {"endpoint"}
+# type picker. They're created only via dedicated actions (e.g. /api/expose)
+# or by the agent itself (system/envoy diagnostic node).
+_PICKER_HIDDEN: set = {"endpoint", "envoy"}
 
 
 def _all_schemas(include_hidden: bool = True) -> Dict[str, Dict[str, Any]]:

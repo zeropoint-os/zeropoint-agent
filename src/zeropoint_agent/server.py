@@ -102,7 +102,8 @@ def create_app() -> FastAPI:
 
         # xDS server: skipped in mock mode (no real Envoy to feed).
         app.state.xds = None
-        if mode_str != "mock" or os.environ.get("ZEROPOINT_XDS_FORCE"):
+        xds_active = mode_str != "mock" or os.environ.get("ZEROPOINT_XDS_FORCE")
+        if xds_active:
             xds_port = int(os.environ.get("ZEROPOINT_XDS_PORT", "18000"))
             try:
                 runner = XdsRunner(port=xds_port)
@@ -110,6 +111,32 @@ def create_app() -> FastAPI:
                 app.state.xds = runner
             except Exception as e:
                 logger.warning("xDS server start failed (continuing without): %s", e)
+
+            # Bootstrap the system/envoy diagnostic node if missing.
+            try:
+                from zeropoint_agent.nodes.system import SystemEnvoy
+                from zeropoint_agent.nodes.config.namespace import Namespace
+                dag = app.state.dag
+                if "system" not in dag.nodes:
+                    dag.add("system", Namespace(name="system"),
+                            parents=[], perms="r--")
+                if "system/envoy" not in dag.nodes:
+                    dag.add(
+                        "system/envoy",
+                        SystemEnvoy(xds_port=xds_port),
+                        parents=["system"],
+                        perms="r--",
+                    )
+            except Exception as e:
+                logger.warning("system/envoy bootstrap failed: %s", e)
+
+            # In LIVE mode, start the Envoy container too.
+            if mode_str == "live":
+                try:
+                    from zeropoint_agent.envoy_manager import ensure_envoy
+                    ensure_envoy(xds_port=xds_port)
+                except Exception as e:
+                    logger.warning("envoy container start failed: %s", e)
 
         webui_dist = Path("webui/dist")
         if webui_dist.exists():
@@ -121,6 +148,18 @@ def create_app() -> FastAPI:
         runner = getattr(app.state, "xds", None)
         if runner is not None:
             await runner.stop()
+        try:
+            from zeropoint_agent.mdns import close_registry
+            close_registry()
+        except Exception:
+            pass
+        mode_str = getattr(app.state, "default_mode", "mock")
+        if mode_str == "live":
+            try:
+                from zeropoint_agent.envoy_manager import stop_envoy
+                stop_envoy()
+            except Exception as e:
+                logger.warning("envoy stop failed: %s", e)
 
     return app
 

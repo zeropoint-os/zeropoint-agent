@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from zeropoint_agent import (
     ShellScript,
-    Network, Docker, NvidiaGpu, AmdGpu,
+    Network, Docker, NvidiaGpu, AmdGpu, SystemEnvoy,
     Disk, Partition, Format, Mount, MountDir,
     Var, NamespacedVar, OutputVar, DirectoryVar, Namespace,
     Terraform, Endpoint,
@@ -20,6 +20,7 @@ NODE_REGISTRY = {
     "docker": Docker,
     "nvidia": NvidiaGpu,
     "amd": AmdGpu,
+    "envoy": SystemEnvoy,
     "disk": Disk,
     "partition": Partition,
     "format": Format,
