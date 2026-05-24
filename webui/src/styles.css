@@ -130,6 +130,66 @@ html, body, #root {
     margin-left: 4px;
 }
 
+/* --- Var linking affordances --- */
+.value-with-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.value-with-link > :first-child {
+    flex: 1;
+    min-width: 0;
+}
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--fg-dim);
+    color: var(--fg-muted);
+    padding: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.icon-btn:hover {
+    color: var(--fg);
+    border-color: var(--fg);
+    background: var(--tile-bg);
+}
+.icon-btn:disabled,
+.icon-btn[disabled] {
+    cursor: not-allowed;
+    color: var(--fg-dim) !important;
+    border-color: var(--fg-dim) !important;
+    opacity: 0.6;
+}
+
+/* When a Var's value is currently linked, the displayed (resolved)
+   value reads as a navigation link to the target node. */
+.detail-field-value-link {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    text-decoration: underline;
+    text-decoration-color: var(--fg-dim);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+.detail-field-value-link:hover {
+    text-decoration-color: var(--accent);
+}
+
+/* Pre-focused filter input at the top of a modal. */
+.modal-filter {
+    margin: 8px 16px 8px;
+    width: calc(100% - 32px);
+}
+
 .widget-list {
     margin: 0;
     padding-left: 16px;

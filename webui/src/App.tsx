@@ -2,6 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, HealthResponse, NodeTypeSchema } from './api';
 import { fetchDag, fetchHealth, fetchNodeTypes, resolve } from './api';
 import { NodeDetail } from './NodeDetail';
+import { NewNodePage } from './NewNodePage';
 import { Tile } from './Tile';
 
 function childrenMap(edges: DagEdge[]): Map<string, string[]> {
@@ -37,11 +38,31 @@ export function App() {
         return hash || null;
     };
 
+    // Parse a `_new/<parent-id>/<schema-name>` hash. Parent ids can
+    // themselves contain slashes (e.g. `modules/echo`); the schema name
+    // is always the last segment. Returns null if the hash isn't a
+    // new-node route.
+    const parseNewRoute = (raw: string | null): { parent: string; type: string } | null => {
+        if (!raw || !raw.startsWith('_new/')) return null;
+        const rest = raw.slice('_new/'.length);
+        const lastSlash = rest.lastIndexOf('/');
+        if (lastSlash < 0) return null;
+        return {
+            parent: rest.slice(0, lastSlash),
+            type: rest.slice(lastSlash + 1),
+        };
+    };
+
     const [navStack, setNavStack] = useState<string[]>(() => {
         const id = getHashId();
+        // _new/... is a transient route — it doesn't go on the nav stack.
+        if (parseNewRoute(id) !== null) return [];
         return id ? [id] : [];
     });
     const currentId = navStack.length > 0 ? navStack[navStack.length - 1] : null;
+    const [newRoute, setNewRoute] = useState<{ parent: string; type: string } | null>(
+        () => parseNewRoute(getHashId())
+    );
 
     // Type schemas, fetched once. Indexed two ways:
     //   - schemasByPickerName: short name → schema (for the type picker)
@@ -74,6 +95,13 @@ export function App() {
     useEffect(() => {
         const onHashChange = () => {
             const id = getHashId();
+            const newRouteParsed = parseNewRoute(id);
+            setNewRoute(newRouteParsed);
+            if (newRouteParsed !== null) {
+                // Don't touch the nav stack while on a new-node route;
+                // cancelling returns the user to their previous node.
+                return;
+            }
             setNavStack(stack => {
                 if (id === null) return [];
                 // If the id is already in the stack, slice to it (back navigation).
@@ -229,8 +257,48 @@ export function App() {
             </div>
 
             <div class="content">
+                {/* New-node create page */}
+                {newRoute && (() => {
+                    const schema = schemasByPickerName[newRoute.type];
+                    if (!schema) {
+                        return (
+                            <div class="detail">
+                                <div class="detail-error">
+                                    Unknown type: {newRoute.type}
+                                </div>
+                                <div class="actions">
+                                    <button
+                                        class="btn"
+                                        onClick={() => {
+                                            window.location.hash = `/${newRoute.parent}`;
+                                        }}
+                                    >back</button>
+                                </div>
+                            </div>
+                        );
+                    }
+                    return (
+                        <NewNodePage
+                            parentId={newRoute.parent}
+                            schema={schema}
+                            onCancel={() => {
+                                // Go back to the parent we came from.
+                                window.location.hash = newRoute.parent
+                                    ? `/${newRoute.parent}`
+                                    : '/';
+                            }}
+                            onCreated={(createdId) => {
+                                load();  // refresh graph
+                                window.location.hash = createdId
+                                    ? `/${createdId}`
+                                    : (newRoute.parent ? `/${newRoute.parent}` : '/');
+                            }}
+                        />
+                    );
+                })()}
+
                 {/* Home: live tiles for root nodes */}
-                {isHome && (
+                {isHome && !newRoute && (
                     <div class="tiles">
                         {roots.map(rootId => {
                             const node = nodeMap.get(rootId);
@@ -249,7 +317,7 @@ export function App() {
                 )}
 
                 {/* Node detail + children tiles */}
-                {current && (
+                {current && !newRoute && (
                     <NodeDetail
                         node={current}
                         allNodes={nodes}

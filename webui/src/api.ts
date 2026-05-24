@@ -134,6 +134,26 @@ export async function resolveNode(id: string, mode: string = 'live') {
     return asResult<ResolveResponse>(r);
 }
 
+/** Link a Var to another Var. PUT /api/links/<id> body {target}. */
+export async function linkVar(id: string, target: string) {
+    const r = await fetch(`${BASE}/links/${encodePath(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+    });
+    return asResult<{ ok: boolean; node_id: string; target: string | null }>(r);
+}
+
+/** Break a Var's existing link. PUT /api/links/<id> body {target: null}. */
+export async function unlinkVar(id: string) {
+    const r = await fetch(`${BASE}/links/${encodePath(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: null }),
+    });
+    return asResult<{ ok: boolean; node_id: string; target: string | null }>(r);
+}
+
 /** Encode an id path, keeping the `/` separators readable. */
 function encodePath(id: string): string {
     return id.split('/').map(encodeURIComponent).join('/');

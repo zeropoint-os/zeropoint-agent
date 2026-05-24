@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, NodeTypeSchema } from './api';
-import { updateNode, deleteNode, resolveNode } from './api';
+import { updateNode, deleteNode, resolveNode, linkVar, unlinkVar } from './api';
 import { Tile } from './Tile';
 import { PropertyInspector } from './PropertyInspector';
 import { TypePicker } from './TypePicker';
+import { VarPicker } from './VarPicker';
 
 interface Props {
     node: DagNode;
@@ -119,6 +120,41 @@ export function NodeDetail({
         window.location.hash = `#/_new/${node.id}/${typeName}`;
     };
 
+    // --- Var linking picker (only on Var-family nodes) ---------------
+    const [varPickerOpen, setVarPickerOpen] = useState(false);
+    const onPickLinkTarget = async (targetId: string) => {
+        setVarPickerOpen(false);
+        setBusy('save'); setOpError(null);
+        const res = await linkVar(node.id, targetId);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+    };
+    const onUnlinkSelf = async () => {
+        setBusy('save'); setOpError(null);
+        const res = await unlinkVar(node.id);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+    };
+
+    // Exclusion set for the var picker: this node + all its descendants
+    // (server would reject those anyway; client filtering is for UX).
+    const descendantsOf = (id: string): Set<string> => {
+        const out = new Set<string>([id]);
+        const queue = [id];
+        while (queue.length > 0) {
+            const cur = queue.shift()!;
+            for (const c of childrenOf(cur)) {
+                if (!out.has(c.id)) {
+                    out.add(c.id);
+                    queue.push(c.id);
+                }
+            }
+        }
+        return out;
+    };
+
     return (
         <div class="detail">
             <div class="detail-header">
@@ -148,6 +184,10 @@ export function NodeDetail({
                 editable={editing}
                 values={editing ? draft : undefined}
                 onChange={editing ? onFieldChange : undefined}
+                allNodes={allNodes}
+                onLink={() => setVarPickerOpen(true)}
+                onUnlink={onUnlinkSelf}
+                onNavigateTo={onNavigate}
             />
 
             {(children.length > 0 || canAddChildren) && !editing && (
@@ -217,6 +257,16 @@ export function NodeDetail({
                     schemas={pickerSchemas}
                     onClose={() => setPickerOpen(false)}
                     onPick={onPickType}
+                />
+            )}
+
+            {varPickerOpen && (
+                <VarPicker
+                    title={`link ${node.id} to…`}
+                    nodes={allNodes}
+                    exclude={descendantsOf(node.id)}
+                    onClose={() => setVarPickerOpen(false)}
+                    onPick={onPickLinkTarget}
                 />
             )}
         </div>
