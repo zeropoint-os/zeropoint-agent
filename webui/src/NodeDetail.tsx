@@ -179,7 +179,7 @@ export function NodeDetail({
             )}
 
             <PropertyInspector
-                node={editing ? undefined : node}
+                node={node}
                 schema={schema}
                 editable={editing}
                 values={editing ? draft : undefined}

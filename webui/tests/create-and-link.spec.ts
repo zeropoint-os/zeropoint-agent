@@ -4,21 +4,55 @@
  * Verifies:
  *   1. Navigate to a writable namespace, click "+ add", pick a Var.
  *   2. Fill the form (name + value), save → land on the new node.
+ *   3. Edit a Var, click 🔗, pick a target → linking saved.
  *
- * Specifically guards the "input gets cleared by the 5s poll" regression
- * we fixed by extracting NewNodeRouteView to a stable component.
+ * Specifically guards:
+ *   - The "input gets cleared by the 5s poll" regression we fixed by
+ *     extracting NewNodeRouteView to a stable component.
+ *   - The "Var.value uses ObjectWidget JSON-textarea" regression we
+ *     fixed by mapping TypeVar -> 'string' in the schema introspector.
+ *   - The "link button hidden in edit mode" regression where the
+ *     inspector was getting node={undefined} in edit mode and
+ *     therefore couldn't tell it was a Var.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 
-test.beforeEach(async ({ page }) => {
+async function seedVar(api: APIRequestContext, id: string, value: string) {
+    const parent = id.split('/').slice(0, -1).join('/');
+    const name = id.split('/').pop()!;
+    const r = await api.post('/api/dag/nodes', {
+        data: {
+            id,
+            type: 'var',
+            config: { name, value },
+            parents: parent ? [parent] : [],
+            perms: 'rwd',
+        },
+    });
+    if (!r.ok()) {
+        throw new Error(`seedVar ${id} failed: ${r.status()} ${await r.text()}`);
+    }
+}
+
+async function deleteIfPresent(api: APIRequestContext, id: string) {
+    // Test nodes may have been created with default perms (rw-) and
+    // therefore not be deletable. Make them deletable first.
+    await api.put(`/api/dag/${id}`, { data: { perms: 'rwd' } });
+    await api.delete(`/api/dag/${id}`);
+}
+
+test.beforeEach(async ({ page, request }) => {
+    // Best-effort cleanup of test nodes from a previous run. Server
+    // reuses state across runs in dev (reuseExistingServer: true) so
+    // tests must be idempotent.
+    await deleteIfPresent(request, 'settings/test_var');
+    await deleteIfPresent(request, 'settings/source_var');
+    await deleteIfPresent(request, 'settings/target_var');
     await page.goto('/');
 });
 
 test('+add → fill form → save lands on the new node, inputs survive polling', async ({ page }) => {
-    // The mock-mode bootstrap seeds `settings` and `modules` root namespaces.
-    // We add a Var under settings via the UI.
-
     // Navigate into `settings` — Tile is a div, locate by its text.
     await page.locator('.tile', { hasText: 'settings' }).first().click();
     await expect(page).toHaveURL(/#?\/settings/);
@@ -47,4 +81,48 @@ test('+add → fill form → save lands on the new node, inputs survive polling'
 
     // Should land on the new node.
     await expect(page).toHaveURL(/settings\/test_var/);
+});
+
+test('edit Var → 🔗 link → pick target → unlink', async ({ page, request }) => {
+    // Seed: two Vars under settings — source and target.
+    await seedVar(request, 'settings/source_var', 'original value');
+    await seedVar(request, 'settings/target_var', 'value-from-target');
+
+    // Navigate to the source Var.
+    await page.goto('/#/settings/source_var');
+    await expect(page.locator('.detail-name')).toContainText('source_var');
+
+    // Click edit. The link button should now appear next to the value input.
+    await page.getByRole('button', { name: /^edit$/i }).click();
+
+    // The link button is an .icon-btn next to the value input.
+    const linkBtn = page.locator('.value-with-link .icon-btn').first();
+    await expect(linkBtn).toBeVisible();
+    await linkBtn.click();
+
+    // The Var picker modal opens. Pick target_var.
+    await expect(page.locator('.modal-title')).toContainText(/link.*to/i);
+    await page.locator('.type-picker-row', { hasText: 'settings/target_var' }).click();
+
+    // After picking, the inspector should reflect linked state:
+    // the value cell is now the target id (read-only), with an unlink button.
+    await expect(page.locator('.value-with-link')).toContainText('settings/target_var');
+    const unlinkBtn = page.locator('.value-with-link .icon-btn').first();
+    await expect(unlinkBtn).toBeVisible();
+
+    // Cancel to drop out of edit mode (no other PUT needed; link was
+    // already persisted by the modal pick).
+    await page.getByRole('button', { name: /^cancel$/i }).click();
+
+    // Confirm the API actually persisted the link.
+    const after = await request.get('/api/dag/nodes/settings/source_var');
+    const body = await after.json();
+    expect(body.parents).toContain('settings/target_var');
+    expect(body.config.value).toBeNull();
+
+    // Now unlink via the API to test the inverse (UI path tested above).
+    const un = await request.put('/api/links/settings/source_var', {
+        data: { target: null },
+    });
+    expect(un.ok()).toBeTruthy();
 });

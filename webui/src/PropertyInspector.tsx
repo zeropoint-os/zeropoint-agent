@@ -143,8 +143,9 @@ export function PropertyInspector(props: Props) {
     if (rows.length === 0) return null;
 
     // Linking context: only active when the inspected node is a Var
-    // and the caller wired callbacks. Anything else means rows render
-    // through the regular widget pipeline.
+    // and the caller wired callbacks. Both read and edit modes can
+    // surface link affordances — read shows the linked value as a
+    // navigation link; edit shows the link / unlink buttons.
     const linkCtx: LinkContext | undefined = node && VAR_TYPES.has(node.type)
         ? {
             node,
