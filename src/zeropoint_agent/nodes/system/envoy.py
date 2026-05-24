@@ -49,7 +49,18 @@ class SystemEnvoy(INode[Any, SystemEnvoyResult]):
                 http_port=self.http_port,
                 https_port=self.https_port,
             ))
-        from zeropoint_agent.envoy_manager import envoy_status
+        # Live mode: ensure the container is up (idempotent) then report
+        # its actual state. Resolving system/envoy is therefore the
+        # canonical "make sure envoy is running" lever.
+        from zeropoint_agent.envoy_manager import ensure_envoy, envoy_status
+        try:
+            ensure_envoy(
+                xds_port=self.xds_port,
+                http_port=self.http_port,
+                https_port=self.https_port,
+            )
+        except Exception as e:
+            logger.warning("ensure_envoy failed (continuing to report status): %s", e)
         info = envoy_status() or {}
         return NodeResult.success(SystemEnvoyResult(
             state=info.get("state", "unknown"),

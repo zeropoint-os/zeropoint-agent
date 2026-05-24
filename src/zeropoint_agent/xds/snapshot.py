@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import List
 
-import betterproto
+import betterproto2
 from envoy_data_plane.envoy.config.cluster.v3 import (
     Cluster, ClusterDiscoveryType, ClusterLbPolicy,
 )
@@ -40,7 +40,7 @@ from envoy_data_plane.envoy.extensions.filters.network.http_connection_manager.v
     HttpFilter, Rds,
 )
 from envoy_data_plane.envoy.extensions.filters.network.tcp_proxy.v3 import TcpProxy
-from betterproto.lib.google.protobuf import Any as PbAny
+from envoy_data_plane.google.protobuf import Any as PbAny
 
 HTTP_LISTENER_NAME = "http_listener"
 HTTP_ROUTES_NAME = "http_routes"
@@ -58,7 +58,7 @@ class ResolvedEndpoint:
     host_port: int         # only used for tcp
 
 
-def _pack_any(msg: betterproto.Message, type_url: str) -> PbAny:
+def _pack_any(msg: betterproto2.Message, type_url: str) -> PbAny:
     return PbAny(type_url=type_url, value=bytes(msg))
 
 

@@ -18,11 +18,11 @@ import asyncio
 import logging
 from typing import AsyncIterator, Dict, List, Optional
 
-import betterproto
+import betterproto2
 from envoy_data_plane.envoy.service.discovery.v3 import (
     AggregatedDiscoveryServiceBase, DiscoveryRequest, DiscoveryResponse,
 )
-from betterproto.lib.google.protobuf import Any as PbAny
+from envoy_data_plane.google.protobuf import Any as PbAny
 
 from zeropoint_agent.xds.snapshot import Snapshot
 
@@ -35,7 +35,7 @@ RDS_TYPE = "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
 CDS_TYPE = "type.googleapis.com/envoy.config.cluster.v3.Cluster"
 
 
-def _pack(msg: betterproto.Message, type_url: str) -> PbAny:
+def _pack(msg: betterproto2.Message, type_url: str) -> PbAny:
     return PbAny(type_url=type_url, value=bytes(msg))
 
 
