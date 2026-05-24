@@ -33,21 +33,48 @@ def _read_output(input_val: Any, key: str) -> Optional[Any]:
     dict form. Complex values (dict/list) are JSON-encoded so they
     can flow as strings through tfvars; primitive values are returned
     as-is (caller stringifies when needed).
+
+    `key` may be dotted (``"main_ports.placeholder.port"``) to descend
+    into nested dicts. Each segment looks up by key; numeric segments
+    index into lists.
     """
+    def _descend(value: Any, parts: list[str]) -> Optional[Any]:
+        for part in parts:
+            if isinstance(value, dict):
+                if part not in value:
+                    return None
+                value = value[part]
+            elif isinstance(value, list):
+                try:
+                    value = value[int(part)]
+                except (ValueError, IndexError):
+                    return None
+            else:
+                return None
+        return value
+
     def _from_outputs(holder: Any) -> Optional[Any]:
         # Dataclass form (live runtime).
         outputs = getattr(holder, "outputs", None)
         # Dict form (rehydrated from store via asdict()).
         if outputs is None and isinstance(holder, dict):
             outputs = holder.get("outputs")
-        if isinstance(outputs, dict) and key in outputs:
-            val = outputs[key]
-            if isinstance(val, (dict, list)):
-                return json.dumps(val)
+        if not isinstance(outputs, dict):
+            return None
+        parts = key.split(".")
+        head = parts[0]
+        if head not in outputs:
+            return None
+        val = outputs[head]
+        if len(parts) > 1:
+            val = _descend(val, parts[1:])
             if val is None:
-                return ""
-            return val
-        return None
+                return None
+        if isinstance(val, (dict, list)):
+            return json.dumps(val)
+        if val is None:
+            return ""
+        return val
 
     direct = _from_outputs(input_val)
     if direct is not None:
@@ -69,6 +96,13 @@ class OutputVar(Var[T]):
     def resolve(self, input: Any, mode: ResolveMode) -> NodeResult[VarResult[T]]:
         val = _read_output(input, self.key)
         if val is None:
+            if mode == ResolveMode.MOCK:
+                # Mocks can't know every module's specific outputs.
+                # Emit a synthetic placeholder so downstream consumers
+                # can still resolve in test/dev.
+                return NodeResult.success(VarResult(
+                    name=self.name,
+                    value=f"mock-output-{self.key}"))  # type: ignore[arg-type]
             return NodeResult.failed(
                 f"OutputVar {self.name} (key={self.key!r}) needs a parent "
                 f"providing an 'outputs' dict containing that key")

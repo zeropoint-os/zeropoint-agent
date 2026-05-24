@@ -262,6 +262,7 @@ class Terraform(INode[Any, TerraformResult]):
 
         if mode == ResolveMode.MOCK:
             module_id = tfvars.get("zp_module_id", "mock-module")
+            main_ports = {"placeholder": {"port": 8080, "protocol": "tcp"}}
             mock = TerraformResult(
                 source=self.source,
                 module_id=module_id,
@@ -272,10 +273,14 @@ class Terraform(INode[Any, TerraformResult]):
                 containers={
                     f"{module_id}-main": ContainerInfo(
                         name=f"{module_id}-main",
-                        ports={"http": 8080},
+                        ports=main_ports,
                         ip="172.17.0.42",
                         state="running",
                     )
+                },
+                outputs={
+                    "main": f"{module_id}-main",
+                    "main_ports": main_ports,
                 },
             )
             return NodeResult.success(mock)
@@ -321,7 +326,11 @@ class Terraform(INode[Any, TerraformResult]):
 
     def verify(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
         if mode == ResolveMode.MOCK:
-            return NodeResult.success(TerraformResult(source=self.source))
+            # Defer to resolve() so the mock output (including main_ports
+            # for per-port sync) actually flows through. Returning SUCCESS
+            # here would short-circuit the executor and leave downstream
+            # OutputVars with no data to read.
+            return NodeResult.pending_reboot(TerraformResult(source=self.source))
         # verify() can't compute paths from inputs (no parent access),
         # so always defer to resolve(); terraform itself no-ops if already
         # converged.

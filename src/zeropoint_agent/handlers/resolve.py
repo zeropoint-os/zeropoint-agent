@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from zeropoint_agent.inode import ResolveMode, NodeStatus
 from zeropoint_agent.query import query_dag
+from zeropoint_agent.module_ports import sync_module_ports
 from zeropoint_agent.handlers import ResolveRequest
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,12 @@ async def resolve_graph(body: ResolveRequest, request: Request):
         mode = _effective_mode(body.mode, request)
         dag = request.app.state.dag
         results = dag.resolve(mode=mode)
+        try:
+            n = sync_module_ports(dag)
+            if n:
+                logger.info("synced %d port nodes after resolve", n)
+        except Exception as e:
+            logger.warning("port sync failed (continuing): %s", e)
         return _results_to_response(dag, results, mode.value)
     except HTTPException:
         raise
@@ -114,6 +121,12 @@ async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request)
             raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
 
         results = dag.resolve_subset(matched_ids, mode=mode)
+        try:
+            n = sync_module_ports(dag)
+            if n:
+                logger.info("synced %d port nodes after resolve", n)
+        except Exception as e:
+            logger.warning("port sync failed (continuing): %s", e)
         return _results_to_response(dag, results, mode.value, pattern)
     except HTTPException:
         raise

@@ -193,10 +193,23 @@ _OPERATION_SCHEMAS: List[Dict[str, Any]] = [
 
 # --- endpoints -----------------------------------------------------------
 
-def _all_schemas() -> Dict[str, Dict[str, Any]]:
-    """Combined map of all schemas the picker should offer."""
+# Type names that exist as nodes but shouldn't appear in the free-form
+# type picker. They're created only via dedicated actions (e.g. /api/expose).
+_PICKER_HIDDEN: set = {"endpoint"}
+
+
+def _all_schemas(include_hidden: bool = True) -> Dict[str, Dict[str, Any]]:
+    """Combined map of all schemas the picker should offer.
+
+    When `include_hidden` is False, types in `_PICKER_HIDDEN` are skipped
+    — this is what the picker UI uses. The full set is still returned
+    by /api/node-types so individual schema lookups (e.g. for the
+    Endpoint inspector) keep working.
+    """
     out: Dict[str, Dict[str, Any]] = {}
     for name, cls in NODE_REGISTRY.items():
+        if not include_hidden and name in _PICKER_HIDDEN:
+            continue
         out[name] = _class_schema(name, cls)
     for op in _OPERATION_SCHEMAS:
         out[op["type"]] = op
@@ -205,14 +218,18 @@ def _all_schemas() -> Dict[str, Dict[str, Any]]:
 
 @router.get("")
 async def list_node_types():
-    """Schemas for every registered type (nodes + operations)."""
-    return {"ok": True, "types": _all_schemas()}
+    """Schemas for every registered type the picker should offer.
+
+    Hidden types (e.g. Endpoint — only created via /api/expose) are
+    excluded; fetch them directly via /api/node-types/{type} if needed.
+    """
+    return {"ok": True, "types": _all_schemas(include_hidden=False)}
 
 
 @router.get("/{type_name}")
 async def get_node_type(type_name: str):
     """Schema for a single type (by short name)."""
-    schemas = _all_schemas()
+    schemas = _all_schemas(include_hidden=True)
     if type_name not in schemas:
         raise HTTPException(
             status_code=404,

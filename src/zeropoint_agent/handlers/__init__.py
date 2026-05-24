@@ -10,7 +10,7 @@ from zeropoint_agent import (
     Network, Docker, NvidiaGpu, AmdGpu,
     Disk, Partition, Format, Mount, MountDir,
     Var, NamespacedVar, OutputVar, DirectoryVar, Namespace,
-    Terraform, Link, Exposure,
+    Terraform, Endpoint,
 )
 
 
@@ -31,8 +31,7 @@ NODE_REGISTRY = {
     "dir": DirectoryVar,
     "namespace": Namespace,
     "terraform": Terraform,
-    "link": Link,
-    "exposure": Exposure,
+    "endpoint": Endpoint,
 }
 
 
