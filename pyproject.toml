@@ -14,6 +14,13 @@ dependencies = [
     "GitPython>=3.1.30",
     "networkx>=3.0",
     "click>=8.0",
+    "python-hcl2>=4.3.0",
+    "docker>=7.0.0",
+    "httpx>=0.27.0",
+    "requests>=2.31.0",
+    "envoy-data-plane>=0.4.0",
+    "grpclib>=0.4.7",
+    "zeroconf>=0.131.0",
 ]
 
 [project.optional-dependencies]

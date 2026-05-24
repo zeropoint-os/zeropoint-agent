@@ -154,6 +154,29 @@ export async function unlinkVar(id: string) {
     return asResult<{ ok: boolean; node_id: string; target: string | null }>(r);
 }
 
+/** Create a LAN-visible Endpoint for a port Var. POST /api/expose. */
+export async function exposePort(port_var_id: string, opts?: { name?: string; protocol?: 'http' | 'tcp' }) {
+    const r = await fetch(`${BASE}/expose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port_var_id, ...(opts || {}) }),
+    });
+    return asResult<{
+        ok: boolean; endpoint_id: string; name: string; protocol: string;
+        host_port: number; port_var_id: string;
+    }>(r);
+}
+
+/** Delete every Endpoint targeting `port_var_id`. POST /api/unexpose. */
+export async function unexposePort(port_var_id: string) {
+    const r = await fetch(`${BASE}/unexpose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port_var_id }),
+    });
+    return asResult<{ ok: boolean; deleted: string[] }>(r);
+}
+
 /** Encode an id path, keeping the `/` separators readable. */
 function encodePath(id: string): string {
     return id.split('/').map(encodeURIComponent).join('/');

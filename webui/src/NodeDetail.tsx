@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { DagNode, DagEdge, NodeTypeSchema } from './api';
-import { updateNode, deleteNode, resolveNode, linkVar, unlinkVar } from './api';
+import { updateNode, deleteNode, resolveNode, linkVar, unlinkVar, exposePort, unexposePort } from './api';
 import { Tile } from './Tile';
 import { PropertyInspector } from './PropertyInspector';
 import { TypePicker } from './TypePicker';
@@ -150,6 +150,37 @@ export function NodeDetail({
         onChanged?.();
     };
 
+    // --- Expose / Unexpose / Open (port outputs + endpoints) ---------
+    //
+    // A port output node is an OutputVar whose leaf id is `port_<name>`
+    // (the per-port sync convention). It's "already exposed" if any
+    // Endpoint in the graph has this node as a parent.
+    const isPortOutput = node.type === 'OutputVar'
+        && leaf.startsWith('port_')
+        && !leaf.endsWith('_protocol');
+    const targetingEndpoints = allNodes.filter(n =>
+        n.type === 'Endpoint' && n.parents.includes(node.id));
+    const isExposed = isPortOutput && targetingEndpoints.length > 0;
+    const isEndpoint = node.type === 'Endpoint';
+    const httpUrl = (isEndpoint && (node.config?.protocol === 'http') && node.config?.name)
+        ? `http://${node.config.name}.local/`
+        : null;
+
+    const onExpose = async () => {
+        setBusy('save'); setOpError(null);
+        const res = await exposePort(node.id);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+    };
+    const onUnexpose = async () => {
+        setBusy('save'); setOpError(null);
+        const res = await unexposePort(node.id);
+        setBusy(null);
+        if (res.error) { setOpError(res.error); return; }
+        onChanged?.();
+    };
+
     // Exclusion set for the var picker: this node + all its descendants
     // (server would reject those anyway; client filtering is for UX).
     const descendantsOf = (id: string): Set<string> => {
@@ -252,6 +283,31 @@ export function NodeDetail({
                             onClick={onResolve}
                             disabled={busy !== null}
                         >{busy === 'resolve' ? 'resolving…' : 'resolve'}</button>
+                        {isPortOutput && !isExposed && (
+                            <button
+                                class="btn"
+                                onClick={onExpose}
+                                disabled={busy !== null}
+                                title="expose this port via Envoy"
+                            >expose</button>
+                        )}
+                        {isPortOutput && isExposed && (
+                            <button
+                                class="btn"
+                                onClick={onUnexpose}
+                                disabled={busy !== null}
+                                title={`unexpose (removes ${targetingEndpoints.length} endpoint${targetingEndpoints.length === 1 ? '' : 's'})`}
+                            >unexpose</button>
+                        )}
+                        {httpUrl && (
+                            <a
+                                class="btn"
+                                href={httpUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style="text-decoration: none;"
+                            >open ↗</a>
+                        )}
                         <button
                             class="btn"
                             onClick={onRemove}
