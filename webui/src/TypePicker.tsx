@@ -38,6 +38,7 @@ export function TypePicker({ parentId, schemas, onClose, onPick }: Props) {
                         <button
                             key={s.type}
                             class="type-picker-row"
+                            data-type={s.type}
                             onClick={() => onPick(s.type)}
                         >
                             <div class="type-picker-name">

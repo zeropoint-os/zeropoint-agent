@@ -60,6 +60,13 @@ def _type_name(annotation: Any) -> str:
     if annotation is bytes:
         return "string"
 
+    # A bare TypeVar (e.g. Var[T] where T is unresolved) — treat as
+    # 'string' since literals typed by the user via a text input are
+    # almost always strings. Specific Var[int]/Var[bool] etc. resolve
+    # via the type's __args__ above and don't reach this branch.
+    if isinstance(annotation, typing.TypeVar):
+        return "string"
+
     if isinstance(annotation, type):
         return annotation.__name__.lower()
     return "any"

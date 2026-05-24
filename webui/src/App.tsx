@@ -258,44 +258,11 @@ export function App() {
 
             <div class="content">
                 {/* New-node create page */}
-                {newRoute && (() => {
-                    const schema = schemasByPickerName[newRoute.type];
-                    if (!schema) {
-                        return (
-                            <div class="detail">
-                                <div class="detail-error">
-                                    Unknown type: {newRoute.type}
-                                </div>
-                                <div class="actions">
-                                    <button
-                                        class="btn"
-                                        onClick={() => {
-                                            window.location.hash = `/${newRoute.parent}`;
-                                        }}
-                                    >back</button>
-                                </div>
-                            </div>
-                        );
-                    }
-                    return (
-                        <NewNodePage
-                            parentId={newRoute.parent}
-                            schema={schema}
-                            onCancel={() => {
-                                // Go back to the parent we came from.
-                                window.location.hash = newRoute.parent
-                                    ? `/${newRoute.parent}`
-                                    : '/';
-                            }}
-                            onCreated={(createdId) => {
-                                load();  // refresh graph
-                                window.location.hash = createdId
-                                    ? `/${createdId}`
-                                    : (newRoute.parent ? `/${newRoute.parent}` : '/');
-                            }}
-                        />
-                    );
-                })()}
+                {newRoute && <NewNodeRouteView
+                    route={newRoute}
+                    schemas={schemasByPickerName}
+                    onLoad={load}
+                />}
 
                 {/* Home: live tiles for root nodes */}
                 {isHome && !newRoute && (
@@ -351,4 +318,45 @@ function countDescendants(id: string, cm: Map<string, string[]>): number {
         queue.push(...(cm.get(child) || []));
     }
     return count;
+}
+
+/** Stable wrapper around NewNodePage so its component identity (and
+ * therefore its local state) survives App's polling re-renders.
+ * Without this — i.e. when NewNodePage was rendered through an inline
+ * IIFE inside App's JSX — every poll appeared to reset the form's
+ * inputs because the surrounding rendering context wasn't stable. */
+function NewNodeRouteView({ route, schemas, onLoad }: {
+    route: { parent: string; type: string };
+    schemas: Record<string, NodeTypeSchema>;
+    onLoad: () => void;
+}) {
+    const schema = schemas[route.type];
+    if (!schema) {
+        return (
+            <div class="detail">
+                <div class="detail-error">Unknown type: {route.type}</div>
+                <div class="actions">
+                    <button
+                        class="btn"
+                        onClick={() => { window.location.hash = `/${route.parent}`; }}
+                    >back</button>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <NewNodePage
+            parentId={route.parent}
+            schema={schema}
+            onCancel={() => {
+                window.location.hash = route.parent ? `/${route.parent}` : '/';
+            }}
+            onCreated={(createdId) => {
+                onLoad();
+                window.location.hash = createdId
+                    ? `/${createdId}`
+                    : (route.parent ? `/${route.parent}` : '/');
+            }}
+        />
+    );
 }
