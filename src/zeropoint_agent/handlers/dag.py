@@ -1,6 +1,7 @@
 """DAG inspection + per-node mutations."""
 
 import logging
+import re
 from dataclasses import asdict
 
 from fastapi import APIRouter, Request, HTTPException
@@ -10,6 +11,25 @@ from zeropoint_agent.handlers import NodeSpec, NODE_REGISTRY, node_to_dict
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dag", tags=["dag"])
+
+# Each path segment of a node id must be a valid identifier. Slashes
+# are the path separator and are stripped before checking. Keeping the
+# alphabet narrow (A-Z, a-z, 0-9, _) avoids URL-encoding surprises and
+# keeps the graph addressable from the CLI without quoting.
+_NODE_ID_SEGMENT = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _validate_node_id(node_id: str) -> None:
+    """Raise HTTPException 400 if any path segment of node_id is not a valid identifier."""
+    if not node_id:
+        raise HTTPException(status_code=400, detail="node id must not be empty")
+    for seg in node_id.split("/"):
+        if not _NODE_ID_SEGMENT.match(seg):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"invalid node id {node_id!r}: segment {seg!r} must "
+                        f"match [A-Za-z0-9_]+"),
+            )
 
 
 def _create_node(spec: NodeSpec):
@@ -44,6 +64,7 @@ async def add_node(spec: NodeSpec, request: Request):
     from zeropoint_agent.dag import NodeExists
     from zeropoint_agent.graph_transaction import graph_transaction
     try:
+        _validate_node_id(spec.id)
         dag = request.app.state.dag
         # Check w on every Namespace parent before mutating.
         from zeropoint_agent.nodes.config.namespace import Namespace

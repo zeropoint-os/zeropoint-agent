@@ -59,6 +59,14 @@ export function NewNodePage({ parentId, schema, onCancel, onCreated }: Props) {
         if (schema.kind === 'node' && !('name' in values)) {
             return `Schema for ${schema.type} has no 'name' field; can't derive an id`;
         }
+        // Node names become path segments in the graph id; restrict to a
+        // sane identifier alphabet so the URL/router/store all stay happy.
+        if (schema.kind === 'node') {
+            const name = String(values.name ?? '');
+            if (!/^[A-Za-z0-9_]+$/.test(name)) {
+                return `Name must be a valid identifier (A-Z, a-z, 0-9, _); got ${JSON.stringify(name)}`;
+            }
+        }
         return null;
     };
 
