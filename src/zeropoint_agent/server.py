@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from zeropoint_agent.dag import DAG
 from zeropoint_agent.graph_store import GraphStore
 from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules, detect, node_types
+from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules, detect, node_types, links
 
 
 class _ColoredFormatter(logging.Formatter):
@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(modules.router)
     app.include_router(detect.router)
     app.include_router(node_types.router)
+    app.include_router(links.router)
 
     @app.on_event("startup")
     def _init():

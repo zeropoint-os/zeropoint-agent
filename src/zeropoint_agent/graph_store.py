@@ -150,6 +150,15 @@ class GraphStore:
         )
         logger.debug(f"Stored edge: {parent_id} → {child_id}")
 
+    def remove_edge(self, parent_id: str, child_id: str) -> None:
+        """Remove a DEPENDS_ON edge between two nodes."""
+        self._conn.execute(
+            "MATCH (a:Node {id: $parent})-[e:DEPENDS_ON]->(b:Node {id: $child}) "
+            "DELETE e",
+            parameters={"parent": parent_id, "child": child_id},
+        )
+        logger.debug(f"Removed edge: {parent_id} → {child_id}")
+
     def get_node(self, node_id: str) -> Optional[StoredNode]:
         """Get a node by ID."""
         if self._has_perms_column:
