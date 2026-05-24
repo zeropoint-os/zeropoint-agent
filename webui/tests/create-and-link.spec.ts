@@ -104,17 +104,12 @@ test('edit Var → 🔗 link → pick target → unlink', async ({ page, request
     await expect(page.locator('.modal-title')).toContainText(/link.*to/i);
     await page.locator('.type-picker-row', { hasText: 'settings/target_var' }).click();
 
-    // After picking, the inspector should reflect linked state:
-    // the value cell is now the target id (read-only), with an unlink button.
-    await expect(page.locator('.value-with-link')).toContainText('settings/target_var');
-    const unlinkBtn = page.locator('.value-with-link .icon-btn').first();
-    await expect(unlinkBtn).toBeVisible();
+    // After a successful link the inspector exits edit mode so the
+    // stale draft can't be re-applied via Save (which would clobber
+    // the just-linked value=null back to the literal).
+    await expect(page.getByRole('button', { name: /^edit$/i })).toBeVisible();
 
-    // Cancel to drop out of edit mode (no other PUT needed; link was
-    // already persisted by the modal pick).
-    await page.getByRole('button', { name: /^cancel$/i }).click();
-
-    // Confirm the API actually persisted the link.
+    // Confirm the API actually persisted the link AND value is null.
     const after = await request.get('/api/dag/nodes/settings/source_var');
     const body = await after.json();
     expect(body.parents).toContain('settings/target_var');
@@ -125,4 +120,35 @@ test('edit Var → 🔗 link → pick target → unlink', async ({ page, request
         data: { target: null },
     });
     expect(un.ok()).toBeTruthy();
+});
+
+test('linking clears the draft so Save cannot re-apply the literal', async ({ page, request }) => {
+    // This was the actual bug seen against echo: user edits greeting,
+    // the draft captures value='hello from zeropoint', user clicks 🔗
+    // and picks a target, then clicks Save. The Save sent the stale
+    // draft via PUT /api/dag/<id> and put the literal back, leaving
+    // the node both linked AND literal — Var.resolve() prefers the
+    // literal, so the link was effectively ignored.
+
+    await seedVar(request, 'settings/source_var', 'original value');
+    await seedVar(request, 'settings/target_var', 'value-from-target');
+
+    await page.goto('/#/settings/source_var');
+    await page.getByRole('button', { name: /^edit$/i }).click();
+
+    // Confirm the literal is in the draft (input shows original value).
+    const valueInput = page.locator('.widget-input').nth(1);
+    await expect(valueInput).toHaveValue('original value');
+
+    // Link.
+    await page.locator('.value-with-link .icon-btn').first().click();
+    await page.locator('.type-picker-row', { hasText: 'settings/target_var' }).click();
+
+    // We should now be out of edit mode (no Save button to click).
+    await expect(page.getByRole('button', { name: /^save$/i })).toHaveCount(0);
+
+    // Verify the persisted state is correct: linked, no literal.
+    const body = await (await request.get('/api/dag/nodes/settings/source_var')).json();
+    expect(body.parents).toContain('settings/target_var');
+    expect(body.config.value).toBeNull();
 });

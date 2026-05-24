@@ -122,12 +122,22 @@ export function NodeDetail({
 
     // --- Var linking picker (only on Var-family nodes) ---------------
     const [varPickerOpen, setVarPickerOpen] = useState(false);
+
+    // Linking is an atomic operation — the link itself IS the user's
+    // commit. We exit edit mode after a successful link/unlink so the
+    // user doesn't accidentally clobber the change by clicking 'save'
+    // with the stale draft (the draft was seeded from node.config
+    // before the link cleared it; saving would put the old literal
+    // back, leaving the graph in a contradictory linked-but-literal
+    // state).
     const onPickLinkTarget = async (targetId: string) => {
         setVarPickerOpen(false);
         setBusy('save'); setOpError(null);
         const res = await linkVar(node.id, targetId);
         setBusy(null);
         if (res.error) { setOpError(res.error); return; }
+        setEditing(false);
+        setDraft({});
         onChanged?.();
     };
     const onUnlinkSelf = async () => {
@@ -135,6 +145,8 @@ export function NodeDetail({
         const res = await unlinkVar(node.id);
         setBusy(null);
         if (res.error) { setOpError(res.error); return; }
+        setEditing(false);
+        setDraft({});
         onChanged?.();
     };
 
