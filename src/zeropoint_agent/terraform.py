@@ -61,12 +61,15 @@ class TerraformExecutor:
     def apply(self, variables: Mapping[str, str]) -> None:
         cmd = [self.terraform, "apply", "-auto-approve", "-input=false", "-no-color"]
         cmd.extend(_vars_args(variables))
-        _run(cmd, self.module_dir, capture=False)
+        # Capture so that on failure the TerraformError carries the
+        # actual stderr/stdout from terraform — otherwise diagnostics
+        # become impossible from the agent log alone.
+        _run(cmd, self.module_dir, capture=True)
 
     def destroy(self, variables: Mapping[str, str]) -> None:
         cmd = [self.terraform, "destroy", "-auto-approve", "-input=false", "-no-color"]
         cmd.extend(_vars_args(variables))
-        _run(cmd, self.module_dir, capture=False)
+        _run(cmd, self.module_dir, capture=True)
 
     def plan(self, variables: Mapping[str, str]) -> Tuple[bool, str]:
         """Run terraform plan -detailed-exitcode.
