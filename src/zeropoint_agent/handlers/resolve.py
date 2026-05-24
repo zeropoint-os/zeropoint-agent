@@ -96,7 +96,7 @@ async def resolve_graph(body: ResolveRequest, request: Request):
         dag = request.app.state.dag
         results = dag.resolve(mode=mode)
         try:
-            n = sync_module_ports(dag)
+            n = sync_module_ports(dag, mode=mode)
             if n:
                 logger.info("synced %d port nodes after resolve", n)
         except Exception as e:
@@ -130,7 +130,7 @@ async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request)
 
         results = dag.resolve_subset(matched_ids, mode=mode)
         try:
-            n = sync_module_ports(dag)
+            n = sync_module_ports(dag, mode=mode)
             if n:
                 logger.info("synced %d port nodes after resolve", n)
         except Exception as e:

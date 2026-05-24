@@ -44,14 +44,19 @@ def _terraform_main_ports(output: object) -> Dict[str, dict]:
     return main_ports
 
 
-def sync_module_ports(dag: "DAG") -> int:
+def sync_module_ports(dag: "DAG", mode=None) -> int:
     """Sync every module's per-port OutputVar children with terraform's main_ports.
+
+    `mode` (ResolveMode) — if provided, any newly-added port nodes are
+    resolved in that mode before this function returns so the caller
+    doesn't see them stuck in PENDING for one cycle.
 
     Returns the number of nodes added or removed.
     """
     from zeropoint_agent.nodes.config.namespace import Namespace
 
     changed = 0
+    newly_added: list[str] = []
     for terraform_id, entry in list(dag.nodes.items()):
         if not isinstance(entry.node, Terraform):
             continue
@@ -97,6 +102,7 @@ def sync_module_ports(dag: "DAG") -> int:
                     perms="r--",
                 )
                 changed += 1
+                newly_added.append(port_id)
                 logger.info("synced port node %s", port_id)
             if proto_id not in dag.nodes:
                 dag.add(
@@ -109,6 +115,7 @@ def sync_module_ports(dag: "DAG") -> int:
                     perms="r--",
                 )
                 changed += 1
+                newly_added.append(proto_id)
                 logger.info("synced port node %s", proto_id)
 
         for nid in existing_synced:
@@ -120,6 +127,15 @@ def sync_module_ports(dag: "DAG") -> int:
                 else:
                     changed += 1
                     logger.info("pruned stale port node %s", nid)
+
+    # Resolve any freshly-added nodes so the caller doesn't see them
+    # PENDING. Without this, the first resolve after install always
+    # leaves synced ports unresolved until the next resolve cycle.
+    if newly_added and mode is not None:
+        try:
+            dag.resolve_subset(newly_added, mode=mode)
+        except Exception as e:
+            logger.warning("post-sync resolve failed (continuing): %s", e)
 
     return changed
 
