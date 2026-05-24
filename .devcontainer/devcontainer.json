@@ -48,8 +48,16 @@
 		"--gpus", "all",
 		"--runtime", "nvidia"
 	],
-	"forwardPorts": [2370],
+	"forwardPorts": [80, 443, 2370],
 	"portsAttributes": {
+		"80": {
+			"label": "Envoy HTTP",
+			"onAutoForward": "notify"
+		},
+		"443": {
+			"label": "Envoy HTTPS",
+			"onAutoForward": "notify"
+		},
 		"2370": {
 			"label": "ZeroPoint Agent API + WebUI",
 			"onAutoForward": "notify"
