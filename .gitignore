@@ -243,3 +243,4 @@ modules/
 
 # Ignore logs
 logs/
+envoy/
