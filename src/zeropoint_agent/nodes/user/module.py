@@ -262,7 +262,7 @@ class Terraform(INode[Any, TerraformResult]):
 
         if mode == ResolveMode.MOCK:
             module_id = tfvars.get("zp_module_id", "mock-module")
-            main_ports = {"placeholder": {"port": 8080, "protocol": "tcp"}}
+            main_ports = {"http": {"port": 8080, "protocol": "http"}}
             mock = TerraformResult(
                 source=self.source,
                 module_id=module_id,

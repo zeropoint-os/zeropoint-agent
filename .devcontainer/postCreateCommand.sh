@@ -78,7 +78,7 @@ zeropoint-agent dag resolve > /dev/null
 # clone @ pinned SHA -> terraform apply -> output Vars populated.
 # Idempotent via 'module add' returning 409 if echo is already installed.
 
-ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@61266f0673fa72bbf47ea0159e3351006f5a68c3"
+ECHO_SOURCE="https://github.com/zeropoint-os/echo.git@4c8b39644e2745de0c4530b5fd35a7c6d19b1ce9"
 
 echo "installing echo from $ECHO_SOURCE ..."
 set +e

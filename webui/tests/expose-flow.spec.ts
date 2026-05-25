@@ -5,7 +5,7 @@
  * server starts and reconcile runs, but no real Envoy container is
  * spawned. We exercise:
  *
- *   1. Install echo, resolve once → per-port OutputVar `port_placeholder`
+ *   1. Install echo, resolve once → per-port OutputVar `port_http`
  *      is synced into the graph.
  *   2. Navigate to the port node → "expose" button is visible.
  *   3. Click expose → an Endpoint appears at modules/echo/endpoint_*.
@@ -44,7 +44,7 @@ async function installEcho(api: APIRequestContext) {
     const r = await api.post('/api/modules', {
         data: {
             module_id: 'echo',
-            source: 'https://github.com/zeropoint-os/echo@61266f0673fa72bbf47ea0159e3351006f5a68c3',
+            source: 'https://github.com/zeropoint-os/echo@4c8b39644e2745de0c4530b5fd35a7c6d19b1ce9',
         },
     });
     if (!r.ok() && r.status() !== 409) {
@@ -89,9 +89,9 @@ test('port output gets an expose button, click creates an Endpoint', async ({ pa
     await installEcho(request);
     await resolveAll(request);
 
-    // The synced port output is named "port_placeholder".
-    await page.goto('/#/modules/echo/port_placeholder');
-    await expect(page.locator('.detail-name')).toContainText('port_placeholder');
+    // The synced port output is named "port_http".
+    await page.goto('/#/modules/echo/port_http');
+    await expect(page.locator('.detail-name')).toContainText('port_http');
 
     const exposeBtn = page.getByRole('button', { name: /^expose$/i });
     await expect(exposeBtn).toBeVisible();
@@ -116,7 +116,7 @@ test('exposed http endpoint shows an Open link', async ({ page, request }) => {
 
     // Expose as http with name = "echo".
     const r = await request.post('/api/expose', {
-        data: { port_var_id: 'modules/echo/port_placeholder', protocol: 'http', name: 'echo' },
+        data: { port_var_id: 'modules/echo/port_http', protocol: 'http', name: 'echo' },
     });
     expect(r.ok()).toBeTruthy();
     const body = await r.json();
@@ -135,10 +135,10 @@ test('unexpose deletes the endpoint and restores the bare port view', async ({ p
     await resolveAll(request);
 
     await request.post('/api/expose', {
-        data: { port_var_id: 'modules/echo/port_placeholder' },
+        data: { port_var_id: 'modules/echo/port_http' },
     });
 
-    await page.goto('/#/modules/echo/port_placeholder');
+    await page.goto('/#/modules/echo/port_http');
     await page.getByRole('button', { name: /^unexpose$/i }).click();
 
     await expect(async () => {
