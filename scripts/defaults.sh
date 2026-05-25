@@ -46,8 +46,23 @@ zeropoint-agent node ensure namespace modules \
 zeropoint-agent node ensure namespace system \
     -c name=system --perms rw-
 
-zeropoint-agent node ensure envoy system/envoy \
+# Docker daemon healthcheck. Root-of-the-system-subtree: every other
+# system node that needs docker depends on this one (transitively),
+# so its resolve runs first.
+zeropoint-agent node ensure docker system/docker \
     -p system \
+    --perms r--
+
+# Shared bridge network for cross-container DNS. Envoy and any
+# module container that gets exposed live on this network so
+# Envoy's STRICT_DNS clusters can resolve <module>-main.
+zeropoint-agent node ensure docker_network system/zeropoint_network \
+    -p system -p system/docker \
+    -c name=zeropoint-network -c driver=bridge \
+    --perms r--
+
+zeropoint-agent node ensure envoy system/envoy \
+    -p system -p system/docker -p system/zeropoint_network \
     -c xds_port=18000 -c http_port=80 -c https_port=443 \
     --perms r--
 

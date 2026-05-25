@@ -99,9 +99,10 @@ def ensure_container_on_zeropoint_network(container_name: str) -> bool:
     if client is None:
         return False
     try:
-        net_id = _ensure_network(client)
         nets = client.networks.list(names=[NETWORK_NAME])
         if not nets:
+            logger.warning(
+                "zeropoint-network missing — resolve system/zeropoint_network first")
             return False
         net = nets[0]
         try:
@@ -133,16 +134,15 @@ def _docker_client():
         return None
 
 
-def _ensure_network(client) -> Optional[str]:
-    """Ensure zeropoint-network exists; return its gateway IP."""
+def _network_gateway(client) -> Optional[str]:
+    """Look up zeropoint-network's gateway IP. Network creation is now
+    the responsibility of the system/zeropoint_network DockerNetwork
+    node, which is upstream of this whole flow."""
     try:
         nets = client.networks.list(names=[NETWORK_NAME])
-        if nets:
-            net = nets[0]
-        else:
-            net = client.networks.create(NETWORK_NAME, driver="bridge")
-            logger.info("created docker network %s", NETWORK_NAME)
-        info = net.attrs or {}
+        if not nets:
+            return None
+        info = nets[0].attrs or {}
         ipam = (info.get("IPAM") or {}).get("Config") or []
         for cfg in ipam:
             gw = cfg.get("Gateway")
@@ -179,7 +179,7 @@ def ensure_envoy(
     if client is None:
         return None
 
-    gateway = _ensure_network(client) or "host.docker.internal"
+    gateway = _network_gateway(client) or "host.docker.internal"
     bootstrap = write_bootstrap(gateway, xds_port)
     _ensure_image(client, image)
 

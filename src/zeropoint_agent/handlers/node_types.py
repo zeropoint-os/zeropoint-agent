@@ -196,7 +196,7 @@ _OPERATION_SCHEMAS: List[Dict[str, Any]] = [
 # Type names that exist as nodes but shouldn't appear in the free-form
 # type picker. They're created only via dedicated actions (e.g. /api/expose)
 # or by the agent itself (system/envoy diagnostic, Service discovery).
-_PICKER_HIDDEN: set = {"exposure", "envoy", "service"}
+_PICKER_HIDDEN: set = {"exposure", "envoy", "service", "docker", "docker_network"}
 
 
 def _all_schemas(include_hidden: bool = True) -> Dict[str, Dict[str, Any]]:

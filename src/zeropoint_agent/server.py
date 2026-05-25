@@ -113,16 +113,9 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("xDS server start failed (continuing without): %s", e)
 
-        # In LIVE mode, also start the Envoy container. The system/envoy
-        # node is bootstrapped by postCreate (it's part of the canonical
-        # initial graph), not here — server startup is the lifecycle, not
-        # the schema.
-        if mode_str == "live":
-            try:
-                from zeropoint_agent.envoy_manager import ensure_envoy
-                ensure_envoy(xds_port=xds_port)
-            except Exception as e:
-                logger.warning("envoy container start failed: %s", e)
+        # Envoy lifecycle is owned by the system/envoy node — its
+        # resolve() does ensure_envoy(). Startup just initializes the
+        # xDS server; the graph's resolve will bring Envoy up.
 
         webui_dist = Path("webui/dist")
         if webui_dist.exists():
