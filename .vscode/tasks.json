@@ -39,6 +39,34 @@
                     "endsPattern": ".*"
                 }
             }
+        },
+        {
+            "label": "Reset zeropoint",
+            "type": "shell",
+            "command": "bash ${workspaceFolder}/scripts/reset.sh",
+            "detail": "Tear down agent-managed docker resources, wipe persisted state, and reseed the default graph. Errors out if the agent is running — stop your debug session first.",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
+            "label": "Reseed defaults",
+            "type": "shell",
+            "command": "bash ${workspaceFolder}/scripts/defaults.sh",
+            "detail": "Run the default-graph bootstrap without touching docker. Idempotent.",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "dedicated",
+                "clear": true
+            }
         }
     ]
 }
