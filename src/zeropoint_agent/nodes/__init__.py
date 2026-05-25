@@ -14,7 +14,7 @@ from zeropoint_agent.nodes.hw import Disk, Partition, Format, Mount, MountDir
 from zeropoint_agent.nodes.config import (
     Var, Namespace, NamespacedVar, OutputVar, DirectoryVar,
 )
-from zeropoint_agent.nodes.user import Terraform, Endpoint
+from zeropoint_agent.nodes.user import Terraform, Exposure, Service
 
 __all__ = [
     "ShellScript",
@@ -22,5 +22,5 @@ __all__ = [
     "Disk", "Partition", "Format", "Mount", "MountDir",
     "Var", "NamespacedVar", "OutputVar", "DirectoryVar",
     "Namespace",
-    "Terraform", "Endpoint",
+    "Terraform", "Exposure", "Service",
 ]

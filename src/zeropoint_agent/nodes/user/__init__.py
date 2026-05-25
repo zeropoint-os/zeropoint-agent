@@ -1,2 +1,3 @@
 from .module import Terraform, TerraformResult
-from .endpoint import Endpoint, EndpointResult
+from .exposure import Exposure, ExposureResult
+from .service import Service, ServiceResult

@@ -154,25 +154,25 @@ export async function unlinkVar(id: string) {
     return asResult<{ ok: boolean; node_id: string; target: string | null }>(r);
 }
 
-/** Create a LAN-visible Endpoint for a port Var. POST /api/expose. */
-export async function exposePort(port_var_id: string, opts?: { name?: string; protocol?: 'http' | 'tcp' }) {
+/** Create a LAN-visible Exposure for a Service. POST /api/expose. */
+export async function exposeService(service_id: string, opts?: { name?: string; host_port?: number }) {
     const r = await fetch(`${BASE}/expose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port_var_id, ...(opts || {}) }),
+        body: JSON.stringify({ service_id, ...(opts || {}) }),
     });
     return asResult<{
-        ok: boolean; endpoint_id: string; name: string; protocol: string;
-        host_port: number; port_var_id: string;
+        ok: boolean; exposure_id: string; name: string; protocol: string;
+        host_port: number; service_id: string;
     }>(r);
 }
 
-/** Delete every Endpoint targeting `port_var_id`. POST /api/unexpose. */
-export async function unexposePort(port_var_id: string) {
+/** Delete every Exposure under `service_id`. POST /api/unexpose. */
+export async function unexposeService(service_id: string) {
     const r = await fetch(`${BASE}/unexpose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port_var_id }),
+        body: JSON.stringify({ service_id }),
     });
     return asResult<{ ok: boolean; deleted: string[] }>(r);
 }

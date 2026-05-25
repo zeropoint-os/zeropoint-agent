@@ -2,16 +2,16 @@
  * Expose / Unexpose flow — the xDS milestone.
  *
  * The agent runs in mock mode with ZEROPOINT_XDS_FORCE=1 so the xDS
- * server starts and reconcile runs, but no real Envoy container is
- * spawned. We exercise:
+ * server starts and the cache flushes happen, but no real Envoy
+ * container is spawned.
  *
- *   1. Install echo, resolve once → per-port OutputVar `port_http`
- *      is synced into the graph.
- *   2. Navigate to the port node → "expose" button is visible.
- *   3. Click expose → an Endpoint appears at modules/echo/endpoint_*.
- *   4. The port node now shows "unexpose" (and only one endpoint targets it).
- *   5. Endpoint detail shows "Open" link for http endpoints.
- *   6. Unexpose round-trips back to the bare port output.
+ * The new model:
+ *   - Module installs → terraform outputs → discovery finds
+ *     {port, protocol} bundles → Service nodes auto-appear.
+ *   - User clicks Expose on a Service → Exposure node created as
+ *     a child of the Service.
+ *   - Next resolve cycle writes the slice to the xDS cache → push.
+ *   - User clicks Unexpose → Exposure deleted → cache slice dropped.
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -62,22 +62,23 @@ async function deleteIfPresent(api: APIRequestContext, id: string) {
     await api.delete(`/api/dag/${id}`);
 }
 
-test.beforeEach(async ({ request, page }) => {
-    // Best-effort cleanup of any prior echo install + endpoint nodes.
+async function listIds(request: APIRequestContext): Promise<string[]> {
     const r = await request.get('/api/dag');
-    if (r.ok()) {
-        const nodes = (await r.json()).nodes as { id: string }[];
-        // Delete endpoints first (they're descendants but cleaner this way).
-        for (const n of nodes) {
-            if (n.id.startsWith('modules/echo/endpoint_')) {
-                await deleteIfPresent(request, n.id);
-            }
-        }
-        if (nodes.some(n => n.id === 'modules/echo')) {
-            await deleteIfPresent(request, 'modules/echo');
+    if (!r.ok()) return [];
+    return ((await r.json()).nodes as { id: string }[]).map(n => n.id);
+}
+
+test.beforeEach(async ({ request, page }) => {
+    // Best-effort cleanup of any prior echo install + exposures.
+    const ids = await listIds(request);
+    for (const id of ids) {
+        if (id.startsWith('modules/echo/main_ports/') && id.endsWith('/exposure_echo')) {
+            await deleteIfPresent(request, id);
         }
     }
-    // Ensure base graph is in place.
+    if (ids.includes('modules/echo')) {
+        await deleteIfPresent(request, 'modules/echo');
+    }
     await seedNamespace(request, 'settings');
     await seedNamespace(request, 'modules');
     await seedVar(request, 'settings/zp_arch', 'amd64', 'settings');
@@ -85,67 +86,73 @@ test.beforeEach(async ({ request, page }) => {
     await page.goto('/');
 });
 
-test('port output gets an expose button, click creates an Endpoint', async ({ page, request }) => {
+test('service appears after install + resolve, expose creates an Exposure', async ({ page, request }) => {
     await installEcho(request);
     await resolveAll(request);
 
-    // The synced port output is named "port_http".
-    await page.goto('/#/modules/echo/port_http');
-    await expect(page.locator('.detail-name')).toContainText('port_http');
+    // After resolve, the discovery pass should have created a Service
+    // node from echo's main_ports.http bundle.
+    const afterResolve = await listIds(request);
+    const serviceId = afterResolve.find(id => id.startsWith('modules/echo/main_ports/') && !id.endsWith('/_self'));
+    expect(serviceId, 'expected a Service node under modules/echo/main_ports').toBeTruthy();
 
+    // Navigate and click expose.
+    await page.goto(`/#${'/' + serviceId}`);
     const exposeBtn = page.getByRole('button', { name: /^expose$/i });
     await expect(exposeBtn).toBeVisible();
     await exposeBtn.click();
 
-    // An Endpoint node appears under modules/echo.
+    // An Exposure node appears under the Service.
     await expect(async () => {
-        const list = await (await request.get('/api/dag')).json();
-        const endpoints = (list.nodes as { id: string }[])
-            .filter(n => n.id.startsWith('modules/echo/endpoint_'));
-        expect(endpoints.length).toBe(1);
+        const ids = await listIds(request);
+        const exposures = ids.filter(id => id.startsWith(serviceId + '/exposure_'));
+        expect(exposures.length).toBe(1);
     }).toPass();
 
-    // The same page now shows "unexpose" instead of "expose".
     await page.reload();
     await expect(page.getByRole('button', { name: /^unexpose$/i })).toBeVisible();
 });
 
-test('exposed http endpoint shows an Open link', async ({ page, request }) => {
+test('exposed http service shows an Open link on its Exposure child', async ({ page, request }) => {
     await installEcho(request);
     await resolveAll(request);
 
-    // Expose as http with name = "echo".
+    const ids = await listIds(request);
+    const serviceId = ids.find(id => id.startsWith('modules/echo/main_ports/') && !id.endsWith('/_self'));
+    expect(serviceId).toBeTruthy();
+
     const r = await request.post('/api/expose', {
-        data: { port_var_id: 'modules/echo/port_http', protocol: 'http', name: 'echo' },
+        data: { service_id: serviceId, name: 'echo' },
     });
     expect(r.ok()).toBeTruthy();
     const body = await r.json();
-    const endpointId = body.endpoint_id as string;
+    const exposureId = body.exposure_id as string;
 
-    await page.goto(`/#${'/' + endpointId}`);
-    await expect(page.locator('.detail-name')).toContainText('endpoint_echo');
+    await page.goto(`/#${'/' + exposureId}`);
+    await expect(page.locator('.detail-name')).toContainText('exposure_echo');
 
     const openLink = page.getByRole('link', { name: /^open ↗$/i });
     await expect(openLink).toBeVisible();
     await expect(openLink).toHaveAttribute('href', 'http://echo.local/');
 });
 
-test('unexpose deletes the endpoint and restores the bare port view', async ({ page, request }) => {
+test('unexpose deletes the exposure and restores the bare Service view', async ({ page, request }) => {
     await installEcho(request);
     await resolveAll(request);
 
-    await request.post('/api/expose', {
-        data: { port_var_id: 'modules/echo/port_http' },
-    });
+    const ids = await listIds(request);
+    const serviceId = ids.find(id => id.startsWith('modules/echo/main_ports/') && !id.endsWith('/_self'));
+    expect(serviceId).toBeTruthy();
 
-    await page.goto('/#/modules/echo/port_http');
+    await request.post('/api/expose', { data: { service_id: serviceId } });
+
+    await page.goto(`/#${'/' + serviceId}`);
     await page.getByRole('button', { name: /^unexpose$/i }).click();
 
     await expect(async () => {
-        const list = await (await request.get('/api/dag')).json();
-        const endpoints = (list.nodes as { id: string }[])
-            .filter(n => n.id.startsWith('modules/echo/endpoint_'));
-        expect(endpoints.length).toBe(0);
+        const ids = await listIds(request);
+        const exposures = ids.filter(id => id.startsWith(serviceId + '/exposure_'));
+        expect(exposures.length).toBe(0);
     }).toPass();
 
     await page.reload();

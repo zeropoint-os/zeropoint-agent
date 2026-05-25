@@ -1,36 +1,42 @@
-"""Expose / Unexpose actions — wire a module's port to a LAN-visible Endpoint.
+"""Expose / Unexpose — declare a Service as LAN-visible.
 
-Endpoint nodes are not user-creatable from the type picker. The only
-way one comes into existence is via `POST /api/expose {port_var_id}`.
+The new model: an `Exposure` node is purely a child of a `Service`
+node. Its presence means "expose this". No data-parent / link-target
+mechanics; the Service it's parented to already knows the port,
+protocol, container, etc.
+
+The Service node itself is created by the discovery pass after
+resolve — see xds/discover.py. The user can't create Services; they
+appear when a module's terraform outputs a `{port, protocol}` bundle.
 
 Expose:
-  1. Validates the target is a port-typed Var (Var[int]).
-  2. Locates the owning module namespace (the Var's Namespace parent).
-  3. Picks a default `name` from the module leaf + port suffix.
-  4. Picks `protocol` from the sibling `*_protocol` var if present;
-     defaults to http for 80/443, tcp otherwise.
-  5. Allocates a host_port (tcp only) in 10000-60000.
-  6. Creates `modules/<owning>/endpoint_<name>` with parents=[owning_ns,
-     port_var_id] inside a graph_transaction.
+  POST /api/expose {service_id, name?, host_port?}
+    - validates service_id resolves to a Service node
+    - picks a default `name` (module leaf name) if not supplied
+    - allocates a host_port for tcp services
+    - creates `<service_id>/<exposure-leaf>` parented to the Service
+    - wrapped in graph_transaction
+  Then triggers a full resolve so the new exposure flows to Envoy.
 
 Unexpose:
-  Deletes any endpoint whose parents include port_var_id.
+  POST /api/unexpose {service_id}
+    - deletes every Exposure child of the Service (typically just one)
+    - triggers a full resolve so the xDS cache drops the slice
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from zeropoint_agent.graph_transaction import graph_transaction
-from zeropoint_agent.inode import NodeStatus
 from zeropoint_agent.nodes.config.namespace import Namespace
-from zeropoint_agent.nodes.config.var import Var
-from zeropoint_agent.nodes.user.endpoint import Endpoint
-from zeropoint_agent.xds.reconciler import reconcile as xds_reconcile
+from zeropoint_agent.nodes.user.exposure import Exposure
+from zeropoint_agent.nodes.user.service import Service
 
 logger = logging.getLogger(__name__)
 
@@ -39,65 +45,65 @@ router = APIRouter(prefix="/api", tags=["expose"])
 TCP_PORT_MIN = 10000
 TCP_PORT_MAX = 60000
 
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
 
 class ExposeRequest(BaseModel):
-    port_var_id: str
+    service_id: str
     name: Optional[str] = None
-    protocol: Optional[str] = None
+    host_port: Optional[int] = None
 
 
 class UnexposeRequest(BaseModel):
-    port_var_id: str
+    service_id: str
 
 
-def _owning_namespace_id(entry, dag) -> Optional[str]:
-    """Find the Namespace parent id of a node."""
-    for pid in entry.parents:
-        p = dag.nodes.get(pid)
-        if p is not None and isinstance(p.node, Namespace):
-            return pid
-    return None
+def _service_protocol(service_entry) -> str:
+    out = service_entry.output
+    p = getattr(out, "protocol", None)
+    if p is None and isinstance(out, dict):
+        p = out.get("protocol")
+    return str(p) if p else ""
 
 
-def _sibling_protocol(port_var_id: str, dag) -> Optional[str]:
-    """If port_var_id is named port_<n>, look for port_<n>_protocol sibling."""
-    if "/" not in port_var_id:
-        return None
-    parent_path, leaf = port_var_id.rsplit("/", 1)
-    if not leaf.startswith("port_"):
-        return None
-    proto_id = f"{parent_path}/{leaf}_protocol"
-    p = dag.nodes.get(proto_id)
-    if p is None:
-        return None
-    val = getattr(p.output, "value", None)
-    if val is None and isinstance(p.output, dict):
-        val = p.output.get("value")
-    if isinstance(val, str) and val:
-        return val
-    fallback = getattr(p.node, "value", None)
-    if isinstance(fallback, str) and fallback:
-        return fallback
-    return None
+def _module_leaf(dag, service_id: str) -> str:
+    """Find the owning module namespace and return its leaf segment.
+
+    Walks ancestry: Service -> OutputVar -> module namespace.
+    """
+    visited: Set[str] = set()
+    queue = [service_id]
+    while queue:
+        nid = queue.pop()
+        if nid in visited:
+            continue
+        visited.add(nid)
+        entry = dag.nodes.get(nid)
+        if entry is None:
+            continue
+        for pid in entry.parents:
+            p = dag.nodes.get(pid)
+            if p is None:
+                continue
+            if isinstance(p.node, Namespace) and pid.startswith("modules/"):
+                return pid.rsplit("/", 1)[-1]
+            queue.append(pid)
+    # Fallback: leaf of the service itself.
+    return service_id.rsplit("/", 1)[-1]
 
 
-def _existing_endpoint_names(ns_id: str, dag) -> Set[str]:
-    out: Set[str] = set()
-    prefix = f"{ns_id}/endpoint_"
-    for nid, entry in dag.nodes.items():
-        if nid.startswith(prefix) and isinstance(entry.node, Endpoint):
-            out.add(entry.node.name)
-    return out
+def _existing_exposure_names(dag) -> Set[str]:
+    return {
+        e.node.name
+        for e in dag.nodes.values()
+        if isinstance(e.node, Exposure) and e.node.name
+    }
 
 
 def _allocate_host_port(dag) -> int:
     used: Set[int] = set()
     for entry in dag.nodes.values():
-        if not isinstance(entry.node, Endpoint):
-            continue
-        if entry.node.protocol != "tcp":
-            continue
-        if entry.node.host_port:
+        if isinstance(entry.node, Exposure) and entry.node.host_port:
             used.add(int(entry.node.host_port))
     for p in range(TCP_PORT_MIN, TCP_PORT_MAX + 1):
         if p not in used:
@@ -105,41 +111,16 @@ def _allocate_host_port(dag) -> int:
     raise HTTPException(status_code=500, detail="No free TCP host ports left")
 
 
-def _pick_default_protocol(port_var_id: str, dag) -> str:
-    sibling = _sibling_protocol(port_var_id, dag)
-    if sibling in ("http", "tcp"):
-        return sibling
-    # Heuristic: well-known http ports default to http; everything else tcp.
-    port_entry = dag.nodes.get(port_var_id)
-    if port_entry is not None:
-        val = getattr(port_entry.output, "value", None)
-        if val is None and isinstance(port_entry.output, dict):
-            val = port_entry.output.get("value")
-        try:
-            if int(val) in (80, 443, 8080, 8443):
-                return "http"
-        except (TypeError, ValueError):
-            pass
-    return "tcp"
-
-
-def _pick_default_name(ns_id: str, port_leaf: str, dag) -> str:
-    """Choose a non-colliding default name.
-
-    Start with the module leaf (the namespace's leaf segment). If that
-    collides with an existing endpoint on the same namespace, append
-    the port name.
-    """
-    module_leaf = ns_id.rsplit("/", 1)[-1]
-    used = _existing_endpoint_names(ns_id, dag)
-    if module_leaf not in used:
-        return module_leaf
-    # port_<x> -> <x>
-    port_part = port_leaf[len("port_"):] if port_leaf.startswith("port_") else port_leaf
-    candidate = f"{module_leaf}_{port_part}"
+def _pick_default_name(dag, service_id: str) -> str:
+    """Default Exposure name = module leaf. If taken, append the service leaf."""
+    used = _existing_exposure_names(dag)
+    base = _module_leaf(dag, service_id)
+    if base not in used:
+        return base
+    svc_leaf = service_id.rsplit("/", 1)[-1]
+    candidate = f"{base}_{svc_leaf}"
     if candidate not in used:
         return candidate
-    # Otherwise number-suffix until unique.
     i = 2
     while True:
         c = f"{candidate}_{i}"
@@ -151,84 +132,67 @@ def _pick_default_name(ns_id: str, port_leaf: str, dag) -> str:
 @router.post("/expose")
 async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
     dag = request.app.state.dag
-    port_var_id = body.port_var_id
 
-    port_entry = dag.nodes.get(port_var_id)
-    if port_entry is None:
-        raise HTTPException(status_code=404, detail=f"Port var not found: {port_var_id}")
-    if not isinstance(port_entry.node, Var):
+    svc_entry = dag.nodes.get(body.service_id)
+    if svc_entry is None:
+        raise HTTPException(status_code=404,
+                            detail=f"Service not found: {body.service_id}")
+    if not isinstance(svc_entry.node, Service):
         raise HTTPException(
             status_code=400,
-            detail=f"{port_var_id!r} is not a Var; can't expose it.")
+            detail=f"{body.service_id!r} is not a Service (type={type(svc_entry.node).__name__})")
 
-    owning_ns = _owning_namespace_id(port_entry, dag)
-    if owning_ns is None:
+    name = body.name or _pick_default_name(dag, body.service_id)
+    if not _NAME_RE.match(name):
         raise HTTPException(
             status_code=400,
-            detail=f"Port var {port_var_id!r} has no namespace parent — can't derive owning module.")
+            detail=f"Exposure name {name!r} must be alphanumeric (with _ or -).")
 
-    port_leaf = port_var_id.rsplit("/", 1)[-1]
-    name = body.name or _pick_default_name(owning_ns, port_leaf, dag)
-    if not name.replace("_", "").replace("-", "").isalnum():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Endpoint name {name!r} must be alphanumeric (with _ or -).")
-
-    protocol = body.protocol or _pick_default_protocol(port_var_id, dag)
-    if protocol not in ("http", "tcp"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"protocol must be 'http' or 'tcp', got {protocol!r}")
-
-    endpoint_id = f"{owning_ns}/endpoint_{name}"
-    if endpoint_id in dag.nodes:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Endpoint {endpoint_id!r} already exists.")
-
-    host_port = 0
-    if protocol == "tcp":
+    protocol = _service_protocol(svc_entry) or "tcp"
+    host_port = int(body.host_port or 0)
+    if protocol == "tcp" and host_port == 0:
         host_port = _allocate_host_port(dag)
+
+    exposure_id = f"{body.service_id}/exposure_{name}"
+    if exposure_id in dag.nodes:
+        raise HTTPException(status_code=409,
+                            detail=f"Exposure {exposure_id!r} already exists.")
 
     try:
         with graph_transaction(dag):
             dag.add(
-                endpoint_id,
-                Endpoint(name=name, protocol=protocol, host_port=host_port),
-                parents=[owning_ns, port_var_id],
+                exposure_id,
+                Exposure(name=name, host_port=host_port),
+                parents=[body.service_id],
                 perms="rwd",
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("expose failed for %s", port_var_id)
+        logger.exception("expose failed for %s", body.service_id)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    runner = getattr(request.app.state, "xds", None)
-    if runner is not None:
-        try:
-            await xds_reconcile(dag, runner)
-        except Exception as e:
-            logger.warning("xDS reconcile after expose failed: %s", e)
+    # Trigger a full resolve so the new Exposure flows through Service.resolve
+    # and lands in the xDS cache.
+    await _trigger_resolve(request)
 
     return {
         "ok": True,
-        "endpoint_id": endpoint_id,
+        "exposure_id": exposure_id,
         "name": name,
         "protocol": protocol,
         "host_port": host_port,
-        "port_var_id": port_var_id,
+        "service_id": body.service_id,
     }
 
 
 @router.post("/unexpose")
 async def unexpose(body: UnexposeRequest, request: Request) -> Dict[str, Any]:
     dag = request.app.state.dag
-    port_var_id = body.port_var_id
 
     to_delete = [
         nid for nid, entry in dag.nodes.items()
-        if isinstance(entry.node, Endpoint) and port_var_id in entry.parents
+        if isinstance(entry.node, Exposure) and body.service_id in entry.parents
     ]
     if not to_delete:
         return {"ok": True, "deleted": []}
@@ -238,14 +202,19 @@ async def unexpose(body: UnexposeRequest, request: Request) -> Dict[str, Any]:
             for nid in to_delete:
                 dag.remove(nid)
     except Exception as e:
-        logger.exception("unexpose failed for %s", port_var_id)
+        logger.exception("unexpose failed for %s", body.service_id)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    runner = getattr(request.app.state, "xds", None)
-    if runner is not None:
-        try:
-            await xds_reconcile(dag, runner)
-        except Exception as e:
-            logger.warning("xDS reconcile after unexpose failed: %s", e)
+    await _trigger_resolve(request)
 
     return {"ok": True, "deleted": to_delete}
+
+
+async def _trigger_resolve(request: Request) -> None:
+    """Run a full resolve cycle so the graph state reflects in Envoy."""
+    from zeropoint_agent.handlers.resolve import _resolve_cycle, _effective_mode
+    try:
+        mode = _effective_mode("", request)
+        await _resolve_cycle(request, mode)
+    except Exception as e:
+        logger.warning("post-expose resolve failed (continuing): %s", e)

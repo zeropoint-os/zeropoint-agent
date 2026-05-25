@@ -8,8 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from zeropoint_agent.inode import ResolveMode, NodeStatus
 from zeropoint_agent.query import query_dag
-from zeropoint_agent.module_ports import sync_module_ports
-from zeropoint_agent.xds.reconciler import reconcile as xds_reconcile
+from zeropoint_agent.xds.discover import discover_and_push
 from zeropoint_agent.handlers import ResolveRequest
 
 logger = logging.getLogger(__name__)
@@ -40,18 +39,13 @@ def _effective_mode(requested: str, request: Request) -> ResolveMode:
     If no mode specified in request, use the global default.
     """
     default = getattr(request.app.state, "default_mode", "mock")
-
-    # Use global default if request doesn't specify
     mode_str = requested or default
-
-    # Block live mode when global is mock (safety)
     if mode_str == "live" and default == "mock":
         raise HTTPException(
             status_code=403,
             detail="Live mode blocked: server is running in mock mode "
                    "(set ZEROPOINT_MODE=live to enable)"
         )
-
     return _parse_mode(mode_str)
 
 
@@ -85,29 +79,62 @@ def _results_to_response(dag, results, mode_str, pattern=None):
     return resp
 
 
+async def _resolve_cycle(request: Request, mode: ResolveMode, pattern: str = None):
+    """A full resolve cycle wrapped in an xDS cache begin/commit pair.
+
+    Order:
+      1. cache.begin()    — start staging the new live set
+      2. dag.resolve()    — runs every node
+      3. discover         — find Services from OutputVars, resolve them,
+                            write slices to cache for any with Exposure children
+      4. cache.commit()   — atomic swap, schedule a flush to Envoy
+
+    If anything raises mid-cycle we abort staging so the live xDS state
+    is left untouched.
+    """
+    dag = request.app.state.dag
+    cache = None
+    runner = getattr(request.app.state, "xds", None)
+    if runner is not None:
+        cache = runner.cache
+        cache.begin()
+
+    try:
+        if pattern is None:
+            results = dag.resolve(mode=mode)
+        else:
+            matched_ids = query_dag(dag, pattern)
+            if not matched_ids:
+                if cache is not None:
+                    cache.abort()
+                raise HTTPException(
+                    status_code=404, detail=f"No nodes match: {pattern}")
+            results = dag.resolve_subset(matched_ids, mode=mode)
+
+        if cache is not None:
+            try:
+                discover_and_push(dag, cache, mode)
+            except Exception as e:
+                logger.warning("xDS discover/push failed (continuing): %s", e)
+            cache.commit()
+        return results
+    except HTTPException:
+        if cache is not None:
+            cache.abort()
+        raise
+    except Exception:
+        if cache is not None:
+            cache.abort()
+        raise
+
+
 @router.post("/resolve")
 async def resolve_graph(body: ResolveRequest, request: Request):
-    """Resolve the entire graph.
-
-    Mode defaults to ZEROPOINT_MODE env var. Live mode blocked in mock mode.
-    """
+    """Resolve the entire graph + discover Services + push xDS."""
     try:
         mode = _effective_mode(body.mode, request)
         dag = request.app.state.dag
-        results = dag.resolve(mode=mode)
-        try:
-            n = sync_module_ports(dag, mode=mode)
-            if n:
-                logger.info("synced %d port nodes after resolve", n)
-        except Exception as e:
-            logger.warning("port sync failed (continuing): %s", e)
-        runner = getattr(request.app.state, "xds", None)
-        if runner is not None:
-            try:
-                pushed = await xds_reconcile(dag, runner)
-                logger.info("xDS reconcile pushed %d endpoints", pushed)
-            except Exception as e:
-                logger.warning("xDS reconcile failed (continuing): %s", e)
+        results = await _resolve_cycle(request, mode)
         return _results_to_response(dag, results, mode.value)
     except HTTPException:
         raise
@@ -118,30 +145,29 @@ async def resolve_graph(body: ResolveRequest, request: Request):
 
 @router.post("/resolve/{pattern:path}")
 async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request):
-    """Resolve only the matched subgraph."""
+    """Resolve a subset; the cache cycle only applies if the pattern hits the whole graph.
+
+    Partial resolves still call discover_and_push but use the cache's
+    'live' write path (no begin/commit), so unrelated entries aren't
+    wiped. This keeps surgical resolves from blowing away services
+    they didn't touch.
+    """
     pattern = unquote(pattern)
     try:
         mode = _effective_mode(body.mode, request)
         dag = request.app.state.dag
         matched_ids = query_dag(dag, pattern)
-
         if not matched_ids:
             raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
 
         results = dag.resolve_subset(matched_ids, mode=mode)
-        try:
-            n = sync_module_ports(dag, mode=mode)
-            if n:
-                logger.info("synced %d port nodes after resolve", n)
-        except Exception as e:
-            logger.warning("port sync failed (continuing): %s", e)
+
         runner = getattr(request.app.state, "xds", None)
         if runner is not None:
             try:
-                pushed = await xds_reconcile(dag, runner)
-                logger.info("xDS reconcile pushed %d endpoints", pushed)
+                discover_and_push(dag, runner.cache, mode)
             except Exception as e:
-                logger.warning("xDS reconcile failed (continuing): %s", e)
+                logger.warning("xDS discover/push failed (continuing): %s", e)
         return _results_to_response(dag, results, mode.value, pattern)
     except HTTPException:
         raise

@@ -1,6 +1,6 @@
-"""mDNS / Zeroconf registry for http endpoints.
+"""mDNS / Zeroconf registry for http exposures.
 
-For every http Endpoint with a name N, we advertise `N.local` over
+For every http Exposure with a name N, we advertise `N.local` over
 mDNS. Other hosts on the LAN can then resolve it to this host's IP
 and reach the Envoy HTTP listener on :80.
 

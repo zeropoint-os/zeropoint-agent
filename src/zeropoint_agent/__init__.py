@@ -9,7 +9,7 @@ from .nodes import (
     Network, Docker, NvidiaGpu, AmdGpu, SystemEnvoy,
     Disk, Partition, Format, Mount, MountDir,
     Var, NamespacedVar, OutputVar, DirectoryVar, Namespace,
-    Terraform, Endpoint,
+    Terraform, Exposure, Service,
 )
 
 # Result contracts — re-exported from each node module
@@ -17,7 +17,7 @@ from .nodes.core import ShellScriptResult
 from .nodes.system import NetworkResult, DockerResult, NvidiaGpuResult, AmdGpuResult, SystemEnvoyResult
 from .nodes.hw import DiskResult, PartitionResult, FormatResult, MountResult, MountDirResult
 from .nodes.config import VarResult, NamespaceResult
-from .nodes.user import TerraformResult, EndpointResult
+from .nodes.user import TerraformResult, ExposureResult, ServiceResult
 
 __all__ = [
     "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
@@ -25,10 +25,10 @@ __all__ = [
     "Network", "Docker", "NvidiaGpu", "AmdGpu", "SystemEnvoy",
     "Disk", "Partition", "Format", "Mount", "MountDir",
     "Var", "NamespacedVar", "OutputVar", "DirectoryVar", "Namespace",
-    "Terraform", "Endpoint",
+    "Terraform", "Exposure", "Service",
     "NetworkResult", "DockerResult", "NvidiaGpuResult", "AmdGpuResult",
     "SystemEnvoyResult",
     "DiskResult", "PartitionResult", "FormatResult", "MountResult", "MountDirResult",
     "VarResult", "NamespaceResult",
-    "TerraformResult", "EndpointResult",
+    "TerraformResult", "ExposureResult", "ServiceResult",
 ]
