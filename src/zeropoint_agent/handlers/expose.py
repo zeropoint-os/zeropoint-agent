@@ -158,6 +158,19 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=409,
                             detail=f"Exposure {exposure_id!r} already exists.")
 
+    # Attach the target module's container to zeropoint-network so
+    # Envoy's STRICT_DNS cluster can resolve <module>-main. Module
+    # containers default to their own per-module network only.
+    mode_str = getattr(request.app.state, "default_mode", "mock")
+    if mode_str == "live":
+        try:
+            from zeropoint_agent.envoy_manager import ensure_container_on_zeropoint_network
+            module_leaf = _module_leaf(dag, body.service_id)
+            container = f"{module_leaf}-main"
+            ensure_container_on_zeropoint_network(container)
+        except Exception as e:
+            logger.warning("attach module container to zeropoint-network failed: %s", e)
+
     try:
         with graph_transaction(dag):
             dag.add(

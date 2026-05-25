@@ -84,6 +84,45 @@ def write_bootstrap(xds_host: str, xds_port: int) -> Path:
     return path
 
 
+def ensure_container_on_zeropoint_network(container_name: str) -> bool:
+    """Idempotently connect `container_name` to zeropoint-network.
+
+    Envoy lives on zeropoint-network and resolves upstream cluster
+    addresses via docker's per-network DNS. Module containers default
+    to their own per-module network, so to be reachable from Envoy
+    they must also be attached here.
+
+    Returns True if attached (or already attached), False if the
+    container or network isn't reachable.
+    """
+    client = _docker_client()
+    if client is None:
+        return False
+    try:
+        net_id = _ensure_network(client)
+        nets = client.networks.list(names=[NETWORK_NAME])
+        if not nets:
+            return False
+        net = nets[0]
+        try:
+            net.connect(container_name)
+            logger.info("connected %s to %s", container_name, NETWORK_NAME)
+            return True
+        except Exception as e:
+            msg = str(e).lower()
+            if ("already exists in network" in msg
+                    or "already connected" in msg
+                    or "endpoint with name" in msg and "already exists" in msg):
+                return True
+            logger.warning("attach %s to %s failed: %s",
+                           container_name, NETWORK_NAME, e)
+            return False
+    except Exception as e:
+        logger.warning("ensure_container_on_zeropoint_network(%s) failed: %s",
+                       container_name, e)
+        return False
+
+
 def _docker_client():
     """Return a docker client, or None if docker isn't available."""
     try:

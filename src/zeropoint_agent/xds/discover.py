@@ -244,7 +244,11 @@ def discover_and_push(dag: "DAG", cache: "XdsCache", mode: ResolveMode) -> int:
             logger.warning("post-discovery resolve failed: %s", e)
 
     # Write slices for every healthy Service with an Exposure child.
+    # Also re-attach the target containers to zeropoint-network so a
+    # graph rehydrate (or DinD restart) re-establishes connectivity
+    # without requiring an unexpose/expose cycle.
     pushed = 0
+    attach_live = mode == ResolveMode.LIVE
     for nid, entry in dag.nodes.items():
         if not isinstance(entry.node, Service):
             continue
@@ -252,4 +256,13 @@ def discover_and_push(dag: "DAG", cache: "XdsCache", mode: ResolveMode) -> int:
         if ep is not None:
             cache.set(nid, ep)
             pushed += 1
+            if attach_live:
+                try:
+                    from zeropoint_agent.envoy_manager import (
+                        ensure_container_on_zeropoint_network,
+                    )
+                    ensure_container_on_zeropoint_network(ep.container)
+                except Exception as e:
+                    logger.debug("network attach for %s failed: %s",
+                                 ep.container, e)
     return pushed
