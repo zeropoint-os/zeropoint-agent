@@ -35,10 +35,9 @@ export default defineConfig({
         // MOCK mode so resolve() never hits the network or docker.
         // We also seed the two root namespaces here, before the server
         // starts serving — tests assume settings/ and modules/ exist.
-        // Force the xDS server on in mock mode so the expose flow can be
-        // exercised end-to-end (snapshot push + reconciler). No real Envoy
-        // is spawned; mock mode keeps Docker out of the loop.
-        command: 'bash -c "set -e; cd .. && rm -rf /tmp/zp-pw && mkdir -p /tmp/zp-pw && export ZEROPOINT_ROOT_PATH=/tmp/zp-pw ZEROPOINT_MODE=mock ZEROPOINT_XDS_FORCE=1 ZEROPOINT_XDS_PORT=18002 ZEROPOINT_AGENT_LOCAL=1; zeropoint-agent node ensure namespace settings -c name=settings --perms rw* >/dev/null; zeropoint-agent node ensure namespace modules -c name=modules --perms rw* >/dev/null; unset ZEROPOINT_AGENT_LOCAL; zeropoint-agent serve"',
+        // xDS server runs in every mode; no force flag needed. Mock
+        // mode just means SystemEnvoy.resolve doesn't touch docker.
+        command: 'bash -c "set -e; cd .. && rm -rf /tmp/zp-pw && mkdir -p /tmp/zp-pw && export ZEROPOINT_ROOT_PATH=/tmp/zp-pw ZEROPOINT_MODE=mock ZEROPOINT_XDS_PORT=18002 ZEROPOINT_AGENT_LOCAL=1; zeropoint-agent node ensure namespace settings -c name=settings --perms rw* >/dev/null; zeropoint-agent node ensure namespace modules -c name=modules --perms rw* >/dev/null; zeropoint-agent node ensure namespace system -c name=system --perms rw- >/dev/null; zeropoint-agent node ensure envoy system/envoy -p system -c xds_port=18002 -c http_port=80 -c https_port=443 --perms r-- >/dev/null; unset ZEROPOINT_AGENT_LOCAL; zeropoint-agent serve"',
         url: 'http://127.0.0.1:2370/api/health',
         timeout: 30_000,
         reuseExistingServer: !process.env.CI,

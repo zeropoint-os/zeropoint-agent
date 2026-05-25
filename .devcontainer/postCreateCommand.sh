@@ -52,6 +52,17 @@ zeropoint-agent node ensure namespace settings \
 zeropoint-agent node ensure namespace modules \
     -c name=modules  --perms rw*
 
+# System namespace — agent-managed plumbing (envoy, future health
+# nodes, etc). Writable so the bootstrap can place children, but
+# the children are r-- so users can't tamper with them.
+zeropoint-agent node ensure namespace system \
+    -c name=system --perms rw-
+
+zeropoint-agent node ensure envoy system/envoy \
+    -p system \
+    -c xds_port=18000 -c http_port=80 -c https_port=443 \
+    --perms r--
+
 # Settings is now minimal: only the genuinely-global, system-detected
 # values live here. Per-module storage location is a per-module
 # concern (modules/<id>/zp_storage_dir) — each instance can live in

@@ -100,43 +100,28 @@ def create_app() -> FastAPI:
         app.state.default_mode = mode_str
         logger.info("Default resolve mode: %s", mode_str)
 
-        # xDS server: skipped in mock mode (no real Envoy to feed).
+        # xDS server: runs in every mode. In mock mode SystemEnvoy.resolve
+        # returns mock state without touching docker; in live mode it
+        # ensures the actual container is up.
         app.state.xds = None
-        xds_active = mode_str != "mock" or os.environ.get("ZEROPOINT_XDS_FORCE")
-        if xds_active:
-            xds_port = int(os.environ.get("ZEROPOINT_XDS_PORT", "18000"))
-            try:
-                runner = XdsRunner(port=xds_port)
-                await runner.start()
-                app.state.xds = runner
-            except Exception as e:
-                logger.warning("xDS server start failed (continuing without): %s", e)
+        xds_port = int(os.environ.get("ZEROPOINT_XDS_PORT", "18000"))
+        try:
+            runner = XdsRunner(port=xds_port)
+            await runner.start()
+            app.state.xds = runner
+        except Exception as e:
+            logger.warning("xDS server start failed (continuing without): %s", e)
 
-            # Bootstrap the system/envoy diagnostic node if missing.
+        # In LIVE mode, also start the Envoy container. The system/envoy
+        # node is bootstrapped by postCreate (it's part of the canonical
+        # initial graph), not here — server startup is the lifecycle, not
+        # the schema.
+        if mode_str == "live":
             try:
-                from zeropoint_agent.nodes.system import SystemEnvoy
-                from zeropoint_agent.nodes.config.namespace import Namespace
-                dag = app.state.dag
-                if "system" not in dag.nodes:
-                    dag.add("system", Namespace(name="system"),
-                            parents=[], perms="r--")
-                if "system/envoy" not in dag.nodes:
-                    dag.add(
-                        "system/envoy",
-                        SystemEnvoy(xds_port=xds_port),
-                        parents=["system"],
-                        perms="r--",
-                    )
+                from zeropoint_agent.envoy_manager import ensure_envoy
+                ensure_envoy(xds_port=xds_port)
             except Exception as e:
-                logger.warning("system/envoy bootstrap failed: %s", e)
-
-            # In LIVE mode, start the Envoy container too.
-            if mode_str == "live":
-                try:
-                    from zeropoint_agent.envoy_manager import ensure_envoy
-                    ensure_envoy(xds_port=xds_port)
-                except Exception as e:
-                    logger.warning("envoy container start failed: %s", e)
+                logger.warning("envoy container start failed: %s", e)
 
         webui_dist = Path("webui/dist")
         if webui_dist.exists():
