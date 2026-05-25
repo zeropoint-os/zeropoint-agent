@@ -5,9 +5,10 @@ node. Its presence means "expose this". No data-parent / link-target
 mechanics; the Service it's parented to already knows the port,
 protocol, container, etc.
 
-The Service node itself is created by the discovery pass after
-resolve — see xds/discover.py. The user can't create Services; they
-appear when a module's terraform outputs a `{port, protocol}` bundle.
+The Service node itself is created by an OutputVar at resolve time
+when its value contains a {port, protocol} bundle. The user can't
+create Services; they appear when a module's terraform outputs a
+matching shape.
 
 Expose:
   POST /api/expose {service_id, name?, host_port?}
@@ -158,19 +159,6 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=409,
                             detail=f"Exposure {exposure_id!r} already exists.")
 
-    # Attach the target module's container to zeropoint-network so
-    # Envoy's STRICT_DNS cluster can resolve <module>-main. Module
-    # containers default to their own per-module network only.
-    mode_str = getattr(request.app.state, "default_mode", "mock")
-    if mode_str == "live":
-        try:
-            from zeropoint_agent.envoy_manager import ensure_container_on_zeropoint_network
-            module_leaf = _module_leaf(dag, body.service_id)
-            container = f"{module_leaf}-main"
-            ensure_container_on_zeropoint_network(container)
-        except Exception as e:
-            logger.warning("attach module container to zeropoint-network failed: %s", e)
-
     try:
         with graph_transaction(dag):
             dag.add(
@@ -185,8 +173,9 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         logger.exception("expose failed for %s", body.service_id)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # Trigger a full resolve so the new Exposure flows through Service.resolve
-    # and lands in the xDS cache.
+    # Resolving the Service runs its xDS publish + network attach in
+    # the same step. No external network-attach call needed here —
+    # Service.resolve owns that responsibility.
     await _trigger_resolve(request)
 
     return {

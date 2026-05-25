@@ -40,6 +40,15 @@ class XdsRunner:
         logger.info("xDS server listening on :%d", self.port)
         self._task = asyncio.create_task(self._server.wait_closed())
 
+    def attach_to_dag(self, dag) -> None:
+        """Expose the cache to the DAG so node.resolve() can write slices.
+
+        Service.resolve reads `self.dag.xds_cache` to publish/clear its
+        own slice. We attach the cache by name (not constructor-time)
+        so the DAG and xDS lifecycles stay independent.
+        """
+        dag.xds_cache = self.cache
+
     async def stop(self) -> None:
         if self._server is None:
             return

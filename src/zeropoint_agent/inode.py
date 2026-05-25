@@ -208,6 +208,30 @@ class INode(ABC, Generic[I, O]):
     # this to an init field.
     default_perms: ClassVar[str] = "***"
 
+    # Identity. Set by dag.add() (and rehydrate) so a node knows where
+    # it lives in the graph without needing the DAG to pass it in.
+    # Stays empty until placed; freely-instantiated nodes (tests,
+    # constructors) read "". ClassVar-style: declared on every dataclass
+    # subclass via the property below, so the value is per-instance.
+    @property
+    def id(self) -> str:
+        return getattr(self, "_id", "") or ""
+
+    @id.setter
+    def id(self, value: str) -> None:
+        object.__setattr__(self, "_id", value)
+
+    # Back-ref to the owning DAG, set by dag.add()/rehydrate. Same idea
+    # as id: lets a node manipulate its own subtree (e.g. an OutputVar
+    # ensuring its Service children exist) without external glue code.
+    @property
+    def dag(self):
+        return getattr(self, "_dag", None)
+
+    @dag.setter
+    def dag(self, value) -> None:
+        object.__setattr__(self, "_dag", value)
+
     @abstractmethod
     def resolve(self, input: I, mode: ResolveMode) -> NodeResult[O]:
         """

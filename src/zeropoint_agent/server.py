@@ -108,6 +108,7 @@ def create_app() -> FastAPI:
         try:
             runner = XdsRunner(port=xds_port)
             await runner.start()
+            runner.attach_to_dag(app.state.dag)
             app.state.xds = runner
         except Exception as e:
             logger.warning("xDS server start failed (continuing without): %s", e)

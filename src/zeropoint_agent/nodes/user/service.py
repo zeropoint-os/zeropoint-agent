@@ -125,10 +125,68 @@ class Service(INode[Any, ServiceResult]):
         protocol = str(bundle.get("protocol") or "tcp")
         transport = str(bundle.get("transport") or "tcp")
         desc = str(bundle.get("description") or "")
-        return NodeResult.success(ServiceResult(
+        result = ServiceResult(
             name=self.name, port=port, protocol=protocol,
             transport=transport, description=desc, value=port,
-        ))
+        )
+        # If a user has expressed intent to expose me (an Exposure child
+        # exists), publish my slice to the xDS cache. If not, ensure
+        # I'm absent from it. Either way, I own this — no central
+        # reconciler.
+        self._sync_xds(result, mode)
+        return NodeResult.success(result)
+
+    def _sync_xds(self, my_result: "ServiceResult", mode: ResolveMode) -> None:
+        """Write or clear my xDS slice based on whether I have an Exposure child.
+
+        In LIVE mode, also ensure the target module's container is on
+        zeropoint-network so Envoy's STRICT_DNS cluster can resolve it.
+        """
+        if self.dag is None or not self.id:
+            return
+        cache = _xds_cache_for(self.dag)
+        if cache is None:
+            return
+
+        # Find an Exposure child (the user's "expose this" declaration).
+        from zeropoint_agent.nodes.user.exposure import Exposure
+        exposure = None
+        for nid, entry in self.dag.nodes.items():
+            if isinstance(entry.node, Exposure) and self.id in entry.parents:
+                exposure = entry.node
+                break
+
+        if exposure is None:
+            cache.clear(self.id)
+            return
+
+        # Owning module = first Namespace ancestor under modules/.
+        module_leaf = _owning_module_leaf(self.dag, self.id)
+        if not module_leaf:
+            cache.clear(self.id)
+            return
+        container = f"{module_leaf}-main"
+
+        # Lazy import to avoid pulling xds at module load time.
+        from zeropoint_agent.xds.snapshot import ResolvedEndpoint
+        slice_ = ResolvedEndpoint(
+            id=self.id,
+            name=exposure.name or module_leaf,
+            protocol=my_result.protocol,
+            container=container,
+            container_port=my_result.port,
+            host_port=int(exposure.host_port or 0),
+        )
+        cache.set(self.id, slice_)
+
+        if mode == ResolveMode.LIVE:
+            try:
+                from zeropoint_agent.envoy_manager import (
+                    ensure_container_on_zeropoint_network,
+                )
+                ensure_container_on_zeropoint_network(container)
+            except Exception as e:
+                logger.debug("network attach for %s failed: %s", container, e)
 
     def verify(self, mode: ResolveMode) -> NodeResult[ServiceResult]:
         return NodeResult.pending_reboot(ServiceResult(
@@ -136,4 +194,37 @@ class Service(INode[Any, ServiceResult]):
         ))
 
     def remove(self, mode: ResolveMode) -> NodeResult[ServiceResult]:
+        # If I'm being removed, drop my xDS slice too.
+        if self.dag is not None and self.id:
+            cache = _xds_cache_for(self.dag)
+            if cache is not None:
+                cache.clear(self.id)
         return NodeResult.success()
+
+
+def _xds_cache_for(dag):
+    """Pull the xDS cache out of the DAG's runtime context, or None."""
+    return getattr(dag, "xds_cache", None)
+
+
+def _owning_module_leaf(dag, node_id: str) -> str:
+    """Walk ancestors to the first Namespace under modules/; return its leaf."""
+    from zeropoint_agent.nodes.config.namespace import Namespace
+    visited = set()
+    queue = [node_id]
+    while queue:
+        nid = queue.pop()
+        if nid in visited:
+            continue
+        visited.add(nid)
+        entry = dag.nodes.get(nid)
+        if entry is None:
+            continue
+        for pid in entry.parents:
+            p = dag.nodes.get(pid)
+            if p is None:
+                continue
+            if isinstance(p.node, Namespace) and pid.startswith("modules/"):
+                return pid.rsplit("/", 1)[-1]
+            queue.append(pid)
+    return ""

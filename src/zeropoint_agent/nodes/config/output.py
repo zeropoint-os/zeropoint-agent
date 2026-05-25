@@ -110,4 +110,85 @@ class OutputVar(Var[T]):
         # happens here so the VarResult is honest.
         if not isinstance(val, str):
             val = str(val)
-        return NodeResult.success(VarResult(name=self.name, value=val))  # type: ignore[arg-type]
+        result = NodeResult.success(VarResult(name=self.name, value=val))  # type: ignore[arg-type]
+
+        # Ensure Service children for any {port, protocol} bundles in our value.
+        # This is "I know my own shape, I create the nodes that follow from it" —
+        # no external discover sweep needed.
+        self._ensure_service_children(val, mode)
+        return result
+
+    def _ensure_service_children(self, raw_value: Any, mode: ResolveMode) -> None:
+        """Walk our value for {port, protocol} bundles; place a Service per bundle.
+
+        Idempotent: re-runs of resolve don't create duplicates. New services
+        get resolved in the same pass so they're not left PENDING.
+
+        Removal is NOT done here. If a bundle disappears, the existing
+        Service stays and surfaces its own resolve error — preserving
+        any user-pinned Exposure children.
+        """
+        if self.dag is None or not self.id:
+            return  # not yet placed in a graph (e.g. constructor-time)
+
+        # Decode JSON-encoded dict values (see _read_output which str-ifies them).
+        decoded = raw_value
+        if isinstance(decoded, str):
+            try:
+                decoded = json.loads(decoded)
+            except (ValueError, TypeError):
+                return
+
+        # Defer the import to runtime: nodes.user depends on nodes.config,
+        # so we can't import Service at module load time.
+        from zeropoint_agent.nodes.user.service import Service
+
+        bundles = list(_enumerate_bundles(decoded))
+        if not bundles:
+            return
+
+        new_ids: list[str] = []
+        for key, _bundle in bundles:
+            child_id = f"{self.id}/{key}" if key else f"{self.id}/_self"
+            if child_id in self.dag.nodes:
+                continue
+            leaf = child_id.rsplit("/", 1)[-1]
+            self.dag.add(
+                child_id,
+                Service(name=leaf, key=key or ""),
+                parents=[self.id],
+                perms="r--",
+            )
+            new_ids.append(child_id)
+
+        if new_ids:
+            try:
+                self.dag.resolve_subset(new_ids, mode=mode)
+            except Exception:
+                # Not fatal — the next full resolve will pick them up.
+                pass
+
+
+def _enumerate_bundles(value: Any) -> Any:
+    """(key, bundle_dict) pairs from a value. See xds.discover history."""
+    if isinstance(value, dict):
+        if "port" in value and "protocol" in value:
+            try:
+                int(value["port"])
+                if isinstance(value["protocol"], str) and value["protocol"]:
+                    yield "", value
+                    return
+            except (TypeError, ValueError):
+                pass
+        for k, v in value.items():
+            if not isinstance(v, dict):
+                continue
+            if "port" not in v or "protocol" not in v:
+                continue
+            try:
+                int(v["port"])
+            except (TypeError, ValueError):
+                continue
+            if not (isinstance(v.get("protocol"), str) and v["protocol"]):
+                continue
+            yield str(k), v

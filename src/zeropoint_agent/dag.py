@@ -216,6 +216,10 @@ class DAG:
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
         entry.path = self._compute_path(node, parents)
         entry.perms = perms
+        # Stamp identity + back-ref onto the node so it can address
+        # its own position in the graph (e.g. ensure children).
+        node.id = node_id
+        node.dag = self
         self._nodes[node_id] = entry
         self._order.append(node_id)
 
@@ -247,6 +251,8 @@ class DAG:
         i_type, o_type = _get_io_types(node)
         entry = NodeEntry(node=node, parents=parents,
                           input_type=i_type, output_type=o_type)
+        node.id = node_id
+        node.dag = self
         if stored is not None:
             try:
                 entry.status = NodeStatus(stored.status)
