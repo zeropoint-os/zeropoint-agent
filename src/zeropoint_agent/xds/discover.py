@@ -217,24 +217,12 @@ def discover_and_push(dag: "DAG", cache: "XdsCache", mode: ResolveMode) -> int:
         for key, bundle in _enumerate_bundles(value):
             _ensure_service(dag, nid, key, bundle, new_ids)
 
-    # Stale-service prune: any Service whose parent OutputVar value no
-    # longer contains its bundle is dropped. (graph state is truth.)
-    for nid, entry in list(dag.nodes.items()):
-        if not isinstance(entry.node, Service):
-            continue
-        parent_id = entry.parents[0] if entry.parents else None
-        parent = dag.nodes.get(parent_id) if parent_id else None
-        if parent is None or not isinstance(parent.node, OutputVar):
-            continue
-        value = _output_value(parent)
-        bundles = {k: b for k, b in _enumerate_bundles(value)}
-        # Top-level bundle: key=""
-        if entry.node.key not in bundles:
-            try:
-                dag.remove(nid)
-                logger.info("pruned stale service %s", nid)
-            except Exception as e:
-                logger.warning("failed to prune %s: %s", nid, e)
+    # Discovery only ADDS. Removal is a separate operation owned by
+    # whoever deleted the underlying node (module uninstall cascades
+    # through OutputVar -> Service -> Exposure via dag.remove's
+    # descendant logic). A Service whose parent OutputVar value
+    # changed shape will surface that as a resolve ERROR — which
+    # is the honest, user-visible signal.
 
     # Resolve newly-added services so they have output to read.
     if new_ids:
