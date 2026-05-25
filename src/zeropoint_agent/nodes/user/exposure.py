@@ -37,9 +37,15 @@ class ExposureResult:
 
 @dataclass
 class Exposure(INode[Any, ExposureResult]):
-    """A LAN-visible exposure declaration. Lives as a child of a Service."""
+    """A LAN-visible exposure declaration. Lives as a child of a Service.
 
-    default_perms: ClassVar[str] = "rwd"
+    Created and destroyed only via /api/expose and /api/unexpose. The
+    class default is r-- — users cannot edit or delete an Exposure
+    from the inspector. The expose/unexpose handlers go through
+    dag.add()/dag.remove() directly, bypassing the perms check.
+    """
+
+    default_perms: ClassVar[str] = "r--"
 
     name: str = ""
     host_port: int = readonly(default=0)
