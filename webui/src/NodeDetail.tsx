@@ -6,6 +6,50 @@ import { PropertyInspector } from './PropertyInspector';
 import { TypePicker } from './TypePicker';
 import { VarPicker } from './VarPicker';
 
+// Hardcoded tag display order for categorized children views.
+// Untagged children fall through to the trailing "other" bucket.
+// See zeropoint-agent/tags-model.
+const TAG_DISPLAY_ORDER: Array<{ tag: string; label: string }> = [
+    { tag: 'input',     label: 'inputs' },
+    { tag: 'output',    label: 'outputs' },
+    { tag: 'service',   label: 'services' },
+    { tag: 'exposure',  label: 'exposures' },
+    { tag: 'terraform', label: 'terraform' },
+    { tag: 'system',    label: 'system' },
+];
+
+interface ChildGroup { tag: string; label: string; children: DagNode[]; }
+
+function groupChildrenByTag(children: DagNode[]): ChildGroup[] {
+    // Bucket each child under its highest-priority tag in the display
+    // order; anything without a matching tag goes into "other". If all
+    // children share zero tags (e.g. a brand-new namespace) we keep a
+    // single anonymous group so the page renders one flat grid.
+    const buckets = new Map<string, DagNode[]>();
+    for (const c of children) {
+        const tags = c.tags || [];
+        let bucket = 'other';
+        for (const { tag } of TAG_DISPLAY_ORDER) {
+            if (tags.includes(tag)) { bucket = tag; break; }
+        }
+        const list = buckets.get(bucket) || [];
+        list.push(c);
+        buckets.set(bucket, list);
+    }
+    const groups: ChildGroup[] = [];
+    for (const { tag, label } of TAG_DISPLAY_ORDER) {
+        const kids = buckets.get(tag);
+        if (kids && kids.length > 0) groups.push({ tag, label, children: kids });
+    }
+    const others = buckets.get('other');
+    if (others && others.length > 0) {
+        // Only show a label for "other" if there are other groups already.
+        const label = groups.length > 0 ? 'other' : '';
+        groups.push({ tag: 'other', label, children: others });
+    }
+    return groups;
+}
+
 interface Props {
     node: DagNode;
     allNodes: DagNode[];
@@ -236,17 +280,26 @@ export function NodeDetail({
             {(children.length > 0 || canAddChildren) && !editing && (
                 <div class="detail-section">
                     <div class="detail-section-title">children</div>
-                    <div class="tiles" style="padding: 0;">
-                        {children.map(c => (
-                            <Tile
-                                key={c.id}
-                                node={c}
-                                onClick={() => onNavigate(c.id)}
-                                childCount={childrenOf(c.id).length}
-                                parentPath={node.id}
-                            />
-                        ))}
-                        {canAddChildren && (
+                    {groupChildrenByTag(children).map(group => (
+                        <div key={group.tag} class="children-group">
+                            {group.label && (
+                                <div class="children-group-label">{group.label}</div>
+                            )}
+                            <div class="tiles" style="padding: 0;">
+                                {group.children.map(c => (
+                                    <Tile
+                                        key={c.id}
+                                        node={c}
+                                        onClick={() => onNavigate(c.id)}
+                                        childCount={childrenOf(c.id).length}
+                                        parentPath={node.id}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                    {canAddChildren && (
+                        <div class="tiles" style="padding: 0;">
                             <button
                                 class="tile tile-add"
                                 onClick={() => setPickerOpen(true)}
@@ -255,8 +308,8 @@ export function NodeDetail({
                                 <div class="tile-add-icon">+</div>
                                 <div class="tile-add-label">add</div>
                             </button>
-                        )}
-                    </div>
+                        </div>
+                    )}
                 </div>
             )}
 

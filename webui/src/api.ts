@@ -11,6 +11,7 @@ export interface DagNode {
     path?: string;              // namespace-derived path
     perms?: string;             // instance-level perms (3 chars, r/w/d/*/-)
     effective_perms?: string;   // resolved across all layers
+    tags?: string[];            // creator-assigned tags (see tags-model)
 }
 
 export interface DagEdge {

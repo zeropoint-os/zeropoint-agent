@@ -512,6 +512,26 @@ html, body, #root {
     margin-bottom: 12px;
 }
 
+/* Categorized child group: a small label above each grouped tile grid.
+   Driven by node.tags via TAG_DISPLAY_ORDER in NodeDetail. */
+.children-group {
+    margin-bottom: 16px;
+}
+
+.children-group:last-child {
+    margin-bottom: 0;
+}
+
+.children-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--fg-dim);
+    opacity: 0.7;
+    margin: 4px 0 6px 2px;
+}
+
 .detail-field {
     display: grid;
     grid-template-columns: minmax(140px, 200px) 1fr;
