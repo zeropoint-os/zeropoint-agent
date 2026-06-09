@@ -204,9 +204,11 @@ def node_get(node_id: str):
               help="Config key=value (JSON-parsed; repeatable).")
 @click.option("--perms", default="***",
               help='Permission string, 3 chars from r/w/d/*/-  (default "***").')
+@click.option("--tags", "tags", multiple=True,
+              help="Creator-assigned tag for categorized views (repeatable).")
 def node_add(node_type: str, node_id: str,
              parents: Tuple[str, ...], config_kvs: Tuple[str, ...],
-             perms: str):
+             perms: str, tags: Tuple[str, ...]):
     """Create a new node. Errors 409 if the id already exists."""
     payload = {
         "id": node_id,
@@ -214,6 +216,7 @@ def node_add(node_type: str, node_id: str,
         "config": _parse_kv(config_kvs),
         "parents": list(parents),
         "perms": perms,
+        "tags": list(tags),
     }
     _emit(_request("POST", "/api/dag/nodes", json=payload))
 
@@ -227,9 +230,11 @@ def node_add(node_type: str, node_id: str,
               help="Config key=value (JSON-parsed; repeatable).")
 @click.option("--perms", default="***",
               help='Permission string, 3 chars from r/w/d/*/-  (default "***").')
+@click.option("--tags", "tags", multiple=True,
+              help="Creator-assigned tag for categorized views (repeatable).")
 def node_ensure(node_type: str, node_id: str,
                 parents: Tuple[str, ...], config_kvs: Tuple[str, ...],
-                perms: str):
+                perms: str, tags: Tuple[str, ...]):
     """Create the node if absent; do nothing if it already exists.
 
     Same shape as `add`, but tolerates 409 (already-exists). Use this
@@ -242,6 +247,7 @@ def node_ensure(node_type: str, node_id: str,
         "config": _parse_kv(config_kvs),
         "parents": list(parents),
         "perms": perms,
+        "tags": list(tags),
     }
     resp = _request("POST", "/api/dag/nodes", json=payload)
     if resp.status_code == 409:

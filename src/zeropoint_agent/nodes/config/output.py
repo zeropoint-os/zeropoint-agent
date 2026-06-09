@@ -158,6 +158,7 @@ class OutputVar(Var[T]):
                 Service(name=leaf, key=key or ""),
                 parents=[self.id],
                 perms="r--",
+                tags={"service", "output"},
             )
             new_ids.append(child_id)
 

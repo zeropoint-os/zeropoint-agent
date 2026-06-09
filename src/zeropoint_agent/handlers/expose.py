@@ -166,6 +166,7 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
                 Exposure(name=name, host_port=host_port),
                 parents=[body.service_id],
                 perms="r--",
+                tags={"exposure"},
             )
     except HTTPException:
         raise

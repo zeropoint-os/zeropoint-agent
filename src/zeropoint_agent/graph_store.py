@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import shutil
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +30,7 @@ class StoredNode:
     output: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     perms: str = "***"   # instance-level permissions (3 chars from r/w/d/*/-)
+    tags: List[str] = field(default_factory=list)  # creator-assigned tags
 
 
 class GraphStore:
@@ -74,6 +75,7 @@ class GraphStore:
                     output STRING DEFAULT '',
                     error STRING DEFAULT '',
                     perms STRING DEFAULT '***',
+                    tags STRING DEFAULT '',
                     PRIMARY KEY(id)
                 )
             """)
@@ -90,47 +92,68 @@ class GraphStore:
             logger.warning(
                 "Graph store predates the perms column; reads will default to '***'. "
                 "Re-create the store to persist perms.")
+        # Same probe for the tags column (added after perms).
+        try:
+            self._conn.execute("MATCH (n:Node) RETURN n.tags LIMIT 1")
+            self._has_tags_column = True
+        except Exception:
+            self._has_tags_column = False
+            logger.warning(
+                "Graph store predates the tags column; reads will default to []. "
+                "Re-create the store to persist tags.")
+
+    # ---- schema helpers -----------------------------------------------------
+
+    def _node_columns(self) -> List[str]:
+        """Column names for a Node row in the order returned by reads."""
+        cols = ["id", "node_type", "node_class", "config", "status", "output", "error"]
+        if self._has_perms_column:
+            cols.append("perms")
+        if self._has_tags_column:
+            cols.append("tags")
+        return cols
+
+    def _row_to_stored(self, row, cols: List[str]) -> "StoredNode":
+        """Build a StoredNode from a row + column list."""
+        get = dict(zip(cols, row)).get
+        perms = get("perms") or "***"
+        tags_raw = get("tags") or ""
+        try:
+            tags = json.loads(tags_raw) if tags_raw else []
+        except (ValueError, TypeError):
+            tags = []
+        return StoredNode(
+            id=get("id"),
+            node_type=get("node_type"),
+            node_class=get("node_class"),
+            config=json.loads(get("config")) if get("config") else {},
+            status=get("status"),
+            output=json.loads(get("output")) if get("output") else None,
+            error=get("error") if get("error") else None,
+            perms=perms,
+            tags=list(tags) if isinstance(tags, list) else [],
+        )
 
     def add_node(self, node: StoredNode) -> None:
         """Add a node to the graph."""
-        config_json = json.dumps(node.config)
-        output_json = json.dumps(node.output) if node.output else ""
-        error = node.error or ""
-
+        params: Dict[str, Any] = {
+            "id": node.id,
+            "node_type": node.node_type,
+            "node_class": node.node_class,
+            "config": json.dumps(node.config),
+            "status": node.status,
+            "output": json.dumps(node.output) if node.output else "",
+            "error": node.error or "",
+        }
+        cols = ["id", "node_type", "node_class", "config", "status", "output", "error"]
         if self._has_perms_column:
-            self._conn.execute(
-                "CREATE (n:Node {"
-                f"id: $id, node_type: $node_type, node_class: $node_class, "
-                f"config: $config, status: $status, output: $output, "
-                f"error: $error, perms: $perms"
-                "})",
-                parameters={
-                    "id": node.id,
-                    "node_type": node.node_type,
-                    "node_class": node.node_class,
-                    "config": config_json,
-                    "status": node.status,
-                    "output": output_json,
-                    "error": error,
-                    "perms": node.perms,
-                },
-            )
-        else:
-            self._conn.execute(
-                "CREATE (n:Node {"
-                f"id: $id, node_type: $node_type, node_class: $node_class, "
-                f"config: $config, status: $status, output: $output, error: $error"
-                "})",
-                parameters={
-                    "id": node.id,
-                    "node_type": node.node_type,
-                    "node_class": node.node_class,
-                    "config": config_json,
-                    "status": node.status,
-                    "output": output_json,
-                    "error": error,
-                },
-            )
+            cols.append("perms")
+            params["perms"] = node.perms
+        if self._has_tags_column:
+            cols.append("tags")
+            params["tags"] = json.dumps(list(node.tags)) if node.tags else ""
+        props = ", ".join(f"{c}: ${c}" for c in cols)
+        self._conn.execute(f"CREATE (n:Node {{{props}}})", parameters=params)
         logger.debug(f"Stored node: {node.id} ({node.node_type})")
 
     def has_node(self, node_id: str) -> bool:
@@ -161,61 +184,24 @@ class GraphStore:
 
     def get_node(self, node_id: str) -> Optional[StoredNode]:
         """Get a node by ID."""
-        if self._has_perms_column:
-            result = self._conn.execute(
-                "MATCH (n:Node {id: $id}) "
-                "RETURN n.id, n.node_type, n.node_class, n.config, "
-                "n.status, n.output, n.error, n.perms",
-                parameters={"id": node_id},
-            )
-        else:
-            result = self._conn.execute(
-                "MATCH (n:Node {id: $id}) "
-                "RETURN n.id, n.node_type, n.node_class, n.config, "
-                "n.status, n.output, n.error",
-                parameters={"id": node_id},
-            )
+        cols = self._node_columns()
+        projection = ", ".join(f"n.{c}" for c in cols)
+        result = self._conn.execute(
+            f"MATCH (n:Node {{id: $id}}) RETURN {projection}",
+            parameters={"id": node_id},
+        )
         if result.has_next():
-            row = result.get_next()
-            return StoredNode(
-                id=row[0],
-                node_type=row[1],
-                node_class=row[2],
-                config=json.loads(row[3]) if row[3] else {},
-                status=row[4],
-                output=json.loads(row[5]) if row[5] else None,
-                error=row[6] if row[6] else None,
-                perms=row[7] if self._has_perms_column and len(row) > 7 and row[7] else "***",
-            )
+            return self._row_to_stored(result.get_next(), cols)
         return None
 
     def get_all_nodes(self) -> List[StoredNode]:
         """Get all nodes."""
-        if self._has_perms_column:
-            result = self._conn.execute(
-                "MATCH (n:Node) "
-                "RETURN n.id, n.node_type, n.node_class, n.config, "
-                "n.status, n.output, n.error, n.perms"
-            )
-        else:
-            result = self._conn.execute(
-                "MATCH (n:Node) "
-                "RETURN n.id, n.node_type, n.node_class, n.config, "
-                "n.status, n.output, n.error"
-            )
+        cols = self._node_columns()
+        projection = ", ".join(f"n.{c}" for c in cols)
+        result = self._conn.execute(f"MATCH (n:Node) RETURN {projection}")
         nodes = []
         while result.has_next():
-            row = result.get_next()
-            nodes.append(StoredNode(
-                id=row[0],
-                node_type=row[1],
-                node_class=row[2],
-                config=json.loads(row[3]) if row[3] else {},
-                status=row[4],
-                output=json.loads(row[5]) if row[5] else None,
-                error=row[6] if row[6] else None,
-                perms=row[7] if self._has_perms_column and len(row) > 7 and row[7] else "***",
-            ))
+            nodes.append(self._row_to_stored(result.get_next(), cols))
         return nodes
 
     def get_parents(self, node_id: str) -> List[str]:
@@ -303,6 +289,16 @@ class GraphStore:
         self._conn.execute(
             "MATCH (n:Node {id: $id}) SET n.perms = $perms",
             parameters={"id": node_id, "perms": perms},
+        )
+
+    def set_tags(self, node_id: str, tags: List[str]) -> None:
+        """Update a node's creator-assigned tags (JSON-encoded list)."""
+        if not self._has_tags_column:
+            return
+        encoded = json.dumps(list(tags)) if tags else ""
+        self._conn.execute(
+            "MATCH (n:Node {id: $id}) SET n.tags = $tags",
+            parameters={"id": node_id, "tags": encoded},
         )
 
     def remove_node(self, node_id: str) -> bool:

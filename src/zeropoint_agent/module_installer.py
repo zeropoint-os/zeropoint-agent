@@ -284,6 +284,7 @@ def add_module(
             NamespacedVar(name=varname, spec=spec),
             parents=[namespace_id],
             perms="r--",
+            tags={"input"},
         )
         created.append(node_id)
         var_parent_ids.append(node_id)
@@ -305,6 +306,7 @@ def add_module(
             DirectoryVar(name=varname, value=default_path),
             parents=[namespace_id],
             perms="rw-",
+            tags={"input"},
         )
         created.append(node_id)
         var_parent_ids.append(node_id)
@@ -355,6 +357,7 @@ def add_module(
             var_node_id,
             Var(name=var.name, value=value),
             parents=[namespace_id],
+            tags={"input"},
         )
         created.append(var_node_id)
         var_parent_ids.append(var_node_id)
@@ -375,6 +378,7 @@ def add_module(
         terraform_id,
         Terraform(source=source),
         parents=[namespace_id, *var_parent_ids],
+        tags={"terraform"},
     )
     created.append(terraform_id)
 
@@ -397,6 +401,7 @@ def add_module(
             OutputVar(name=out_name, key=out_name),
             parents=[namespace_id, terraform_id],
             perms="r--",
+            tags={"output"},
         )
         created.append(out_id)
 

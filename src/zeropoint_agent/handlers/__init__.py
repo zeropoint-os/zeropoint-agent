@@ -44,6 +44,7 @@ class NodeSpec(BaseModel):
     config: Dict[str, Any]
     parents: List[str] = []
     perms: str = "***"
+    tags: List[str] = []
 
 
 class ResolveRequest(BaseModel):
@@ -67,6 +68,7 @@ def node_to_dict(nid: str, entry, dag=None) -> dict:
         "error": entry.error,
         "path": entry.path,
         "perms": entry.perms,
+        "tags": sorted(entry.tags),
     }
     if dag is not None:
         try:

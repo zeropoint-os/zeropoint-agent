@@ -51,7 +51,7 @@ zeropoint-agent node ensure namespace system \
 # so its resolve runs first.
 zeropoint-agent node ensure docker system/docker \
     -p system \
-    --perms r--
+    --perms r-- --tags system
 
 # Shared bridge network for cross-container DNS. Envoy and any
 # module container that gets exposed live on this network so
@@ -59,12 +59,12 @@ zeropoint-agent node ensure docker system/docker \
 zeropoint-agent node ensure docker_network system/zeropoint_network \
     -p system -p system/docker \
     -c name=zeropoint-network -c driver=bridge \
-    --perms r--
+    --perms r-- --tags system
 
 zeropoint-agent node ensure envoy system/envoy \
     -p system -p system/docker -p system/zeropoint_network \
     -c xds_port=18000 -c http_port=80 -c https_port=443 \
-    --perms r--
+    --perms r-- --tags system
 
 # Settings is minimal: only the genuinely-global, system-detected
 # values live here. Per-module storage location is a per-module
