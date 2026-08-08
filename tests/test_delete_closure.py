@@ -80,6 +80,26 @@ def test_shared_dependency_does_not_cascade_into_modules():
     assert got == set(), got
 
 
+def test_user_var_linked_to_a_module_survives_the_module():
+    """A var the user made and linked to a module input is not swept up.
+
+    This is the case the orphan rule looks like it should break. It
+    doesn't, and the reason is worth pinning down: creation parents the
+    node to its namespace (`NewNodePage.tsx` sends `parents: [parentId]`)
+    and `link_var` *appends* the target, dropping only a previous Var
+    parent. So the var keeps `settings` and merely loses an edge.
+
+    Assert the realistic shape, not a hand-built one — a fixture without
+    the namespace parent is a node the app cannot actually produce, and
+    testing it only proves something about the fixture.
+    """
+    dag = _echo_graph()
+    dag.nodes["settings/my_var"] = FakeEntry(
+        ["settings", "modules/echo/greeting"])
+    got = set(delete_closure(dag, {"modules/echo"}))
+    assert "settings/my_var" not in got, got
+
+
 def test_orphan_rule_catches_dependency_only_children():
     """A node held up solely by the deleted node comes along."""
     dag = FakeDag({

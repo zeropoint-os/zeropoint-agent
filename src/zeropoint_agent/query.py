@@ -203,8 +203,10 @@ def orphan_closure(dag, removing: Set[str]) -> List[str]:
 
     Removing a node strips it from its children's parent lists. A child
     with other parents survives — it just loses one edge. A child left
-    with *no* parents at all is an orphan: it was reachable only through
-    the node being deleted, and nothing can resolve it again.
+    with *no* parents at all is an orphan: it isn't in any namespace, so
+    nothing can navigate to it, resolve it, or ever reach it again. Its
+    id prefix is a leftover string, not a location. That is garbage, and
+    keeping it only leaks the id.
 
     A node that already has no parents is a root (``settings``,
     ``modules``, ``system``), not an orphan — those are only removed
@@ -217,6 +219,21 @@ def orphan_closure(dag, removing: Set[str]) -> List[str]:
     ``modules/echo/terraform`` lists ``system/docker`` among its parents
     alongside its own module vars, so a full descendant-cascade on
     ``system/docker`` would take every module in the graph with it.
+
+    Note on a rejected objection: this rule looks like it could eat a
+    var the user created under ``settings/`` and linked to a module
+    input, taking their data along with the module. It does not.
+    Creation parents the node to its namespace (``NewNodePage.tsx``
+    sends ``parents: [parentId]``) and linking *appends* — ``link_var``
+    only drops the previous **Var** parent, never the Namespace one. So
+    that var holds ``['settings', 'modules/echo/greeting']``, loses one
+    edge, and survives. See the regression test.
+
+    The one shape that *is* vulnerable is a node whose id sits under a
+    namespace it isn't actually parented to. ``POST /api/dag/nodes``
+    currently permits that, and such a node is already broken in other
+    ways (``_compute_path`` gives it an empty path). The fix belongs at
+    creation, not here.
     """
     doomed = set(removing)
     added: List[str] = []
