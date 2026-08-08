@@ -170,3 +170,78 @@ def _get_all_descendants(dag, node_id: str) -> List[str]:
         visited.append(child)
         queue.extend(_get_children(dag, child))
     return visited
+
+
+def subtree_closure(dag, removing: Set[str]) -> List[str]:
+    """Nodes contained under any of ``removing``, by path.
+
+    Node ids *are* namespace paths (``modules/echo/terraform``), so
+    containment is carried by the id prefix rather than by parent edges.
+    That distinction matters because parent edges conflate two different
+    relationships:
+
+      - containment: ``modules/echo`` -> ``modules/echo/greeting``
+      - dependency:  ``system/docker`` -> ``modules/echo/terraform``
+
+    Deleting a namespace should take everything it contains — the
+    directory model users already expect — without following dependency
+    edges out into unrelated subtrees.
+
+    Returns the *additional* ids, parents before children.
+    """
+    doomed = set(removing)
+    added = [
+        nid for nid in dag.nodes
+        if nid not in doomed
+        and any(nid.startswith(f"{root}/") for root in removing)
+    ]
+    return sorted(added, key=lambda nid: nid.count("/"))
+
+
+def orphan_closure(dag, removing: Set[str]) -> List[str]:
+    """Nodes that would be orphaned by removing ``removing``.
+
+    Removing a node strips it from its children's parent lists. A child
+    with other parents survives — it just loses one edge. A child left
+    with *no* parents at all is an orphan: it was reachable only through
+    the node being deleted, and nothing can resolve it again.
+
+    A node that already has no parents is a root (``settings``,
+    ``modules``, ``system``), not an orphan — those are only removed
+    when named directly.
+
+    Expands to a fixpoint, since orphaning a node can in turn orphan its
+    own children. Returns the *additional* ids in discovery order.
+
+    This deliberately does NOT cascade along every dependency edge.
+    ``modules/echo/terraform`` lists ``system/docker`` among its parents
+    alongside its own module vars, so a full descendant-cascade on
+    ``system/docker`` would take every module in the graph with it.
+    """
+    doomed = set(removing)
+    added: List[str] = []
+
+    changed = True
+    while changed:
+        changed = False
+        for nid, entry in dag.nodes.items():
+            if nid in doomed or not entry.parents:
+                continue
+            if all(pid in doomed for pid in entry.parents):
+                doomed.add(nid)
+                added.append(nid)
+                changed = True
+
+    return added
+
+
+def delete_closure(dag, removing: Set[str]) -> List[str]:
+    """Everything that must go when ``removing`` is deleted.
+
+    Contained subtrees first (the directory model), then anything left
+    parentless by the removal (dependency-only children that nothing
+    else holds up). Returns the *additional* ids beyond ``removing``.
+    """
+    contained = subtree_closure(dag, removing)
+    orphaned = orphan_closure(dag, set(removing) | set(contained))
+    return contained + orphaned

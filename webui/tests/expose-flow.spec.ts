@@ -129,6 +129,11 @@ test('exposed http service shows an Open link on its Exposure child', async ({ p
     const exposureId = body.exposure_id as string;
 
     await page.goto(`/#${'/' + exposureId}`);
+    // The exposure was created out-of-band via the API, after this page
+    // mounted and fetched the DAG. Navigating by hash alone doesn't
+    // refetch, and the background poll runs on the same 5s cadence as
+    // the assertion timeout — so reload to pick it up deterministically.
+    await page.reload();
     await expect(page.locator('.detail-name')).toContainText('exposure_echo');
 
     const openLink = page.getByRole('link', { name: /^open ↗$/i });

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from zeropoint_agent.inode import NodeStatus, ResolveMode
 from zeropoint_agent.graph_transaction import graph_transaction
-from zeropoint_agent.query import query_dag, _get_all_descendants
+from zeropoint_agent.query import query_dag, _get_all_descendants, delete_closure
 
 logger = logging.getLogger(__name__)
 
@@ -176,11 +176,22 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
 
 @router.delete("/{pattern:path}")
 async def delete_nodes(pattern: str, request: Request):
-    """Remove nodes matching the glob pattern.
+    """Remove nodes matching the glob pattern, plus what they contain.
 
-    Requires `d` in the effective permissions of every matched node.
-    Removes in reverse topo order (children first), calling
-    remove() on each node.
+    Node ids are namespace paths, so deleting `modules/echo` takes the
+    whole `modules/echo/**` subtree — the directory model. Anything left
+    parentless by that removal comes too.
+
+    Requires `d` in the effective permissions of every *explicitly
+    matched* node. Cascaded nodes are not permission-checked: `d`
+    governs whether a node can be deleted **on its own**, and the
+    cascade only reaches nodes contained by, or reachable solely
+    through, something the caller is allowed to delete. Checking them
+    would make modules permanently undeletable, since their system vars
+    are deliberately read-only (`zp_module_id` is `r--`).
+
+    Removes in reverse topo order (children first), calling remove() on
+    each node.
     """
     pattern = unquote(pattern)
     dag = request.app.state.dag
@@ -189,7 +200,7 @@ async def delete_nodes(pattern: str, request: Request):
     if not matched_ids:
         raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
 
-    # Atomic check: all-or-nothing on permission.
+    # Atomic check: all-or-nothing on permission, on what was named.
     forbidden = []
     for nid in matched_ids:
         try:
@@ -205,11 +216,24 @@ async def delete_nodes(pattern: str, request: Request):
             detail=f"the following nodes are not deletable: {details}",
         )
 
+    # Deleting a namespace takes what it contains, plus anything the
+    # removal leaves parentless — otherwise the graph keeps orphans that
+    # block a later re-install of the same ids.
+    cascaded = delete_closure(dag, set(matched_ids))
+    doomed = matched_ids + cascaded
+
     mode = _resolve_mode(request)
 
+    # Reverse topo order so children are removed before their parents.
+    doomed_set = set(doomed)
+    ordered = [nid for nid in dag._order if nid in doomed_set]
+    seen = set(ordered)
+    ordered += [nid for nid in doomed if nid not in seen]
+
     removed = []
+    failed = []
     with graph_transaction(dag):
-        for nid in reversed(matched_ids):
+        for nid in reversed(ordered):
             try:
                 entry = dag.get(nid)
                 entry.node.remove(mode)
@@ -217,5 +241,12 @@ async def delete_nodes(pattern: str, request: Request):
                 removed.append(nid)
             except Exception as e:
                 logger.error(f"Failed to remove {nid}: {e}")
+                failed.append({"node_id": nid, "error": str(e)})
 
-    return {"ok": True, "removed": removed, "count": len(removed)}
+    return {
+        "ok": not failed,
+        "removed": removed,
+        "count": len(removed),
+        "cascaded": [nid for nid in cascaded if nid in removed],
+        "failed": failed,
+    }
