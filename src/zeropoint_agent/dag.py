@@ -8,9 +8,9 @@ what any node does, just reads the result and does the plumbing.
 """
 
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path as FilePath
-from typing import Any, Dict, List, Optional, get_args
+from typing import Any, Dict, Iterable, List, Optional, Set, get_args
 
 from zeropoint_agent.inode import INode, ResolveMode, NodeStatus, NodeResult
 
@@ -71,6 +71,10 @@ class NodeEntry:
     # against parent namespaces and the type default at check time.
     # See zeropoint-agent/permissions-model in the mind-map.
     perms: str = "***"
+    # Creator-assigned tags for categorized UI views. Tags are per-instance
+    # metadata (NOT declared on node types) — the code that places the node
+    # in the graph stamps them. See zeropoint-agent/tags-model.
+    tags: Set[str] = field(default_factory=set)
 
 
 class DAG:
@@ -154,7 +158,8 @@ class DAG:
 
     def add(self, node_id: str, node: INode,
             parents: Optional[List[str]] = None,
-            perms: str = "***") -> str:
+            perms: str = "***",
+            tags: Optional[Iterable[str]] = None) -> str:
         """Add a new node with type-checked edges.
 
         Raises:
@@ -169,6 +174,8 @@ class DAG:
             perms: instance-level permission string (3 chars from {r,w,d,*,-}).
                    Default "***" means no instance opinion; resolution defers
                    to parent namespaces and the type's default_perms.
+            tags:  creator-assigned tags for categorized UI views (e.g.
+                   {"input"}, {"service", "output"}). See tags-model.
         """
         parents = parents or []
         if not _valid_perms(perms):
@@ -216,6 +223,7 @@ class DAG:
         entry = NodeEntry(node=node, parents=parents, input_type=i_type, output_type=o_type)
         entry.path = self._compute_path(node, parents)
         entry.perms = perms
+        entry.tags = set(tags) if tags else set()
         # Stamp identity + back-ref onto the node so it can address
         # its own position in the graph (e.g. ensure children).
         node.id = node_id
@@ -229,7 +237,8 @@ class DAG:
             self._store.add_node(StoredNode(
                 id=node_id, node_type=type(node).__name__,
                 node_class=f"{type(node).__module__}.{type(node).__name__}",
-                config=config, perms=entry.perms))
+                config=config, perms=entry.perms,
+                tags=sorted(entry.tags)))
             for parent_id in parents:
                 self._store.add_edge(parent_id, node_id)
 
@@ -260,6 +269,8 @@ class DAG:
                 pass
             stored_perms = getattr(stored, "perms", None) or "***"
             entry.perms = stored_perms if _valid_perms(stored_perms) else "***"
+            stored_tags = getattr(stored, "tags", None) or []
+            entry.tags = set(stored_tags)
             # Restore the persisted output (as a dict). Consumers that
             # type-check should accept dicts as well as the original
             # dataclass shape.

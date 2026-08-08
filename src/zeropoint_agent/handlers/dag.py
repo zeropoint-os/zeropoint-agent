@@ -84,7 +84,8 @@ async def add_node(spec: NodeSpec, request: Request):
         with graph_transaction(dag):
             node = _create_node(spec)
             dag.add(spec.id, node, parents=spec.parents,
-                    perms=getattr(spec, "perms", "***") or "***")
+                    perms=getattr(spec, "perms", "***") or "***",
+                    tags=getattr(spec, "tags", None) or None)
         return {"ok": True, "node_id": spec.id}
     except HTTPException:
         raise
