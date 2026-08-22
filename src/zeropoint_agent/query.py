@@ -170,3 +170,95 @@ def _get_all_descendants(dag, node_id: str) -> List[str]:
         visited.append(child)
         queue.extend(_get_children(dag, child))
     return visited
+
+
+def subtree_closure(dag, removing: Set[str]) -> List[str]:
+    """Nodes contained under any of ``removing``, by path.
+
+    Node ids *are* namespace paths (``modules/echo/terraform``), so
+    containment is carried by the id prefix rather than by parent edges.
+    That distinction matters because parent edges conflate two different
+    relationships:
+
+      - containment: ``modules/echo`` -> ``modules/echo/greeting``
+      - dependency:  ``system/docker`` -> ``modules/echo/terraform``
+
+    Deleting a namespace should take everything it contains — the
+    directory model users already expect — without following dependency
+    edges out into unrelated subtrees.
+
+    Returns the *additional* ids, parents before children.
+    """
+    doomed = set(removing)
+    added = [
+        nid for nid in dag.nodes
+        if nid not in doomed
+        and any(nid.startswith(f"{root}/") for root in removing)
+    ]
+    return sorted(added, key=lambda nid: nid.count("/"))
+
+
+def orphan_closure(dag, removing: Set[str]) -> List[str]:
+    """Nodes that would be orphaned by removing ``removing``.
+
+    Removing a node strips it from its children's parent lists. A child
+    with other parents survives — it just loses one edge. A child left
+    with *no* parents at all is an orphan: it isn't in any namespace, so
+    nothing can navigate to it, resolve it, or ever reach it again. Its
+    id prefix is a leftover string, not a location. That is garbage, and
+    keeping it only leaks the id.
+
+    A node that already has no parents is a root (``settings``,
+    ``modules``, ``system``), not an orphan — those are only removed
+    when named directly.
+
+    Expands to a fixpoint, since orphaning a node can in turn orphan its
+    own children. Returns the *additional* ids in discovery order.
+
+    This deliberately does NOT cascade along every dependency edge.
+    ``modules/echo/terraform`` lists ``system/docker`` among its parents
+    alongside its own module vars, so a full descendant-cascade on
+    ``system/docker`` would take every module in the graph with it.
+
+    Note on a rejected objection: this rule looks like it could eat a
+    var the user created under ``settings/`` and linked to a module
+    input, taking their data along with the module. It does not.
+    Creation parents the node to its namespace (``NewNodePage.tsx``
+    sends ``parents: [parentId]``) and linking *appends* — ``link_var``
+    only drops the previous **Var** parent, never the Namespace one. So
+    that var holds ``['settings', 'modules/echo/greeting']``, loses one
+    edge, and survives. See the regression test.
+
+    The one shape that *is* vulnerable is a node whose id sits under a
+    namespace it isn't actually parented to. ``POST /api/dag/nodes``
+    currently permits that, and such a node is already broken in other
+    ways (``_compute_path`` gives it an empty path). The fix belongs at
+    creation, not here.
+    """
+    doomed = set(removing)
+    added: List[str] = []
+
+    changed = True
+    while changed:
+        changed = False
+        for nid, entry in dag.nodes.items():
+            if nid in doomed or not entry.parents:
+                continue
+            if all(pid in doomed for pid in entry.parents):
+                doomed.add(nid)
+                added.append(nid)
+                changed = True
+
+    return added
+
+
+def delete_closure(dag, removing: Set[str]) -> List[str]:
+    """Everything that must go when ``removing`` is deleted.
+
+    Contained subtrees first (the directory model), then anything left
+    parentless by the removal (dependency-only children that nothing
+    else holds up). Returns the *additional* ids beyond ``removing``.
+    """
+    contained = subtree_closure(dag, removing)
+    orphaned = orphan_closure(dag, set(removing) | set(contained))
+    return contained + orphaned
