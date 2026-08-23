@@ -27,6 +27,17 @@ class NodeExists(ValueError):
     """
 
 
+class GraphCycleError(ValueError):
+    """Raised when the persisted graph can't be topologically ordered.
+
+    Every stored node must be reachable from a root via a Kahn pass. If
+    some aren't, the store holds a cycle or a dangling parent reference —
+    a corrupt state. We fail loudly rather than silently resolving in an
+    arbitrary order, because a wrong resolve order can mis-provision real
+    hardware (partition/format/mount run out of sequence).
+    """
+
+
 def _valid_perms(perms: str) -> bool:
     """A perms string is exactly 3 chars from {r,w,d,*,-} at the right positions."""
     if not isinstance(perms, str) or len(perms) != 3:
@@ -139,10 +150,21 @@ class DAG:
                 if in_degree[cid] == 0:
                     ready.append(cid)
         if len(order) < len(by_id):
-            # Cycle or missing parent — fall back to insertion order.
-            order = [nid for nid in by_id if nid not in order]
-            logger.warning(
-                "graph store has %d unreachable nodes (cycle?)", len(order))
+            # Some nodes never reached in-degree 0 — a cycle or a dangling
+            # parent reference. Either way the store isn't a clean DAG.
+            # Fail loudly: a silently wrong resolve order can mis-provision
+            # real hardware.
+            unreached = sorted(nid for nid in by_id if nid not in set(order))
+            present = set(by_id)
+            dangling = sorted(
+                nid for nid in unreached
+                if any(p not in present for p in parents_of[nid])
+            )
+            detail = f"unreachable nodes: {unreached}"
+            if dangling:
+                detail += f"; nodes with missing parents: {dangling}"
+            raise GraphCycleError(
+                f"graph store is not a DAG ({detail})")
 
         for nid in order:
             stored = by_id[nid]

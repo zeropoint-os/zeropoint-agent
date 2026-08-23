@@ -169,6 +169,26 @@ def serve(host: str, port: int):
     uvicorn.run(app, host=host, port=port, log_config=None)
 
 
+# --- verify-node ---------------------------------------------------------
+
+@cli.command("verify-node")
+@click.argument("node_id")
+def verify_node(node_id: str):
+    """Re-resolve a single node in live mode (deferred-reboot re-entry).
+
+    Hardware nodes that can't finish in one pass (a partition whose device
+    node hasn't appeared yet, say) return PENDING_REBOOT and write a
+    systemd unit that runs `zeropoint-agent verify-node <id>` on next boot.
+    This re-runs verify+resolve for that node: once the kernel has caught
+    up, verify converges it and the graph status is persisted. Idempotent —
+    a node that's already converged just re-reports SUCCESS.
+    """
+    from urllib.parse import quote
+    _emit(_request("POST",
+                   f"/api/dag/resolve/{quote(node_id, safe='/')}",
+                   json={"mode": "live"}))
+
+
 # --- node ----------------------------------------------------------------
 
 @cli.group()
