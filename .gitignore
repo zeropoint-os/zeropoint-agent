@@ -244,3 +244,6 @@ modules/
 # Ignore logs
 logs/
 envoy/
+
+# Generated per-checkout by .devcontainer/init.sh (worktree git mount)
+.devcontainer/docker-compose.worktree.yml

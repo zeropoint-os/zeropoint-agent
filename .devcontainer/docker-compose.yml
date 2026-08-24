@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: develop
+    # Replaces the former devcontainer.json runArgs
+    # (--privileged --gpus all --runtime nvidia).
+    privileged: true
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ..:/workspaces/zeropoint-agent:cached
+      # Host device access for the live hardware-provisioning nodes.
+      - /dev:/dev
+    # Keep the container alive; the docker-in-docker feature's entrypoint
+    # starts dockerd and then execs this.
+    command: sleep infinity
