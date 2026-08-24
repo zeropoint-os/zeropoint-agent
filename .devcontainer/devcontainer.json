@@ -1,12 +1,14 @@
 {
 	"name": "Zeropoint Agent",
-    "dockerFile": "../Dockerfile",
-    "build": {
-        "target": "develop"
-    },
-    "context": "..",
-	"overrideCommand": true,
+	"dockerComposeFile": [
+		"docker-compose.yml",
+		"docker-compose.worktree.yml"
+	],
+	"service": "app",
+	"workspaceFolder": "/workspaces/zeropoint-agent",
+	"overrideCommand": false,
 	"remoteUser": "vscode",
+	"initializeCommand": "bash .devcontainer/init.sh",
 	"features": {
 		"ghcr.io/devcontainers/features/node:1": {
 			"version": "18.17.0"
@@ -40,14 +42,6 @@
 		"ZP_MODULE_STORAGE": "${containerWorkspaceFolder}/modules",
 		"ZEROPOINT_MODE": "live"
 	},
-	"mounts": [
-		"source=/dev,target=/dev,type=bind,consistency=consistent"
-	],
-	"runArgs": [
-		"--privileged",
-		"--gpus", "all",
-		"--runtime", "nvidia"
-	],
 	"forwardPorts": [80, 443, 2370],
 	"portsAttributes": {
 		"80": {
