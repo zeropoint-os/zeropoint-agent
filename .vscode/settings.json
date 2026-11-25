@@ -1,8 +1,0 @@
-{
-  "github.copilot.chat.instructions": [
-    "Keep responses short,",
-    "When asked to make code changes, first explain what changes you plan to make and why.",
-    "If there are multiple parts to your response, go one by one instead of all at once.",
-    "Always ensure you wait for my confirmation before making any code changes."    
-  ]
-}

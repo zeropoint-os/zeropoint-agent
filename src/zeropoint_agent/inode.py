@@ -1,0 +1,402 @@
+"""INode — the fundamental unit of the graph-based language.
+
+A node is a typed I → O expression. The output type O is the contract.
+Edges are type-checked bindings: parent.O must match child.I.
+
+dag.add() is the compiler — validates types at construction time.
+dag.resolve() is the runtime — propagates values through the graph.
+
+Node resolution is exposed uniformly as Promise[NodeResult[O]]. Existing
+synchronous nodes still implement resolve() and are wrapped as immediately
+resolved Promises; long-running nodes override resolve_promise() and submit a
+durable Job. NodeResult bundles output, status, deferred systemd work and any
+domain error.
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field, MISSING
+from enum import Enum
+from typing import Any, ClassVar, Dict, Generic, TypeVar, Optional, List
+
+I = TypeVar("I")  # Input type (parent's output contract)
+O = TypeVar("O")  # Output type (this node's contract)
+
+
+# ---------------------------------------------------------------------------
+# Field markers for node dataclasses.
+# ---------------------------------------------------------------------------
+
+def readonly(default: Any = MISSING, *,
+             default_factory: Any = MISSING,
+             **kwargs: Any) -> Any:
+    """Mark a dataclass field as read-only via the public API.
+
+    Behaves like ``dataclasses.field(...)`` but stamps
+    ``metadata['readonly'] = True``. Internal code can still assign;
+    the schema endpoint exposes the field as readonly and the PUT
+    handler refuses writes.
+
+    For required-readonly fields, pass no default — dataclass will
+    raise at construction time if the value isn't provided, which is
+    the right behavior (e.g. ``Terraform.source = readonly()``).
+    """
+    md = dict(kwargs.pop("metadata", {}))
+    md["readonly"] = True
+    if default_factory is not MISSING:
+        return field(default_factory=default_factory, metadata=md, **kwargs)
+    if default is MISSING:
+        return field(metadata=md, **kwargs)
+    return field(default=default, metadata=md, **kwargs)
+
+
+class ResolveMode(Enum):
+    """How to execute the graph."""
+    LIVE = "live"
+    DRY_RUN = "dry_run"
+    MOCK = "mock"
+
+
+class NodeStatus(Enum):
+    """Status of a node in the graph."""
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    SUCCESS_SKIP = "success_skip"   # succeeded, children can skip
+    ERROR = "error"
+    BLOCKED = "blocked"
+    SKIPPED = "skipped"
+    PENDING_REBOOT = "pending_reboot"
+
+
+@dataclass
+class SystemdUnit:
+    """A systemd unit to be written for deferred execution."""
+    name: str                    # e.g. "zeropoint-part-sda1"
+    description: str
+    exec_start: str
+    after: List[str] = field(default_factory=list)   # systemd After= deps
+    requires: List[str] = field(default_factory=list) # systemd Requires= deps
+    condition_path_exists: Optional[str] = None       # skip if exists
+    condition_path_not_exists: Optional[str] = None   # skip if not exists
+    timeout_sec: int = 300
+    remain_after_exit: bool = True
+
+    def render(self) -> str:
+        """Render as a systemd unit file string."""
+        after = ""
+        if self.after:
+            after = "After=" + " ".join(self.after) + "\n"
+        requires = ""
+        if self.requires:
+            requires = "Requires=" + " ".join(self.requires) + "\n"
+        conditions = ""
+        if self.condition_path_exists:
+            conditions += f"ConditionPathExists={self.condition_path_exists}\n"
+        if self.condition_path_not_exists:
+            conditions += f"ConditionPathExists=!{self.condition_path_not_exists}\n"
+
+        return f"""[Unit]
+Description=ZeroPoint: {self.description}
+{after}{requires}{conditions}DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit={'yes' if self.remain_after_exit else 'no'}
+ExecStart={self.exec_start}
+TimeoutSec={self.timeout_sec}
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+@dataclass(frozen=True)
+class ProducedNode:
+    """Serializable specification for a child node produced by resolution."""
+
+    id: str
+    node_class: str
+    config: Dict[str, Any]
+    parents: List[str] = field(default_factory=list)
+    perms: str = "***"
+    tags: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_node(
+        cls,
+        node_id: str,
+        node: "INode[Any, Any]",
+        *,
+        parents: Optional[List[str]] = None,
+        perms: str = "***",
+        tags: Optional[List[str]] = None,
+    ) -> "ProducedNode":
+        return cls(
+            id=node_id,
+            node_class=f"{type(node).__module__}.{type(node).__qualname__}",
+            config={
+                key: value
+                for key, value in node.__dict__.items()
+                if not key.startswith("_")
+            },
+            parents=list(parents or []),
+            perms=perms,
+            tags=list(tags or []),
+        )
+
+
+class NodeResult(Generic[O]):
+    """
+    Result of a node operation (resolve, verify, remove).
+
+    Bundles output, status, deferred work, and errors into one object.
+    Chainable builders for clean node implementations.
+    """
+
+    def __init__(self):
+        self.output: Optional[O] = None
+        self.status: NodeStatus = NodeStatus.PENDING
+        self.systemd_units: List[SystemdUnit] = []
+        self.produced_nodes: List[ProducedNode] = []
+        self.error: Optional[str] = None
+
+    # --- Chainable builders ---
+
+    @staticmethod
+    def success(output: O = None) -> "NodeResult[O]":
+        r = NodeResult()
+        r.output = output
+        r.status = NodeStatus.SUCCESS
+        return r
+
+    @staticmethod
+    def success_skip(output: O = None) -> "NodeResult[O]":
+        """Succeeded, but children can skip — the goal is already met."""
+        r = NodeResult()
+        r.output = output
+        r.status = NodeStatus.SUCCESS_SKIP
+        return r
+
+    @staticmethod
+    def skipped(reason: str = "") -> "NodeResult[O]":
+        """Node is not relevant — children will be skipped too."""
+        r = NodeResult()
+        r.status = NodeStatus.SKIPPED
+        r.error = reason or None
+        return r
+
+    @staticmethod
+    def pending_reboot(output: O = None) -> "NodeResult[O]":
+        r = NodeResult()
+        r.output = output
+        r.status = NodeStatus.PENDING_REBOOT
+        return r
+
+    @staticmethod
+    def failed(error: str, output: O = None) -> "NodeResult[O]":
+        r = NodeResult()
+        r.output = output
+        r.status = NodeStatus.ERROR
+        r.error = error
+        return r
+
+    def add_unit(self, unit: SystemdUnit) -> "NodeResult[O]":
+        self.systemd_units.append(unit)
+        return self
+
+    def produce(
+        self,
+        node_id: str,
+        node: "INode[Any, Any]",
+        *,
+        parents: Optional[List[str]] = None,
+        perms: str = "***",
+        tags: Optional[List[str]] = None,
+    ) -> "NodeResult[O]":
+        self.produced_nodes.append(ProducedNode.from_node(
+            node_id,
+            node,
+            parents=parents,
+            perms=perms,
+            tags=tags,
+        ))
+        return self
+
+    def __repr__(self) -> str:
+        units = f", {len(self.systemd_units)} units" if self.systemd_units else ""
+        produced = (
+            f", {len(self.produced_nodes)} produced nodes"
+            if self.produced_nodes else ""
+        )
+        err = f", error={self.error!r}" if self.error else ""
+        return f"NodeResult({self.status.value}{units}{produced}{err})"
+
+
+class INode(ABC, Generic[I, O]):
+    """
+    A typed transform in the graph: I → O.
+
+    All methods take a ResolveMode so the node can adapt its behavior:
+      LIVE     — real operations, real side effects
+      DRY_RUN  — real verify, skip execution
+      MOCK     — simulated everything
+
+    All methods return NodeResult[O]:
+      - output: the O value (contract filled with runtime data)
+      - status: SUCCESS, PENDING_REBOOT, ERROR
+      - systemd_units: deferred work for next boot
+      - error: message if something went wrong
+
+    Class-level attribute `default_perms` declares the type's default
+    permissions string (3 chars from {r,w,d,*,-}). See
+    zeropoint-agent/permissions-model in the mind-map for full semantics.
+    Subclasses override this to express fundamental class-level rules
+    (e.g., Terraform = "r-d" because it has no editable fields).
+    """
+
+    # Type-level default permissions. Three characters in r/w/d/*/- alphabet:
+    #   letter  — capability granted at this level
+    #   '*'     — wildcard; no opinion, defer to other layers
+    #   '-'     — veto; hard lock, no descendant can override
+    # Default: fully neutral. Class authors override to bake in invariants.
+    #
+    # ClassVar so dataclass-based subclasses don't accidentally promote
+    # this to an init field.
+    default_perms: ClassVar[str] = "***"
+
+    # Identity. Set by dag.add() (and rehydrate) so a node knows where
+    # it lives in the graph without needing the DAG to pass it in.
+    # Stays empty until placed; freely-instantiated nodes (tests,
+    # constructors) read "". ClassVar-style: declared on every dataclass
+    # subclass via the property below, so the value is per-instance.
+    @property
+    def id(self) -> str:
+        return getattr(self, "_id", "") or ""
+
+    @id.setter
+    def id(self, value: str) -> None:
+        object.__setattr__(self, "_id", value)
+
+    # Back-ref to the owning DAG, set by dag.add()/rehydrate. Same idea
+    # as id: lets a node manipulate its own subtree (e.g. an OutputVar
+    # ensuring its Service children exist) without external glue code.
+    @property
+    def dag(self):
+        return getattr(self, "_dag", None)
+
+    @dag.setter
+    def dag(self, value) -> None:
+        object.__setattr__(self, "_dag", value)
+
+    @abstractmethod
+    def resolve(self, input: I, mode: ResolveMode) -> NodeResult[O]:
+        """
+        Produce output from input.
+
+        In LIVE mode, perform real operations (sfdisk, mkfs, terraform, etc.)
+        In MOCK mode, return plausible output without side effects.
+        In DRY_RUN mode, return what would happen without executing.
+        """
+        ...
+
+    def resolve_promise(self, input: I, mode: ResolveMode, context):
+        """Return this node's result through the uniform Promise contract.
+
+        Existing synchronous nodes keep implementing ``resolve`` and are
+        wrapped as already-resolved Promises. Long-running nodes override this
+        hook and submit a durable Job through ``context.jobs``.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.resolve(input, mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
+
+    def verify_promise(self, input: I, mode: ResolveMode, context):
+        """Return verification through the uniform Promise contract.
+
+        Existing nodes remain synchronous until they opt into durable verify
+        Jobs. Parent inputs are available here even though legacy verify()
+        cannot accept them.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.verify(mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
+
+    @abstractmethod
+    def verify(self, mode: ResolveMode) -> NodeResult[O]:
+        """
+        Check if actual state matches desired state.
+
+        In LIVE/DRY_RUN, probe real system state.
+        In MOCK, simulate verification.
+
+        Returns SUCCESS if converged, PENDING if not.
+        """
+        ...
+
+    @abstractmethod
+    def remove(self, mode: ResolveMode) -> NodeResult[O]:
+        """
+        Tear down what this node represents.
+
+        May return PENDING_REBOOT with systemd units for deferred teardown.
+        """
+        ...
+
+    def remove_promise(self, input: I, mode: ResolveMode, context):
+        """Return removal through the same typed Promise contract.
+
+        Synchronous nodes are wrapped immediately. Nodes with durable teardown
+        override this hook and submit a Job while remaining in the graph until
+        the Promise resolves successfully.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.remove(mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
+
+    def on_config_changed(self, old_config: dict, new_config: dict,
+                          mode: ResolveMode) -> None:
+        """
+        Hook called by the mutation handler **before** a config change is
+        persisted. Default: no-op.
+
+        Subclasses override to react to their own config changing (move a
+        directory, run a migration, drop a cache, etc.). The hook owns
+        any side effects: if it returns cleanly the change is persisted;
+        if it raises, the change is rejected and the user sees the error.
+
+        The hook MUST be idempotent or atomic — if it half-completes a
+        side effect and then raises, the system relies on the mutation
+        handler's snapshot guard to restore graph state, but the hook
+        itself is responsible for not leaving filesystem state corrupt.
+
+        Args:
+            old_config: the node's current (about-to-be-replaced) config
+                as a {field_name: value} dict.
+            new_config: the desired config.
+            mode: the agent's resolve mode (LIVE / DRY_RUN / MOCK). MOCK
+                hooks should not perform real side effects.
+        """
+        return None
+
+    def on_result_applied(
+        self,
+        result: NodeResult[O],
+        mode: ResolveMode,
+    ) -> bool:
+        """Finalize runtime metadata after a result is durably accepted.
+
+        Return True when public node configuration changed and should be
+        persisted without advancing desired revision.
+        """
+        return False

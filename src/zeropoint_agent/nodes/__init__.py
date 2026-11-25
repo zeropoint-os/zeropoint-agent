@@ -1,0 +1,39 @@
+"""Node implementations — the vocabulary of the graph language.
+
+Organized by concern:
+  core/   — generic nodes (ShellScript)
+  system/ — OS-provided infrastructure (network, docker, drivers)
+  hw/     — hardware management (disk, partition, format, mount, mountdir)
+  config/ — settings and variables (var, namespace, directory)
+  user/   — user-installed services (modules, links, exposures)
+"""
+
+from zeropoint_agent.nodes.core import ShellScript
+from zeropoint_agent.nodes.system import (
+    SystemDocker, DockerNetwork, NvidiaGpu, AmdGpu, SystemEnvoy, Reboot,
+)
+from zeropoint_agent.nodes.hw import (
+    Disks,
+    HardwareDevice,
+    HardwareInventory,
+    Disk,
+    Partition,
+    Format,
+    Mount,
+    MountDir,
+)
+from zeropoint_agent.nodes.config import (
+    Var, Namespace, NamespacedVar, OutputVar, DirectoryVar,
+)
+from zeropoint_agent.nodes.user import Module, Terraform, Exposure, Service
+
+__all__ = [
+    "ShellScript",
+    "SystemDocker", "DockerNetwork", "NvidiaGpu", "AmdGpu", "SystemEnvoy",
+    "Reboot",
+    "Disks", "HardwareDevice", "HardwareInventory",
+    "Disk", "Partition", "Format", "Mount", "MountDir",
+    "Var", "NamespacedVar", "OutputVar", "DirectoryVar",
+    "Namespace",
+    "Module", "Terraform", "Exposure", "Service",
+]

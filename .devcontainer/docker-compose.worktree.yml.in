@@ -1,0 +1,10 @@
+# Committed template + no-op fallback for the git-ignored, per-checkout
+# override `docker-compose.worktree.yml`, which is generated on the host by
+# `.devcontainer/init.sh` before the container starts.
+#
+# For a normal clone this file is copied verbatim (an empty override that
+# changes nothing). For a git *worktree* checkout, init.sh instead writes an
+# identity-path bind mount of the main repo's `.git` directory so the
+# worktree's `gitdir:` pointer resolves inside the container and in-container
+# git works. See wiki: patterns/devcontainer-worktree-git-mount.
+services: {}

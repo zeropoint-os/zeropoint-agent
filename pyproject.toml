@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeropoint-agent"
+version = "2.0.0"
+description = "Graph-based infrastructure management agent"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "GitPython>=3.1.30",
+    "networkx>=3.0",
+    "click>=8.0",
+    "python-hcl2>=4.3.0",
+    "docker>=7.0.0",
+    "httpx>=0.27.0",
+    "requests>=2.31.0",
+    "envoy-data-plane>=2.0.0",
+    "betterproto2>=0.9.0",
+    "grpclib>=0.4.7",
+    "zeroconf>=0.131.0",
+]
+
+[project.scripts]
+zeropoint-agent = "zeropoint_agent.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,12 +1,38 @@
 {
-	"name": "zeropoint-agent",
-	"build": {
-		"dockerfile": "../Dockerfile",
-		"context": ".."
+	"name": "Zeropoint Agent",
+	"dockerComposeFile": [
+		"docker-compose.yml",
+		"docker-compose.worktree.yml"
+	],
+	"service": "app",
+	"workspaceFolder": "/workspaces/zeropoint-agent",
+	"overrideCommand": false,
+	"remoteUser": "vscode",
+	"initializeCommand": "bash .devcontainer/init.sh",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
+			"passwordLessSudo": true
+		}
 	},
-	"overrideCommand": true,
-	"postCreateCommand": "touch /etc/zeropoint/.zeropoint-boot-complete",
-	"postAttachCommand": "go mod download && npm install",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
+			},
+			"extensions": [
+				"ms-python.python",
+				"ms-python.debugpy",
+				"qwtel.sqlite-viewer"
+			]
+		}
+	},
+	"postCreateCommand": "pip install -e .",
+	"postStartCommand": "bash .devcontainer/postStartCommand.sh",
+	"containerEnv": {
+		"ZP_MODULE_STORAGE": "${containerWorkspaceFolder}/modules",
+		"ZEROPOINT_MODE": "live"
+	},
 	"forwardPorts": [80, 443, 2370],
 	"portsAttributes": {
 		"80": {
@@ -21,27 +47,5 @@
 			"label": "ZeroPoint Agent API",
 			"onAutoForward": "notify"
 		}
-	},
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"golang.Go",
-				"augustocdias.tasks-shell-input",
-				"zaaack.markdown-editor",
-				"msjsdiag.debugger-for-chrome",
-				"idered.npm"
-			],
-			"settings": {
-				"terminal.integrated.defaultProfile.linux": "bash"
-			}
-		}
-	},
-	"runArgs": [ 
-		"--privileged",
-		"--gpus", "all",
-		"--runtime", "nvidia"
- 	],
-	"features": {
-		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
 	}
 }
