@@ -29,10 +29,11 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from zeropoint_agent.graph_transaction import graph_transaction
 from zeropoint_agent.nodes.config.namespace import Namespace
@@ -47,15 +48,20 @@ TCP_PORT_MIN = 10000
 TCP_PORT_MAX = 60000
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})$")
 
 
 class ExposeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     service_id: str
     name: Optional[str] = None
     host_port: Optional[int] = None
 
 
 class UnexposeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     service_id: str
 
 
@@ -130,6 +136,46 @@ def _pick_default_name(dag, service_id: str) -> str:
         i += 1
 
 
+def _validate_http_hostname(
+    request: Request,
+    dag,
+    name: str,
+) -> None:
+    if not _HOSTNAME_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"HTTP exposure hostname {name!r} must be a DNS label "
+                "containing only letters, digits, and hyphens."
+            ),
+        )
+    reserved = {socket.gethostname()}
+    identity = getattr(request.app.state, "identity", None)
+    if identity is not None:
+        reserved.add(str(identity.name))
+    if name in reserved:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"HTTP exposure hostname {name!r} is reserved for the "
+                "ZeroPoint agent. Choose a service-specific hostname."
+            ),
+        )
+    conflicts = [
+        node_id
+        for node_id, entry in dag.nodes.items()
+        if isinstance(entry.node, Exposure) and entry.node.name == name
+    ]
+    if conflicts:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"HTTP exposure hostname {name!r} is already used by "
+                f"{conflicts[0]!r}."
+            ),
+        )
+
+
 @router.post("/expose")
 async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
     dag = request.app.state.dag
@@ -150,6 +196,8 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
             detail=f"Exposure name {name!r} must be alphanumeric (with _ or -).")
 
     protocol = _service_protocol(svc_entry) or "tcp"
+    if protocol == "http":
+        _validate_http_hostname(request, dag, name)
     host_port = int(body.host_port or 0)
     if protocol == "tcp" and host_port == 0:
         host_port = _allocate_host_port(dag)
@@ -186,6 +234,7 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         "protocol": protocol,
         "host_port": host_port,
         "service_id": body.service_id,
+        "url": f"http://{name}.local/" if protocol == "http" else None,
     }
 
 

@@ -27,6 +27,14 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional
 
 from zeropoint_agent.inode import INode, NodeResult, ResolveMode, readonly
+from zeropoint_agent.jobs import JobCancelled, JobContext, JobSpec
+from zeropoint_agent.promise import Promise
+from zeropoint_agent.promise_controls import (
+    TerraformCancellation,
+    TerraformProgress,
+    UnsupportedCheckpoint,
+    UnsupportedPause,
+)
 from zeropoint_agent.nodes.config.var import VarResult
 from zeropoint_agent.nodes.config.namespace import NamespaceResult
 from zeropoint_agent.terraform import TerraformError, TerraformExecutor
@@ -35,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 # 40-char hex commit SHA. No branches, tags, or HEAD allowed.
 _COMMIT_SHA = re.compile(r"^[a-fA-F0-9]{40}$")
+_SOURCE_MARKER = ".zeropoint-source"
+_TERRAFORM_RUNTIME_ENTRIES = {".terraform", ".terraform.lock.hcl"}
 
 
 @dataclass
@@ -60,6 +70,15 @@ class TerraformResult:
     # Raw terraform outputs as {name: value}. Complex values (dicts, lists)
     # are preserved as-is. Vars with from_output=<name> read this dict.
     outputs: Dict[str, Any] = field(default_factory=dict)
+
+
+TerraformPromise = Promise[
+    NodeResult[TerraformResult],
+    TerraformCancellation,
+    UnsupportedPause,
+    TerraformProgress,
+    UnsupportedCheckpoint,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -91,15 +110,24 @@ def _flatten_inputs(input_val: Any) -> Dict[str, str]:
 
     NamespaceResult entries are ignored (they're for path, not tfvars).
     """
+    def read_var(holder: Any) -> Optional[tuple[str, str]]:
+        if isinstance(holder, VarResult):
+            return holder.name, str(holder.value)
+        if isinstance(holder, dict) and "name" in holder and "value" in holder:
+            return str(holder["name"]), str(holder["value"])
+        return None
+
     if input_val is None:
         return {}
-    if isinstance(input_val, VarResult):
-        return {input_val.name: input_val.value}
+    direct = read_var(input_val)
+    if direct is not None:
+        return {direct[0]: direct[1]}
     if isinstance(input_val, dict):
         out: Dict[str, str] = {}
-        for v in input_val.values():
-            if isinstance(v, VarResult):
-                out[v.name] = v.value
+        for value in input_val.values():
+            item = read_var(value)
+            if item is not None:
+                out[item[0]] = item[1]
         return out
     return {}
 
@@ -129,12 +157,29 @@ def _ensure_network(name: str) -> None:
 
 
 def _remove_network(name: str) -> None:
-    try:
-        subprocess.run(
-            ["docker", "network", "rm", name],
-            capture_output=True, text=True, timeout=10)
-    except Exception:
-        pass
+    inspect = subprocess.run(
+        ["docker", "network", "inspect", name],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if inspect.returncode != 0:
+        combined = f"{inspect.stdout}\n{inspect.stderr}".lower()
+        if "no such network" in combined or "not found" in combined:
+            return
+        raise RuntimeError(
+            f"failed to inspect docker network {name}: {inspect.stderr.strip()}"
+        )
+    removed = subprocess.run(
+        ["docker", "network", "rm", name],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if removed.returncode != 0:
+        raise RuntimeError(
+            f"failed to remove docker network {name}: {removed.stderr.strip()}"
+        )
 
 
 def _git_clone_at_sha(url: str, sha: str, target: Path) -> None:
@@ -149,6 +194,68 @@ def _git_clone_at_sha(url: str, sha: str, target: Path) -> None:
         ["git", "checkout", "--quiet", sha],
         cwd=str(target), check=True, capture_output=True, text=True)
     shutil.rmtree(target / ".git", ignore_errors=True)
+
+
+def _module_source_matches(target: Path, url: str, sha: str) -> bool:
+    marker = target / _SOURCE_MARKER
+    try:
+        return marker.read_text(encoding="utf-8").strip() == f"{url}@{sha}"
+    except OSError:
+        return False
+
+
+def _copy_terraform_runtime(source: Path, target: Path) -> None:
+    """Carry Terraform state/provider metadata into a refreshed source tree."""
+    for entry in source.iterdir():
+        if (
+            entry.name not in _TERRAFORM_RUNTIME_ENTRIES
+            and not entry.name.startswith("terraform.tfstate")
+        ):
+            continue
+        destination = target / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, destination, symlinks=True)
+        else:
+            shutil.copy2(entry, destination)
+
+
+def _ensure_module_source(url: str, sha: str, target: Path) -> bool:
+    """Refresh a changed pinned source without discarding Terraform state."""
+    if _module_source_matches(target, url, sha):
+        return False
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged = target.with_name(f".{target.name}.next")
+    previous = target.with_name(f".{target.name}.previous")
+
+    # Recover a swap interrupted after moving the live directory aside.
+    if not target.exists() and previous.exists():
+        previous.rename(target)
+    shutil.rmtree(staged, ignore_errors=True)
+    if previous.exists():
+        shutil.rmtree(previous)
+
+    try:
+        _git_clone_at_sha(url, sha, staged)
+        if target.exists():
+            _copy_terraform_runtime(target, staged)
+        (staged / _SOURCE_MARKER).write_text(
+            f"{url}@{sha}\n",
+            encoding="utf-8",
+        )
+
+        if target.exists():
+            target.rename(previous)
+        try:
+            staged.rename(target)
+        except Exception:
+            if previous.exists() and not target.exists():
+                previous.rename(target)
+            raise
+        shutil.rmtree(previous, ignore_errors=True)
+        return True
+    finally:
+        shutil.rmtree(staged, ignore_errors=True)
 
 
 def _docker_inspect(name: str) -> Dict[str, Any]:
@@ -290,12 +397,13 @@ class Terraform(INode[Any, TerraformResult]):
             network_name = self._required(tfvars, "zp_network_name")
             url, sha = _parse_git_source(self.source)
 
-            # zp_module_dir's DirectoryVar handles any directory moves on
-            # edit, so by the time we get here the dir is at module_dir
-            # (or doesn't exist yet, on first install).
-            if not module_dir.exists():
-                logger.info("cloning %s @ %s -> %s", url, sha, module_dir)
-                _git_clone_at_sha(url, sha, module_dir)
+            if _ensure_module_source(url, sha, module_dir):
+                logger.info(
+                    "prepared module source %s @ %s in %s",
+                    url,
+                    sha,
+                    module_dir,
+                )
             tf_cwd = module_dir
 
             _ensure_network(network_name)
@@ -324,6 +432,30 @@ class Terraform(INode[Any, TerraformResult]):
             logger.exception("Terraform resolve failed")
             return NodeResult.failed(str(e))
 
+    def resolve_promise(
+        self,
+        input: Any,
+        mode: ResolveMode,
+        context,
+    ) -> TerraformPromise:
+        if mode != ResolveMode.LIVE:
+            return super().resolve_promise(input, mode, context)
+        tfvars = _flatten_inputs(input)
+        module_dir = str(self._module_dir(tfvars))
+        return context.jobs.submit(
+            context,
+            JobSpec(
+                kind="node.terraform",
+                arguments={
+                    "source": self.source,
+                    "tfvars": tfvars,
+                    "recover_existing": context.pattern == "startup-runtime",
+                },
+                resources=[f"terraform:{module_dir}"],
+                max_attempts=1,
+            ),
+        )
+
     def verify(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
         if mode == ResolveMode.MOCK:
             # Defer to resolve() so the mock output (including main_ports
@@ -336,6 +468,21 @@ class Terraform(INode[Any, TerraformResult]):
         # converged.
         return NodeResult.pending_reboot(TerraformResult(source=self.source))
 
+    def remove_promise(self, input: Any, mode: ResolveMode, context):
+        if mode != ResolveMode.LIVE:
+            return super().remove_promise(input, mode, context)
+        tfvars = _flatten_inputs(input)
+        module_dir = str(self._module_dir(tfvars))
+        return context.jobs.submit(
+            context,
+            JobSpec(
+                kind="node.terraform.destroy",
+                arguments={"source": self.source, "tfvars": tfvars},
+                resources=[f"terraform:{module_dir}"],
+                max_attempts=1,
+            ),
+        )
+
     def remove(self, mode: ResolveMode) -> NodeResult[TerraformResult]:
         if mode == ResolveMode.MOCK:
             return NodeResult.success()
@@ -343,3 +490,142 @@ class Terraform(INode[Any, TerraformResult]):
         # walking the namespace can clean up the module dir + network
         # after destroy. (TODO: thread input into remove() too.)
         return NodeResult.success()
+
+
+def execute_terraform_job(
+    context: JobContext,
+    arguments: Dict[str, Any],
+) -> NodeResult[TerraformResult]:
+    """Apply one pinned module while honoring Job cancellation and progress."""
+    node = Terraform(source=str(arguments["source"]))
+    tfvars = {str(key): str(value) for key, value in arguments["tfvars"].items()}
+    try:
+        module_dir = node._module_dir(tfvars)
+        network_name = node._required(tfvars, "zp_network_name")
+        url, sha = _parse_git_source(node.source)
+
+        context.progress(0.05, {"phase": "prepare"})
+        context.cancellation.raise_if_requested()
+        source_matches = _module_source_matches(module_dir, url, sha)
+        if (
+            arguments.get("recover_existing")
+            and module_dir.exists()
+            and source_matches
+        ):
+            container = f"{node._required(tfvars, 'zp_module_id')}-main"
+            inspect = _docker_inspect(container)
+            if inspect:
+                status = str((inspect.get("State") or {}).get("Status") or "")
+                if status != "running":
+                    context.progress(0.1, {"phase": "start-existing"})
+                    started = subprocess.run(
+                        ["docker", "start", container],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if started.returncode == 0:
+                        inspect = _docker_inspect(container)
+                        status = str(
+                            (inspect.get("State") or {}).get("Status") or ""
+                        )
+                if status == "running":
+                    context.cancellation.raise_if_requested()
+                    outputs = TerraformExecutor(module_dir).output()
+                    if (
+                        "main" in outputs
+                        and any(key.endswith("_ports") for key in outputs)
+                    ):
+                        context.progress(1.0, {"phase": "recovered"})
+                        return NodeResult.success(
+                            node._build_result(tfvars, outputs)
+                        )
+        if _ensure_module_source(url, sha, module_dir):
+            logger.info(
+                "prepared module source %s @ %s in %s",
+                url,
+                sha,
+                module_dir,
+            )
+        context.cancellation.raise_if_requested()
+        _ensure_network(network_name)
+
+        terraform = TerraformExecutor(
+            module_dir,
+            cancellation=context.cancellation,
+        )
+        context.progress(0.2, {"phase": "init"})
+        terraform.init()
+        context.progress(0.4, {"phase": "apply"})
+        terraform.apply(tfvars)
+        context.progress(0.9, {"phase": "outputs"})
+        outputs = terraform.output()
+
+        if "main" not in outputs:
+            return NodeResult.failed(
+                "module is missing required terraform output 'main'"
+            )
+        if not any(key.endswith("_ports") for key in outputs):
+            return NodeResult.failed(
+                "module must declare at least one '<container>_ports' output"
+            )
+        context.progress(1.0, {"phase": "complete"})
+        return NodeResult.success(node._build_result(tfvars, outputs))
+    except JobCancelled:
+        raise
+    except (TerraformError, ValueError) as error:
+        return NodeResult.failed(str(error))
+    except subprocess.CalledProcessError as error:
+        return NodeResult.failed(
+            f"command failed: {error}\nstderr: {error.stderr}"
+        )
+    except Exception as error:
+        logger.exception("Terraform job failed")
+        return NodeResult.failed(str(error))
+
+
+def execute_terraform_destroy_job(
+    context: JobContext,
+    arguments: Dict[str, Any],
+) -> NodeResult[TerraformResult]:
+    """Destroy a module and verify Terraform completed before graph deletion."""
+    node = Terraform(source=str(arguments["source"]))
+    tfvars = {str(key): str(value) for key, value in arguments["tfvars"].items()}
+    try:
+        module_dir = node._module_dir(tfvars)
+        network_name = node._required(tfvars, "zp_network_name")
+        context.progress(0.05, {"phase": "prepare-destroy"})
+        context.cancellation.raise_if_requested()
+        if module_dir.exists():
+            terraform = TerraformExecutor(
+                module_dir,
+                cancellation=context.cancellation,
+            )
+            context.progress(0.2, {"phase": "init"})
+            terraform.init()
+            context.progress(0.4, {"phase": "destroy"})
+            terraform.destroy(tfvars)
+        context.cancellation.raise_if_requested()
+        context.progress(0.9, {"phase": "cleanup"})
+        _remove_network(network_name)
+        if module_dir.exists():
+            shutil.rmtree(module_dir)
+        context.progress(1.0, {"phase": "complete"})
+        return NodeResult.success(TerraformResult(
+            source=node.source,
+            module_id=tfvars.get("zp_module_id", ""),
+            module_dir=str(module_dir),
+            network_name=network_name,
+            variables=tfvars,
+        ))
+    except JobCancelled:
+        raise
+    except (TerraformError, ValueError) as error:
+        return NodeResult.failed(str(error))
+    except subprocess.CalledProcessError as error:
+        return NodeResult.failed(
+            f"command failed: {error}\nstderr: {error.stderr}"
+        )
+    except Exception as error:
+        logger.exception("Terraform destroy job failed")
+        return NodeResult.failed(str(error))

@@ -1,18 +1,19 @@
-"""Resolve endpoints — run the graph."""
+"""Resolve endpoints backed by persistent GraphRuns and Promises."""
+
+from __future__ import annotations
 
 import logging
-from dataclasses import asdict
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from zeropoint_agent.inode import ResolveMode, NodeStatus
-from zeropoint_agent.query import query_dag
 from zeropoint_agent.handlers import ResolveRequest
+from zeropoint_agent.inode import ResolveMode
+from zeropoint_agent.query import query_dag
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/dag", tags=["resolve"])
+router = APIRouter(tags=["graph"])
 
 MODE_MAP = {
     "live": ResolveMode.LIVE,
@@ -26,133 +27,175 @@ def _parse_mode(mode_str: str) -> ResolveMode:
     if not mode:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid mode: {mode_str}. Use: live, dry_run, mock"
+            detail=f"Invalid mode: {mode_str}. Use: live, dry_run, mock",
         )
     return mode
 
 
-def _effective_mode(requested: str, request: Request) -> ResolveMode:
+def _effective_mode(requested: str | None, request: Request) -> ResolveMode:
     default = getattr(request.app.state, "default_mode", "mock")
     mode_str = requested or default
     if mode_str == "live" and default == "mock":
         raise HTTPException(
             status_code=403,
             detail="Live mode blocked: server is running in mock mode "
-                   "(set ZEROPOINT_MODE=live to enable)"
+                   "(set ZEROPOINT_MODE=live to enable)",
         )
     return _parse_mode(mode_str)
 
 
-def _results_to_response(dag, results, mode_str, pattern=None):
+def _run_response(request: Request, run_id: str) -> dict:
+    description = request.app.state.graph_runner.describe(run_id)
+    dag = request.app.state.dag
     nodes = []
-    for nid, status in results.items():
-        entry = dag.get(nid)
-        node_data = {
-            "id": nid,
-            "type": type(entry.node).__name__,
-            "status": status.value,
-            "error": entry.error,
+    for run_node in description["nodes"]:
+        node_id = str(run_node["node_id"])
+        entry = dag.nodes.get(node_id)
+        result = run_node.get("result") or {}
+        error = run_node.get("error") or {}
+        node = {
+            "id": node_id,
+            "phase": run_node.get("phase"),
+            "status": run_node["status"],
+            "promise_id": run_node.get("promise_id"),
+            "verification": run_node.get("verification"),
+            "error": error.get("message") or result.get("error"),
         }
-        if entry.output and hasattr(entry.output, "__dataclass_fields__"):
-            node_data["output"] = asdict(entry.output)
-        nodes.append(node_data)
-
-    summary = {}
-    for s in results.values():
-        summary[s.value] = summary.get(s.value, 0) + 1
-
-    resp = {
-        "ok": all(s in (NodeStatus.SUCCESS, NodeStatus.PENDING_REBOOT)
-                  for s in results.values()),
-        "mode": mode_str,
-        "summary": summary,
+        if run_node.get("promise_id"):
+            promise = request.app.state.jobs.promise(run_node["promise_id"])
+            if promise is not None:
+                node["promise"] = {
+                    "id": promise["id"],
+                    "status": promise["status"],
+                    "producer": promise.get("producer"),
+                    "phase": promise.get("operation_phase"),
+                    "controls": {
+                        "cancellation": promise.get("cancellation_kind"),
+                        "pause": promise.get("pause_kind"),
+                        "progress": promise.get("progress_kind"),
+                        "checkpoint": promise.get("checkpoint_kind"),
+                    },
+                }
+        if entry is not None:
+            node["type"] = type(entry.node).__name__
+        if result.get("output") is not None:
+            node["output"] = result["output"]
+        nodes.append(node)
+    status = str(description["status"])
+    reboot_nodes = [
+        node["id"] for node in nodes
+        if node["status"] == "pending_reboot"
+    ]
+    response = {
+        "ok": status == "succeeded",
+        "accepted": status not in {"failed", "cancelled", "superseded"},
+        "run_id": run_id,
+        "status": status,
+        "operation": description.get("operation", "resolve"),
+        "mode": description["mode"],
+        "pattern": description.get("pattern"),
+        "created_at": description.get("created_at"),
+        "updated_at": description.get("updated_at"),
+        "completed_at": description.get("completed_at"),
+        "controls": {
+            "cancellation": "graph-run",
+            "pause": "scheduler-boundary",
+            "progress": "node-counts",
+            "checkpoint": "run-ledger",
+        },
+        "summary": description["summary"],
+        "needs_reboot": bool(reboot_nodes),
+        "reboot_nodes": reboot_nodes,
         "nodes": nodes,
     }
-    if pattern:
-        resp["pattern"] = pattern
-    return resp
+    if description.get("pattern"):
+        response["pattern"] = description["pattern"]
+    return response
 
 
-async def _resolve_cycle(request: Request, mode: ResolveMode, pattern: str = None):
-    """A full resolve cycle wrapped in an xDS cache begin/commit pair.
-
-    Nodes that want to publish to xDS (Service) write into the cache
-    via the DAG's `xds_cache` attribute during their own resolve().
-    The cycle wrapper:
-      1. cache.begin()   — start staging
-      2. dag.resolve()   — every node runs; relevant ones write slices
-      3. cache.commit()  — atomic swap, schedule flush to Envoy
-
-    Anything not written this cycle is dropped on commit — graph state
-    IS the source of truth.
-    """
+async def _resolve_cycle(
+    request: Request,
+    mode: ResolveMode,
+    pattern: str | None = None,
+):
     dag = request.app.state.dag
-    cache = None
-    runner = getattr(request.app.state, "xds", None)
-    if runner is not None:
-        cache = runner.cache
-        cache.begin()
+    node_ids = None
+    if pattern is not None:
+        node_ids = query_dag(dag, pattern)
+        if not node_ids:
+            raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
 
-    try:
-        if pattern is None:
-            results = dag.resolve(mode=mode)
-        else:
-            matched_ids = query_dag(dag, pattern)
-            if not matched_ids:
-                if cache is not None:
-                    cache.abort()
-                raise HTTPException(
-                    status_code=404, detail=f"No nodes match: {pattern}")
-            results = dag.resolve_subset(matched_ids, mode=mode)
-
-        if cache is not None:
-            cache.commit()
-        return results
-    except HTTPException:
-        if cache is not None:
-            cache.abort()
-        raise
-    except Exception:
-        if cache is not None:
-            cache.abort()
-        raise
+    # Promise-backed runs may span requests and restarts, so xDS cannot keep
+    # an in-memory staging transaction open for the run lifetime. Service nodes
+    # own their slices and update the live cache directly; removal/unexposure
+    # clears the corresponding slice explicitly.
+    run_promise = request.app.state.graph_runner.start(
+        mode,
+        node_ids=node_ids,
+        pattern=pattern,
+    )
+    return run_promise.id
 
 
 @router.post("/resolve")
 async def resolve_graph(body: ResolveRequest, request: Request):
-    """Resolve the entire graph."""
+    """Start a persistent resolve run for the entire graph."""
     try:
         mode = _effective_mode(body.mode, request)
-        dag = request.app.state.dag
-        results = await _resolve_cycle(request, mode)
-        return _results_to_response(dag, results, mode.value)
+        run_id = await _resolve_cycle(request, mode)
+        return _run_response(request, run_id)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to resolve graph: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as error:
+        logger.error("Failed to resolve graph: %s", error, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(error))
 
 
 @router.post("/resolve/{pattern:path}")
 async def resolve_subgraph(pattern: str, body: ResolveRequest, request: Request):
-    """Resolve a subset.
-
-    Note: subset resolves don't wrap the xDS cache in begin/commit,
-    so they only ADD/UPDATE slices for nodes that resolved (Service
-    nodes write directly to live). Services that weren't in the
-    matched set keep their previous slices.
-    """
+    """Start a persistent resolve run for matching nodes."""
     pattern = unquote(pattern)
     try:
         mode = _effective_mode(body.mode, request)
-        dag = request.app.state.dag
-        matched_ids = query_dag(dag, pattern)
-        if not matched_ids:
-            raise HTTPException(status_code=404, detail=f"No nodes match: {pattern}")
-        results = dag.resolve_subset(matched_ids, mode=mode)
-        return _results_to_response(dag, results, mode.value, pattern)
+        run_id = await _resolve_cycle(request, mode, pattern)
+        return _run_response(request, run_id)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to resolve subgraph: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as error:
+        logger.error("Failed to resolve subgraph: %s", error, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@router.get("/runs/{run_id}")
+async def get_graph_run(run_id: str, request: Request):
+    try:
+        return _run_response(request, run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_graph_run(run_id: str, request: Request):
+    try:
+        request.app.state.graph_runner.cancel(run_id)
+        return _run_response(request, run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/runs/{run_id}/pause")
+async def pause_graph_run(run_id: str, request: Request):
+    try:
+        request.app.state.graph_runner.pause(run_id)
+        return _run_response(request, run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_graph_run(run_id: str, request: Request):
+    try:
+        request.app.state.graph_runner.resume(run_id)
+        return _run_response(request, run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error))

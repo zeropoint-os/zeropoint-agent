@@ -10,7 +10,7 @@ from zeropoint_agent.handlers import NodeSpec, NODE_REGISTRY, node_to_dict
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/dag", tags=["dag"])
+router = APIRouter(tags=["graph"])
 
 # Each path segment of a node id must be a valid identifier. Slashes
 # are the path separator and are stripped before checking. Keeping the
@@ -69,6 +69,11 @@ async def add_node(spec: NodeSpec, request: Request):
         # Check w on every Namespace parent before mutating.
         from zeropoint_agent.nodes.config.namespace import Namespace
         for pid in spec.parents:
+            if dag._store and dag._store.is_removal_pending(pid):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"parent {pid!r} is pending removal",
+                )
             try:
                 parent_entry = dag.get(pid)
             except KeyError:

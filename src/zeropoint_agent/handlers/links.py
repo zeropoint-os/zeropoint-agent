@@ -86,6 +86,11 @@ async def link_var(node_id: str, body: LinkRequest, request: Request) -> Dict[st
         )
 
     _require_bit(dag, node_id, "w", "writable")
+    if dag._store and dag._store.is_removal_pending(node_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"node {node_id!r} is pending removal",
+        )
 
     target_id = body.target
 
@@ -107,6 +112,11 @@ async def link_var(node_id: str, body: LinkRequest, request: Request) -> Dict[st
             raise HTTPException(
                 status_code=400,
                 detail=f"Link target {target_id!r} is not a Var.",
+            )
+        if dag._store and dag._store.is_removal_pending(target_id):
+            raise HTTPException(
+                status_code=409,
+                detail=f"link target {target_id!r} is pending removal",
             )
         # Cycle check: target must not be a descendant of source.
         descendants = _get_all_descendants(dag, node_id)

@@ -1,10 +1,11 @@
 """Disk — discovers/registers a disk by stable ID."""
 
 import logging
-import os
 from dataclasses import dataclass
-from typing import Optional
+from dataclasses import field
+from typing import List, Optional
 
+from zeropoint_agent.hw_probe import HWProbe
 from zeropoint_agent.inode import INode, ResolveMode, NodeResult
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,11 @@ class DiskResult:
     size: int = 0
     free: int = 0
     sector_size: int = 512
+    removable: bool = False
+    read_only: bool = False
+    is_root: bool = False
+    is_boot: bool = False
+    holders: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -27,11 +33,21 @@ class Disk(INode[None, DiskResult]):
     stable_id: str
 
     def _probe(self) -> Optional[DiskResult]:
-        by_id = f"/dev/disk/by-id/{self.stable_id}"
-        if os.path.exists(by_id):
-            device_path = os.path.realpath(by_id)
-            return DiskResult(stable_id=self.stable_id, device_path=device_path)
-        return None
+        disk = HWProbe.get_disk(self.stable_id)
+        if disk is None:
+            return None
+        return DiskResult(
+            stable_id=disk.id,
+            device_path=disk.device,
+            size=disk.size,
+            free=disk.free or 0,
+            sector_size=disk.sector_size,
+            removable=disk.removable,
+            read_only=disk.read_only,
+            is_root=disk.is_root,
+            is_boot=disk.is_boot,
+            holders=list(disk.holders),
+        )
 
     def resolve(self, input: None, mode: ResolveMode) -> NodeResult[DiskResult]:
         if mode == ResolveMode.MOCK:
@@ -54,7 +70,7 @@ class Disk(INode[None, DiskResult]):
         result = self._probe()
         if result:
             return NodeResult.success(result)
-        return NodeResult.pending_reboot()
+        return NodeResult()
 
     def remove(self, mode: ResolveMode) -> NodeResult[DiskResult]:
         return NodeResult.success()

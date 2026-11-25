@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import click
@@ -51,6 +52,27 @@ def _emit(resp: requests.Response) -> None:
     sys.exit(code)
 
 
+_ACTIVE_RUN_STATUSES = {
+    "running", "waiting", "pause_requested", "paused", "cancel_requested"
+}
+
+
+def _should_wait_for_run(method: str, path: str, body: Any) -> bool:
+    submits_run = (
+        method.upper() == "POST"
+        and (
+            path.startswith("/api/graph/resolve")
+            or path in {"/api/modules", "/api/runs/resolve", "/api/runs/remove"}
+        )
+    ) or (method.upper() == "DELETE" and path.startswith("/api/graph/"))
+    return bool(
+        submits_run
+        and isinstance(body, dict)
+        and body.get("run_id")
+        and body.get("status") in _ACTIVE_RUN_STATUSES
+    )
+
+
 class _InProcessResponse:
     """Minimal duck-type of requests.Response for TestClient results."""
 
@@ -76,7 +98,61 @@ def _request_in_process(method: str, path: str,
     from zeropoint_agent.server import app
     with TestClient(app) as client:
         resp = client.request(method, path, **kwargs)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        should_wait = _should_wait_for_run(method, path, body)
+        if should_wait:
+            run_id = body["run_id"]
+            while True:
+                current = client.get(f"/api/runs/{run_id}")
+                current_body = current.json()
+                if current_body.get("status") not in _ACTIVE_RUN_STATUSES:
+                    if (
+                        path.startswith("/api/graph/resolve")
+                        or path == "/api/runs/resolve"
+                    ):
+                        resp = current
+                    else:
+                        body["run"] = current_body
+                        body["status"] = current_body.get("status")
+                        resp = _InProcessResponse(
+                            resp.status_code,
+                            json.dumps(body),
+                        )
+                    break
+                time.sleep(0.05)
+        if isinstance(resp, _InProcessResponse):
+            return resp
         return _InProcessResponse(resp.status_code, resp.text)
+
+
+def _wait_remote_run(method: str, path: str, response):
+    try:
+        body = response.json()
+    except ValueError:
+        return response
+    if not _should_wait_for_run(method, path, body):
+        return response
+    run_id = body["run_id"]
+    while True:
+        current = requests.get(
+            f"{_base_url()}/api/runs/{run_id}",
+            timeout=10,
+        )
+        current.raise_for_status()
+        current_body = current.json()
+        if current_body.get("status") not in _ACTIVE_RUN_STATUSES:
+            if (
+                path.startswith("/api/graph/resolve")
+                or path == "/api/runs/resolve"
+            ):
+                return current
+            body["run"] = current_body
+            body["status"] = current_body.get("status")
+            return _InProcessResponse(response.status_code, json.dumps(body))
+        time.sleep(0.1)
 
 
 def _request(method: str, path: str, **kwargs):
@@ -98,7 +174,8 @@ def _request(method: str, path: str, **kwargs):
         return _request_in_process(method, path, **kwargs)
 
     try:
-        return requests.request(method, url, **kwargs)
+        response = requests.request(method, url, **kwargs)
+        return _wait_remote_run(method, path, response)
     except requests.ConnectionError as e:
         if force_remote:
             click.echo(json.dumps({
@@ -165,6 +242,7 @@ def serve(host: str, port: int):
     import uvicorn
     from zeropoint_agent.server import app, setup_logging
     logger = setup_logging()
+    app.state.api_port = port
     logger.info("Zeropoint Agent starting...")
     uvicorn.run(app, host=host, port=port, log_config=None)
 
@@ -182,9 +260,9 @@ def node_list(pattern: Optional[str]):
     """List nodes. With no pattern, returns the whole graph."""
     if pattern:
         from urllib.parse import quote
-        _emit(_request("GET", f"/api/dag/query/{quote(pattern, safe='/*')}"))
+        _emit(_request("GET", f"/api/graph/query/{quote(pattern, safe='/*')}"))
     else:
-        _emit(_request("GET", "/api/dag"))
+        _emit(_request("GET", "/api/graph"))
 
 
 @node.command("get")
@@ -192,7 +270,7 @@ def node_list(pattern: Optional[str]):
 def node_get(node_id: str):
     """Fetch a single node by id."""
     from urllib.parse import quote
-    _emit(_request("GET", f"/api/dag/nodes/{quote(node_id, safe='/')}"))
+    _emit(_request("GET", f"/api/graph/nodes/{quote(node_id, safe='/')}"))
 
 
 @node.command("add")
@@ -218,7 +296,7 @@ def node_add(node_type: str, node_id: str,
         "perms": perms,
         "tags": list(tags),
     }
-    _emit(_request("POST", "/api/dag/nodes", json=payload))
+    _emit(_request("POST", "/api/graph/nodes", json=payload))
 
 
 @node.command("ensure")
@@ -249,7 +327,7 @@ def node_ensure(node_type: str, node_id: str,
         "perms": perms,
         "tags": list(tags),
     }
-    resp = _request("POST", "/api/dag/nodes", json=payload)
+    resp = _request("POST", "/api/graph/nodes", json=payload)
     if resp.status_code == 409:
         click.echo(json.dumps({"ok": True, "node_id": node_id,
                                "existed": True}, indent=2))
@@ -277,7 +355,7 @@ def node_update(node_id: str, config_kvs: Tuple[str, ...], perms: Optional[str])
     if not body:
         click.echo("error: nothing to update (need --config or --perms)", err=True)
         sys.exit(2)
-    _emit(_request("PUT", f"/api/dag/{quote(node_id, safe='/')}", json=body))
+    _emit(_request("PUT", f"/api/graph/{quote(node_id, safe='/')}", json=body))
 
 
 @node.command("remove")
@@ -285,7 +363,7 @@ def node_update(node_id: str, config_kvs: Tuple[str, ...], perms: Optional[str])
 def node_remove(pattern: str):
     """Remove a node (or pattern of nodes). Cascading."""
     from urllib.parse import quote
-    _emit(_request("DELETE", f"/api/dag/{quote(pattern, safe='/*')}"))
+    _emit(_request("DELETE", f"/api/graph/{quote(pattern, safe='/*')}"))
 
 
 @node.command("verify")
@@ -293,7 +371,7 @@ def node_remove(pattern: str):
 def node_verify(pattern: str):
     """Check node health (status snapshot)."""
     from urllib.parse import quote
-    _emit(_request("GET", f"/api/dag/health/{quote(pattern, safe='/*')}"))
+    _emit(_request("GET", f"/api/graph/health/{quote(pattern, safe='/*')}"))
 
 
 # --- dag -----------------------------------------------------------------
@@ -322,10 +400,10 @@ def dag_resolve(pattern: Optional[str], mode: Optional[str]):
     if pattern:
         from urllib.parse import quote
         _emit(_request("POST",
-                       f"/api/dag/resolve/{quote(pattern, safe='/*')}",
+                       f"/api/graph/resolve/{quote(pattern, safe='/*')}",
                        json=body))
     else:
-        _emit(_request("POST", "/api/dag/resolve", json=body))
+        _emit(_request("POST", "/api/graph/resolve", json=body))
 
 
 # --- module --------------------------------------------------------------
@@ -372,7 +450,68 @@ def module_remove(module_id: str, parent_namespace: str):
     """Remove a module (cascading delete of its namespace subtree)."""
     from urllib.parse import quote
     target = f"{parent_namespace}/{module_id}"
-    _emit(_request("DELETE", f"/api/dag/{quote(target, safe='/*')}"))
+    _emit(_request("DELETE", f"/api/graph/{quote(target, safe='/*')}"))
+
+
+@cli.command("reboot")
+@click.option("--mode", default=None,
+              type=click.Choice(["live", "dry_run", "mock"]))
+def reboot_agent(mode: Optional[str]):
+    """Schedule an agent-managed reboot GraphRun."""
+    body = {"mode": mode} if mode else {}
+    _emit(_request("POST", "/api/runs/reboot", json=body))
+
+
+# --- runs / jobs ---------------------------------------------------------
+
+@cli.group("run")
+def run_group():
+    """Inspect or cancel persistent graph runs."""
+
+
+@run_group.command("status")
+@click.argument("run_id")
+def run_status(run_id: str):
+    """Show a graph run and its node-level progress."""
+    _emit(_request("GET", f"/api/runs/{run_id}"))
+
+
+@run_group.command("cancel")
+@click.argument("run_id")
+def run_cancel(run_id: str):
+    """Request cancellation of a graph run."""
+    _emit(_request("POST", f"/api/runs/{run_id}/cancel"))
+
+
+@run_group.command("pause")
+@click.argument("run_id")
+def run_pause(run_id: str):
+    """Pause scheduling after active non-pausable Jobs settle."""
+    _emit(_request("POST", f"/api/runs/{run_id}/pause"))
+
+
+@run_group.command("resume")
+@click.argument("run_id")
+def run_resume(run_id: str):
+    """Resume a paused graph run."""
+    _emit(_request("POST", f"/api/runs/{run_id}/resume"))
+
+
+@cli.group("job")
+def job_group():
+    """Inspect or cancel durable jobs."""
+
+
+@job_group.command("status")
+@click.argument("job_id")
+def job_status(job_id: str):
+    _emit(_request("GET", f"/api/jobs/{job_id}"))
+
+
+@job_group.command("cancel")
+@click.argument("job_id")
+def job_cancel(job_id: str):
+    _emit(_request("POST", f"/api/jobs/{job_id}/cancel"))
 
 
 # --- detect --------------------------------------------------------------

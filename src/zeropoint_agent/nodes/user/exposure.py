@@ -6,8 +6,8 @@ no link target — the Service it's parented to already knows its
 own port, protocol, container, etc.
 
 Exposure carries display config:
-  - `name`     — mDNS hostname (http) or label (tcp). Defaults at
-                 creation time to the owning module's leaf name.
+  - `name`     — unique mDNS hostname (http) or label (tcp). HTTP
+                 exposures always serve the application at `/`.
   - `host_port` — auto-allocated for tcp exposures; unused for http
                   (which all share Envoy's :80 listener).
 
@@ -64,12 +64,15 @@ class Exposure(INode[Any, ExposureResult]):
         else:
             protocol = _maybe_protocol(input) or ""
         return NodeResult.success(ExposureResult(
-            name=self.name, protocol=protocol, host_port=self.host_port,
+            name=self.name,
+            protocol=protocol,
+            host_port=self.host_port,
         ))
 
     def verify(self, mode: ResolveMode) -> NodeResult[ExposureResult]:
         return NodeResult.pending_reboot(ExposureResult(
-            name=self.name, host_port=self.host_port,
+            name=self.name,
+            host_port=self.host_port,
         ))
 
     def remove(self, mode: ResolveMode) -> NodeResult[ExposureResult]:
@@ -82,4 +85,3 @@ def _maybe_protocol(holder: Any) -> str:
     if p is None and isinstance(holder, dict):
         p = holder.get("protocol")
     return str(p) if p else ""
-

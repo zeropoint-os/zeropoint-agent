@@ -13,7 +13,7 @@ from zeropoint_agent.query import query_dag, _get_all_descendants, delete_closur
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/dag", tags=["mutations"])
+router = APIRouter(tags=["graph"])
 
 
 def _require_bit(dag, node_id: str, bit: str, action_label: str) -> None:
@@ -69,15 +69,15 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
 
     Sequence (transactional, all-or-nothing):
       1. Validate body shape, perms format, field names.
-      2. Take a snapshot of graph.db.
+      2. Begin an immediate SQLite transaction.
       3. Call the node's `on_config_changed(old, new)` hook — this
          is where side effects like DirectoryVar's directory move
          happen. If the hook raises, we roll back and return the
          error.
       4. Apply the config + perms changes in memory.
       5. Persist to the store; invalidate descendants.
-      6. On any exception in 3-5, the snapshot guard restores
-         graph.db and reloads the in-memory DAG.
+      6. On any exception in 3-5, SQLite rolls back and the in-memory
+         DAG reloads from the committed state.
     """
     from zeropoint_agent.dag import _valid_perms
     node_id = unquote(node_id)
@@ -88,6 +88,11 @@ async def update_node(node_id: str, body: Dict[str, Any], request: Request):
         raise HTTPException(status_code=404, detail=f"Node not found: {node_id}")
 
     _require_bit(dag, node_id, "w", "writable")
+    if dag._store and dag._store.is_removal_pending(node_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"node {node_id!r} is pending removal",
+        )
 
     config = body.get("config")
     perms = body.get("perms")
@@ -223,30 +228,15 @@ async def delete_nodes(pattern: str, request: Request):
     doomed = matched_ids + cascaded
 
     mode = _resolve_mode(request)
+    targets = list(dict.fromkeys(doomed))
+    run_promise = request.app.state.graph_runner.start_remove(
+        targets,
+        mode,
+        pattern=pattern,
+    )
+    from zeropoint_agent.handlers.resolve import _run_response
 
-    # Reverse topo order so children are removed before their parents.
-    doomed_set = set(doomed)
-    ordered = [nid for nid in dag._order if nid in doomed_set]
-    seen = set(ordered)
-    ordered += [nid for nid in doomed if nid not in seen]
-
-    removed = []
-    failed = []
-    with graph_transaction(dag):
-        for nid in reversed(ordered):
-            try:
-                entry = dag.get(nid)
-                entry.node.remove(mode)
-                dag.remove(nid)
-                removed.append(nid)
-            except Exception as e:
-                logger.error(f"Failed to remove {nid}: {e}")
-                failed.append({"node_id": nid, "error": str(e)})
-
-    return {
-        "ok": not failed,
-        "removed": removed,
-        "count": len(removed),
-        "cascaded": [nid for nid in cascaded if nid in removed],
-        "failed": failed,
-    }
+    response = _run_response(request, run_promise.id)
+    response["targets"] = targets
+    response["cascaded"] = cascaded
+    return response

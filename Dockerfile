@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bullseye AS develop
+FROM python:3.11-slim-bookworm AS develop
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -39,7 +39,7 @@ COPY ./requirements.txt /tmp/pip-tmp/
 RUN pip install --no-cache-dir -r /tmp/pip-tmp/requirements.txt \
     && rm -rf /tmp/pip-tmp
 
-FROM develop as runtime
+FROM develop AS runtime
 
 WORKDIR /app
 

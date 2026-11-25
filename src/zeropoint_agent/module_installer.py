@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from zeropoint_agent.dag import DAG
+from zeropoint_agent.inode import ProducedNode
 from zeropoint_agent.nodes.config.namespace import Namespace
 from zeropoint_agent.nodes.config.namespaced import NamespacedVar
 from zeropoint_agent.nodes.config.output import OutputVar
@@ -63,6 +64,7 @@ logger = logging.getLogger(__name__)
 class TfVariable:
     name: str
     default: Optional[Any] = None
+    has_default: bool = False
     description: Optional[str] = None
     type_str: Optional[str] = None
 
@@ -78,7 +80,7 @@ def _strip_hcl_str(s: Any) -> Any:
 def _hcl_variable_to_str(default: Any) -> str:
     default = _strip_hcl_str(default)
     if default is None:
-        return ""
+        return "null"
     if isinstance(default, bool):
         return "true" if default else "false"
     if isinstance(default, (int, float)):
@@ -120,6 +122,7 @@ def parse_variables_tf(module_dir: Path) -> List[TfVariable]:
                 variables[name] = TfVariable(
                     name=name,
                     default=_strip_hcl_str(default),
+                    has_default="default" in body,
                     description=_strip_hcl_str(desc) if isinstance(desc, str) else None,
                     type_str=ttype if isinstance(ttype, str) else None,
                 )
@@ -189,9 +192,9 @@ def _agent_state_root() -> Path:
     """Where the agent stores per-module terraform working dirs.
 
     Override via ZP_AGENT_STATE_ROOT; defaults to a `modules/`
-    directory next to the graph.db data dir, which is itself rooted
-    by ZEROPOINT_ROOT_PATH (defaults to '.'). This keeps state and
-    graph collocated, which matters for backup/restore.
+    directory next to the SQLite state database, which is itself rooted
+    by ZEROPOINT_ROOT_PATH (defaults to '.'). This keeps state and the
+    graph ledger collocated, which matters for backup/restore.
     """
     explicit = os.environ.get("ZP_AGENT_STATE_ROOT")
     if explicit:
@@ -221,6 +224,153 @@ class AddModuleResult:
     wired_existing_nodes: List[str] = field(default_factory=list)
 
 
+@dataclass
+class ModuleChildPlan:
+    specs: List[ProducedNode]
+    wired_existing_nodes: List[str]
+
+
+def build_module_child_plan(
+    module_id: str,
+    source: str,
+    *,
+    overrides: Optional[Dict[str, str]] = None,
+    parent_namespace: str = MODULES_NAMESPACE,
+    global_by_name: Optional[Dict[str, str]] = None,
+) -> ModuleChildPlan:
+    """Inspect one pinned module and return its complete generated subtree."""
+    overrides = overrides or {}
+    global_by_name = global_by_name or {}
+    namespace_id = f"{parent_namespace}/{module_id}"
+
+    url, sha = _parse_git_source(source)
+    inspection_dir = _shallow_clone_for_inspection(url, sha)
+    try:
+        tf_vars = parse_variables_tf(inspection_dir)
+        tf_outputs = parse_outputs_tf(inspection_dir)
+    finally:
+        shutil.rmtree(inspection_dir.parent, ignore_errors=True)
+
+    logger.info(
+        "module %s declares %d variables, %d outputs",
+        module_id,
+        len(tf_vars),
+        len(tf_outputs),
+    )
+
+    specs: List[ProducedNode] = []
+    wired_existing: List[str] = []
+    var_parent_ids: List[str] = []
+
+    for varname, spec in _PER_MODULE_SYSTEM_VARS.items():
+        node_id = f"{namespace_id}/{varname}"
+        specs.append(ProducedNode.from_node(
+            node_id,
+            NamespacedVar(name=varname, spec=spec),
+            parents=[namespace_id],
+            perms="r--",
+            tags=["input"],
+        ))
+        var_parent_ids.append(node_id)
+
+    for varname, default_path in (
+        ("zp_module_dir", str(_agent_state_root() / module_id)),
+        ("zp_storage_dir", str(_default_storage_root() / module_id)),
+    ):
+        node_id = f"{namespace_id}/{varname}"
+        specs.append(ProducedNode.from_node(
+            node_id,
+            DirectoryVar(name=varname, value=default_path),
+            parents=[namespace_id],
+            perms="rw-",
+            tags=["input"],
+        ))
+        var_parent_ids.append(node_id)
+
+    auto_injected = set(_PER_MODULE_SYSTEM_VARS) | {
+        "zp_module_dir",
+        "zp_storage_dir",
+    }
+    for var in tf_vars:
+        if var.name in auto_injected:
+            continue
+        if (
+            var.has_default
+            and var.default is None
+            and var.name not in overrides
+        ):
+            # An explicit Terraform default of null means "do not pass this
+            # variable". Passing an empty string or the text "null" changes
+            # its meaning and breaks expressions that test `var.x != null`.
+            continue
+        if var.name in _GLOBAL_SYSTEM_VARS:
+            global_id = global_by_name.get(var.name)
+            if not global_id:
+                raise RuntimeError(
+                    f"module declares system var {var.name!r} but no "
+                    f"Var with that name exists in the graph"
+                )
+            if global_id not in var_parent_ids:
+                var_parent_ids.append(global_id)
+                wired_existing.append(global_id)
+            continue
+
+        node_id = f"{namespace_id}/{var.name}"
+        value = (
+            overrides[var.name]
+            if var.name in overrides
+            else _hcl_variable_to_str(var.default)
+            if var.has_default
+            else None
+        )
+        specs.append(ProducedNode.from_node(
+            node_id,
+            Var(name=var.name, value=value),
+            parents=[namespace_id],
+            tags=["input"],
+        ))
+        var_parent_ids.append(node_id)
+
+    for sysvar in _GLOBAL_SYSTEM_VARS:
+        global_id = global_by_name.get(sysvar)
+        if global_id and global_id not in var_parent_ids:
+            var_parent_ids.append(global_id)
+            wired_existing.append(global_id)
+
+    terraform_id = f"{namespace_id}/terraform"
+    specs.append(ProducedNode.from_node(
+        terraform_id,
+        Terraform(source=source),
+        parents=[namespace_id, *var_parent_ids],
+        tags=["terraform"],
+    ))
+
+    existing_ids = {spec.id for spec in specs}
+    for output_name in tf_outputs:
+        output_id = f"{namespace_id}/{output_name}"
+        if output_id in existing_ids:
+            logger.warning(
+                "module %s output %s collides with generated input %s; skipping",
+                module_id,
+                output_name,
+                output_id,
+            )
+            continue
+        specs.append(ProducedNode.from_node(
+            output_id,
+            OutputVar(name=output_name, key=output_name),
+            parents=[namespace_id, terraform_id],
+            perms="r--",
+            tags=["output"],
+        ))
+        existing_ids.add(output_id)
+
+    return ModuleChildPlan(
+        specs=specs,
+        wired_existing_nodes=sorted(set(wired_existing)),
+    )
+
+
 def add_module(
     dag: DAG,
     module_id: str,
@@ -242,79 +392,14 @@ def add_module(
 
     Returns an AddModuleResult describing the nodes created and wired.
     """
-    overrides = overrides or {}
-
     if parent_namespace not in dag.nodes:
         raise KeyError(
             f"parent namespace {parent_namespace!r} not found in graph")
 
-    # Inspect the module (variables.tf + outputs) by shallow-cloning to a
-    # temp location and reading its .tf files. We always go through git;
-    # local paths aren't supported (see Terraform._parse_git_source).
-    url, sha = _parse_git_source(source)
-    inspection_dir = _shallow_clone_for_inspection(url, sha)
-    try:
-        tf_vars = parse_variables_tf(inspection_dir)
-        tf_outputs = parse_outputs_tf(inspection_dir)
-    finally:
-        shutil.rmtree(inspection_dir.parent, ignore_errors=True)
-
-    logger.info("module %s declares %d variables, %d outputs",
-                module_id, len(tf_vars), len(tf_outputs))
-
-    # Namespace for this module: modules/<module_id>. The namespace itself
-    # is fully manipulable by the user (rwd) — users can rename, edit, or
-    # remove the whole module.
     namespace_id = f"{parent_namespace}/{module_id}"
     dag.add(namespace_id, Namespace(name=module_id),
             parents=[parent_namespace], perms="rwd")
 
-    created: List[str] = [namespace_id]
-    wired_existing: List[str] = []
-    var_parent_ids: List[str] = []  # all Vars that feed the Terraform
-
-    # Auto-create per-module path-derived system vars under the namespace.
-    # These are system-managed: their value is derived from the namespace
-    # path, so editing makes no sense (r--). They live for the lifetime of
-    # the namespace and shouldn't be removed independently.
-    for varname, spec in _PER_MODULE_SYSTEM_VARS.items():
-        node_id = f"{namespace_id}/{varname}"
-        dag.add(
-            node_id,
-            NamespacedVar(name=varname, spec=spec),
-            parents=[namespace_id],
-            perms="r--",
-            tags={"input"},
-        )
-        created.append(node_id)
-        var_parent_ids.append(node_id)
-
-    # The agent's two filesystem promises: the module's working dir
-    # (zp_module_dir, where terraform runs) and its data root
-    # (zp_storage_dir, where the module bind-mounts user data). Both
-    # are DirectoryVars — editable by the user; the agent moves the
-    # directory before persisting the new path.
-    module_path_default = str(_agent_state_root() / module_id)
-    storage_path_default = str(_default_storage_root() / module_id)
-    for varname, default_path in (
-        ("zp_module_dir",  module_path_default),
-        ("zp_storage_dir", storage_path_default),
-    ):
-        node_id = f"{namespace_id}/{varname}"
-        dag.add(
-            node_id,
-            DirectoryVar(name=varname, value=default_path),
-            parents=[namespace_id],
-            perms="rw-",
-            tags={"input"},
-        )
-        created.append(node_id)
-        var_parent_ids.append(node_id)
-
-    # Find globally-available system Vars (zp_arch, zp_gpu_vendor)
-    # by name and wire to them as Terraform parents. We restrict the
-    # search to nodes outside this module's namespace — per-module vars
-    # under modules/<id>/ are local and shouldn't be wired as globals.
     global_by_name: Dict[str, str] = {}
     for nid, entry in dag.nodes.items():
         if not isinstance(entry.node, Var):
@@ -323,92 +408,32 @@ def add_module(
             continue
         global_by_name[entry.node.name] = nid
 
-    # Per-module system vars that the installer already injected above
-    # (path-derived ones + the two DirectoryVars). Any tf variable with
-    # one of these names is automatically wired and should be skipped
-    # in the loop below.
-    auto_injected = set(_PER_MODULE_SYSTEM_VARS) | {"zp_module_dir", "zp_storage_dir"}
-
-    # Walk each declared variable from variables.tf
-    for var in tf_vars:
-        if var.name in auto_injected:
-            # Already auto-created above; just skip (already a parent).
-            continue
-
-        if var.name in _GLOBAL_SYSTEM_VARS:
-            # Wire to the existing global system Var.
-            gid = global_by_name.get(var.name)
-            if not gid:
-                raise RuntimeError(
-                    f"module declares system var {var.name!r} but no "
-                    f"Var with that name exists in the graph")
-            if gid not in var_parent_ids:
-                var_parent_ids.append(gid)
-                wired_existing.append(gid)
-            continue
-
-        # User-defined var: create a Var under the namespace with the
-        # module's default or an override. User vars are freely editable
-        # (defer to namespace context).
-        var_node_id = f"{namespace_id}/{var.name}"
-        value = (overrides[var.name] if var.name in overrides
-                 else _hcl_variable_to_str(var.default))
-        dag.add(
-            var_node_id,
-            Var(name=var.name, value=value),
-            parents=[namespace_id],
-            tags={"input"},
-        )
-        created.append(var_node_id)
-        var_parent_ids.append(var_node_id)
-
-    # Always include the globally-available system vars even if not
-    # declared in variables.tf — terraform ignores unknown vars.
-    for sysvar in _GLOBAL_SYSTEM_VARS:
-        gid = global_by_name.get(sysvar)
-        if gid and gid not in var_parent_ids:
-            var_parent_ids.append(gid)
-            wired_existing.append(gid)
-
-    # The Terraform: lives under the namespace, depends on it (for
-    # path/ordering) + all var parents.
-    # Type default r-d (w vetoed by class) is sufficient; no instance override.
-    terraform_id = f"{namespace_id}/terraform"
-    dag.add(
-        terraform_id,
-        Terraform(source=source),
-        parents=[namespace_id, *var_parent_ids],
-        tags={"terraform"},
+    plan = build_module_child_plan(
+        module_id,
+        source,
+        overrides=overrides,
+        parent_namespace=parent_namespace,
+        global_by_name=global_by_name,
     )
-    created.append(terraform_id)
-
-    # Output Vars — one per declared terraform output. Each is r--
-    # (system-managed; its value comes from terraform's output, not the
-    # user) and lives under the module's namespace, with the Terraform
-    # as a data-flow parent so the value flows through at resolve time.
-    for out_name in tf_outputs:
-        out_id = f"{namespace_id}/{out_name}"
-        if out_id in dag.nodes:
-            # Collision with a user var or a system var sharing the name.
-            # Skip; the user can rename one or the other.
-            logger.warning(
-                "module %s output %s collides with existing node %s; "
-                "skipping the OutputVar",
-                module_id, out_name, out_id)
-            continue
+    created: List[str] = [namespace_id]
+    for spec in plan.specs:
         dag.add(
-            out_id,
-            OutputVar(name=out_name, key=out_name),
-            parents=[namespace_id, terraform_id],
-            perms="r--",
-            tags={"output"},
+            spec.id,
+            DAG._instantiate_produced(spec),
+            parents=list(spec.parents),
+            perms=spec.perms,
+            tags=spec.tags,
         )
-        created.append(out_id)
+        created.append(spec.id)
+
+    terraform_id = f"{namespace_id}/terraform"
 
     logger.info(
-        "added module %s at %s (created=%d wired=%d outputs=%d)",
-        module_id, namespace_id, len(created), len(wired_existing),
-        len(tf_outputs),
+        "added module %s at %s (created=%d wired=%d)",
+        module_id,
+        namespace_id,
+        len(created),
+        len(plan.wired_existing_nodes),
     )
 
     return AddModuleResult(
@@ -416,6 +441,5 @@ def add_module(
         namespace_id=namespace_id,
         terraform_id=terraform_id,
         created_var_nodes=created,
-        wired_existing_nodes=wired_existing,
+        wired_existing_nodes=plan.wired_existing_nodes,
     )
-

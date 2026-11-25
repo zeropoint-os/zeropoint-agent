@@ -64,13 +64,13 @@ class MdnsRegistry:
             logger.warning("zeroconf init failed: %s", e)
             return False
 
-    def register(self, name: str, port: int = 80) -> None:
+    def register(self, name: str, port: int = 80) -> bool:
         """Register `<name>.local` pointing at this host on `port`."""
         if not self._ensure_zc():
-            return
+            return False
         with self._lock:
             if name in self._registered:
-                return
+                return True
             ip = _host_ip()
             try:
                 # Advertise an HTTP service so OS-level mDNS resolvers
@@ -83,11 +83,17 @@ class MdnsRegistry:
                     server=f"{name}.local.",
                     properties={},
                 )
-                self._zc.register_service(info, allow_name_change=False)
+                self._zc.register_service(
+                    info,
+                    allow_name_change=False,
+                    cooperating_responders=True,
+                )
                 self._registered[name] = info
                 logger.info("mDNS registered %s.local -> %s:%d", name, ip, port)
+                return True
             except Exception as e:
-                logger.warning("mDNS register %s failed: %s", name, e)
+                logger.warning("mDNS register %s failed: %r", name, e)
+                return False
 
     def unregister(self, name: str) -> None:
         if self._zc is None:
@@ -101,9 +107,10 @@ class MdnsRegistry:
             except Exception as e:
                 logger.warning("mDNS unregister %s failed: %s", name, e)
 
-    def reconcile(self, names: Iterable[Tuple[str, int]]) -> None:
+    def reconcile(self, names: Iterable[Tuple[str, int]]) -> bool:
         """Ensure exactly the given (name, port) entries are registered."""
         desired = dict(names)
+        succeeded = True
         with self._lock:
             current = set(self._registered.keys())
         # Remove stale
@@ -112,7 +119,8 @@ class MdnsRegistry:
         # Add missing
         for name, port in desired.items():
             if name not in current:
-                self.register(name, port)
+                succeeded = self.register(name, port) and succeeded
+        return succeeded
 
     def close(self) -> None:
         if self._zc is None:

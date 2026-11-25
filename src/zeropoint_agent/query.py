@@ -72,7 +72,10 @@ def _resolve_segments(dag, segments: List[str]) -> List[str]:
         return _find_anywhere(dag, rest)
 
     # Match the first segment
-    roots = [nid for nid in dag.nodes if fnmatch.fnmatch(nid, first)]
+    roots = [
+        nid for nid, entry in dag.nodes.items()
+        if not entry.parents and fnmatch.fnmatch(_leaf(nid), first)
+    ]
 
     if not rest:
         return roots
@@ -120,7 +123,10 @@ def _walk_from(dag, node_id: str, segments: List[str]) -> List[str]:
     else:
         # Exact or glob match on children
         children = _get_children(dag, node_id)
-        matched = [c for c in children if fnmatch.fnmatch(c, seg)]
+        matched = [
+            child_id for child_id in children
+            if fnmatch.fnmatch(_leaf(child_id), seg)
+        ]
         if not rest:
             return matched
         results = []
@@ -137,7 +143,10 @@ def _find_anywhere(dag, segments: List[str]) -> List[str]:
     target = segments[0]
     rest = segments[1:]
 
-    matched = [nid for nid in dag.nodes if fnmatch.fnmatch(nid, target)]
+    matched = [
+        nid for nid in dag.nodes
+        if fnmatch.fnmatch(_leaf(nid), target)
+    ]
 
     if not rest:
         return matched
@@ -155,6 +164,10 @@ def _get_children(dag, node_id: str) -> List[str]:
         if node_id in entry.parents:
             children.append(nid)
     return children
+
+
+def _leaf(node_id: str) -> str:
+    return node_id.rsplit("/", 1)[-1]
 
 
 def _get_all_descendants(dag, node_id: str) -> List[str]:
@@ -230,7 +243,7 @@ def orphan_closure(dag, removing: Set[str]) -> List[str]:
     edge, and survives. See the regression test.
 
     The one shape that *is* vulnerable is a node whose id sits under a
-    namespace it isn't actually parented to. ``POST /api/dag/nodes``
+    namespace it isn't actually parented to. ``POST /api/graph/nodes``
     currently permits that, and such a node is already broken in other
     ways (``_compute_path`` gives it an empty path). The fix belongs at
     creation, not here.

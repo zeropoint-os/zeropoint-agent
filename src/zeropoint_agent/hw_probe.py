@@ -10,6 +10,7 @@ import subprocess
 import json
 import os
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,16 @@ class Partition:
     free: Optional[int] = None  # Free space in bytes if mounted
     filesystem: Optional[str] = None  # ext4, swap, etc.
     flags: List[str] = field(default_factory=list)  # boot, raid, lvm, etc.
+    number: int = 0
+    uuid: Optional[str] = None
+    label: Optional[str] = None
+    partuuid: Optional[str] = None
+    parttype: Optional[str] = None
+    mountpoints: List[str] = field(default_factory=list)
+    mount_options: Dict[str, str] = field(default_factory=dict)
+    is_root: bool = False
+    is_boot: bool = False
+    holders: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -34,6 +45,11 @@ class Disk:
     free: Optional[int] = None  # Unallocated free space in bytes
     sector_size: int = 512  # bytes
     partitions: List[Partition] = field(default_factory=list)
+    removable: bool = False
+    read_only: bool = False
+    is_root: bool = False
+    is_boot: bool = False
+    holders: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -68,7 +84,11 @@ class HWProbe:
         try:
             logger.debug("Executing lsblk to enumerate block devices")
             output = subprocess.run(
-                ["lsblk", "-J", "-b", "-o", "NAME,SIZE,TYPE,FSTYPE"],
+                [
+                    "lsblk", "-J", "-b", "-o",
+                    "NAME,PATH,SIZE,TYPE,FSTYPE,UUID,LABEL,PARTUUID,"
+                    "PARTTYPE,MOUNTPOINTS,LOG-SEC,RO,RM",
+                ],
                 capture_output=True,
                 text=True,
                 check=True
@@ -76,7 +96,16 @@ class HWProbe:
             
             data = json.loads(output.stdout)
             
-            # Process block devices
+            mount_options = HWProbe._mount_options()
+            root_device = HWProbe._mount_device("/")
+            boot_devices = {
+                device for device in (
+                    HWProbe._mount_device("/boot"),
+                    HWProbe._mount_device("/boot/efi"),
+                )
+                if device
+            }
+
             for dev in data.get("blockdevices", []):
                 if dev.get("type") != "disk":
                     continue
@@ -90,7 +119,10 @@ class HWProbe:
                     id=id_basename,
                     device=device_name,
                     size=int(dev.get("size", 0)),
-                    sector_size=512,  # TODO: read from sysfs
+                    sector_size=int(dev.get("log-sec") or 512),
+                    removable=bool(dev.get("rm")),
+                    read_only=bool(dev.get("ro")),
+                    holders=HWProbe._holders(dev["name"]),
                 )
                 logger.debug(f"Discovered disk: {device_name} (ID: {id_basename}, size: {disk.size} bytes)")
                 
@@ -111,15 +143,46 @@ class HWProbe:
                             device=partition_device,
                             size=partition_size,
                             filesystem=child.get("fstype") or None,
+                            number=HWProbe._partition_number(child["name"]),
+                            uuid=child.get("uuid") or None,
+                            label=child.get("label") or None,
+                            partuuid=child.get("partuuid") or None,
+                            parttype=child.get("parttype") or None,
+                            holders=HWProbe._holders(child["name"]),
                         )
-                        
-                        # Get free space for mounted filesystem
-                        partition.free = HWProbe._get_filesystem_free(partition_device)
+                        partition.flags = sorted(
+                            HWProbe._descendant_types(child)
+                        )
+
+                        raw_mountpoints = child.get("mountpoints") or []
+                        if isinstance(raw_mountpoints, str):
+                            raw_mountpoints = [raw_mountpoints]
+                        partition.mountpoints = [
+                            str(mountpoint)
+                            for mountpoint in raw_mountpoints
+                            if mountpoint
+                        ]
+                        partition.mount_options = {
+                            mountpoint: mount_options.get(
+                                os.path.realpath(partition_device), {}
+                            ).get(mountpoint, "defaults")
+                            for mountpoint in partition.mountpoints
+                        }
+                        partition.free = (
+                            HWProbe._get_filesystem_free(
+                                partition.mountpoints[0]
+                            )
+                            if partition.mountpoints else None
+                        )
+                        real_partition = os.path.realpath(partition_device)
+                        partition.is_root = real_partition == root_device
+                        partition.is_boot = real_partition in boot_devices
+                        disk.is_root = disk.is_root or partition.is_root
+                        disk.is_boot = disk.is_boot or partition.is_boot
                         logger.debug(f"  Partition: {partition_device} (ID: {partition_id_basename}, size: {partition_size}, fs: {partition.filesystem})")
                         
                         disk.partitions.append(partition)
                 
-                # Calculate unallocated disk space (not in any partition)
                 disk.free = max(0, disk.size - allocated_size)
                 
                 disks.append(disk)
@@ -173,7 +236,7 @@ class HWProbe:
                 check=False
             )
             
-            for symlink in output.stdout.strip().split("\n"):
+            for symlink in sorted(output.stdout.strip().split("\n")):
                 if not symlink:
                     continue
                 
@@ -192,7 +255,7 @@ class HWProbe:
                         check=True
                     )
                     device_path = resolved.stdout.strip()
-                    mapping[device_path] = symlink
+                    mapping.setdefault(device_path, symlink)
                 except Exception:
                     pass
         
@@ -204,7 +267,7 @@ class HWProbe:
         return mapping
 
     @staticmethod
-    def _get_filesystem_free(device: str) -> Optional[int]:
+    def _get_filesystem_free(mountpoint: str) -> Optional[int]:
         """Get free space for a mounted filesystem.
         
         Args:
@@ -214,30 +277,102 @@ class HWProbe:
             Free space in bytes, or None if not mounted or error
         """
         try:
-            # Use df to get filesystem free space
-            output = subprocess.run(
-                ["df", "-B1", device],
-                capture_output=True,
-                text=True,
-                check=False
+            stat = os.statvfs(mountpoint)
+            free_bytes = stat.f_bavail * stat.f_frsize
+            logger.debug(
+                "Filesystem %s: %d bytes free",
+                mountpoint,
+                free_bytes,
             )
-            
-            # Parse df output: last line, 4th column is available space
-            if output.returncode == 0:
-                lines = output.stdout.strip().split("\n")
-                if len(lines) > 1:
-                    parts = lines[1].split()
-                    if len(parts) > 3:
-                        free_bytes = int(parts[3])
-                        logger.debug(f"Filesystem {device}: {free_bytes} bytes free")
-                        return free_bytes
-            else:
-                logger.debug(f"Filesystem {device}: not mounted (df returned {output.returncode})")
+            return free_bytes
         except Exception as e:
             logger.debug(f"Failed to get free space for {device}: {e}")
             pass
         
         return None
+
+    @staticmethod
+    def _partition_number(name: str) -> int:
+        try:
+            with open(
+                f"/sys/class/block/{name}/partition",
+                "r",
+                encoding="utf-8",
+            ) as file:
+                return int(file.read().strip())
+        except (OSError, ValueError):
+            return 0
+
+    @staticmethod
+    def _holders(name: str) -> List[str]:
+        try:
+            return sorted(
+                path.name
+                for path in Path(f"/sys/class/block/{name}/holders").iterdir()
+            )
+        except OSError:
+            return []
+
+    @staticmethod
+    def _descendant_types(device: Dict[str, Any]) -> set[str]:
+        result: set[str] = set()
+        for child in device.get("children") or []:
+            child_type = str(child.get("type") or "")
+            if child_type:
+                result.add(child_type)
+            result.update(HWProbe._descendant_types(child))
+        return result
+
+    @staticmethod
+    def _mount_device(target: str) -> Optional[str]:
+        if not os.path.exists(target):
+            return None
+        result = subprocess.run(
+            ["findmnt", "-n", "-o", "SOURCE,TARGET", "--target", target],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        parts = result.stdout.strip().split(maxsplit=1)
+        if result.returncode != 0 or len(parts) != 2:
+            return None
+        source, mounted_at = parts
+        if (
+            not source.startswith("/dev/")
+            or os.path.realpath(mounted_at) != os.path.realpath(target)
+        ):
+            return None
+        return os.path.realpath(source)
+
+    @staticmethod
+    def _mount_options() -> Dict[str, Dict[str, str]]:
+        result: Dict[str, Dict[str, str]] = {}
+        output = subprocess.run(
+            ["findmnt", "-J", "-o", "SOURCE,TARGET,OPTIONS"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if output.returncode != 0:
+            return result
+        try:
+            filesystems = json.loads(output.stdout).get("filesystems", [])
+        except json.JSONDecodeError:
+            return result
+
+        def walk(items: List[Dict[str, Any]]) -> None:
+            for item in items:
+                source = str(item.get("source") or "")
+                target = str(item.get("target") or "")
+                if source.startswith("/dev/") and target:
+                    device = os.path.realpath(source)
+                    result.setdefault(device, {})[target] = str(
+                        item.get("options") or "defaults"
+                    )
+                walk(item.get("children") or [])
+
+        walk(filesystems)
+        return result
 
     @staticmethod
     def get_gpus() -> List[GPU]:
@@ -358,5 +493,3 @@ class HWProbe:
             pass
         
         return gpus
-
-

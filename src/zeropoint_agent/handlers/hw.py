@@ -22,9 +22,21 @@ async def get_disks():
                 {
                     "id": d.id, "device": d.device, "size": d.size,
                     "free": d.free, "sector_size": d.sector_size,
+                    "removable": d.removable,
+                    "read_only": d.read_only,
+                    "is_root": d.is_root,
+                    "is_boot": d.is_boot,
+                    "holders": d.holders,
                     "partitions": [
                         {"id": p.id, "device": p.device, "size": p.size,
-                         "free": p.free, "filesystem": p.filesystem, "flags": p.flags}
+                         "free": p.free, "filesystem": p.filesystem,
+                         "flags": p.flags, "number": p.number,
+                         "uuid": p.uuid, "label": p.label,
+                         "partuuid": p.partuuid, "parttype": p.parttype,
+                         "mountpoints": p.mountpoints,
+                         "mount_options": p.mount_options,
+                         "is_root": p.is_root, "is_boot": p.is_boot,
+                         "holders": p.holders}
                         for p in d.partitions
                     ],
                 }

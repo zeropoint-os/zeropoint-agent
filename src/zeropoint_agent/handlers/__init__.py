@@ -7,10 +7,11 @@ from pydantic import BaseModel
 
 from zeropoint_agent import (
     ShellScript,
-    SystemDocker, DockerNetwork, NvidiaGpu, AmdGpu, SystemEnvoy,
+    SystemDocker, DockerNetwork, NvidiaGpu, AmdGpu, SystemEnvoy, Reboot,
+    Disks, HardwareDevice, HardwareInventory,
     Disk, Partition, Format, Mount, MountDir,
     Var, NamespacedVar, OutputVar, DirectoryVar, Namespace,
-    Terraform, Exposure, Service,
+    Module, Terraform, Exposure, Service,
 )
 
 
@@ -21,6 +22,10 @@ NODE_REGISTRY = {
     "nvidia": NvidiaGpu,
     "amd": AmdGpu,
     "envoy": SystemEnvoy,
+    "reboot": Reboot,
+    "disks": Disks,
+    "hardware_device": HardwareDevice,
+    "hardware_inventory": HardwareInventory,
     "disk": Disk,
     "partition": Partition,
     "format": Format,
@@ -31,6 +36,7 @@ NODE_REGISTRY = {
     "output": OutputVar,
     "dir": DirectoryVar,
     "namespace": Namespace,
+    "module": Module,
     "terraform": Terraform,
     "exposure": Exposure,
     "service": Service,
@@ -49,7 +55,7 @@ class NodeSpec(BaseModel):
 
 class ResolveRequest(BaseModel):
     """Request to resolve the graph."""
-    mode: str = "mock"
+    mode: Optional[str] = None
 
 
 def node_to_dict(nid: str, entry, dag=None) -> dict:
@@ -69,6 +75,7 @@ def node_to_dict(nid: str, entry, dag=None) -> dict:
         "path": entry.path,
         "perms": entry.perms,
         "tags": sorted(entry.tags),
+        "producer_id": entry.producer_id,
     }
     if dag is not None:
         try:

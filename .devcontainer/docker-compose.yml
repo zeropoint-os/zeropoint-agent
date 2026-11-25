@@ -4,17 +4,9 @@ services:
       context: ..
       dockerfile: Dockerfile
       target: develop
-    # Replaces the former devcontainer.json runArgs
-    # (--privileged --gpus all --runtime nvidia).
+    # GPU passthrough is intentionally omitted for CPU-only development hosts.
+    # A local Compose override can add the NVIDIA runtime when available.
     privileged: true
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     volumes:
       - ..:/workspaces/zeropoint-agent:cached
       # Host device access for the live hardware-provisioning nodes.

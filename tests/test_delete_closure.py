@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from zeropoint_agent.query import (  # noqa: E402
-    delete_closure, orphan_closure, subtree_closure,
+    delete_closure, orphan_closure, query_dag, subtree_closure,
 )
 
 
@@ -55,6 +55,19 @@ def test_deleting_a_module_takes_its_whole_subtree():
     dag = _echo_graph()
     got = set(delete_closure(dag, {"modules/echo"}))
     assert got == {
+        "modules/echo/zp_module_id",
+        "modules/echo/greeting",
+        "modules/echo/terraform",
+        "modules/echo/main_ports",
+        "modules/echo/main_ports/http",
+    }, got
+
+
+def test_query_matches_namespace_path_segments():
+    dag = _echo_graph()
+    got = set(query_dag(dag, "modules/echo/**"))
+    assert got == {
+        "modules/echo",
         "modules/echo/zp_module_id",
         "modules/echo/greeting",
         "modules/echo/terraform",

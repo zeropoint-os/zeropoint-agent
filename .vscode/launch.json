@@ -1,18 +1,8 @@
 {
     "version": "0.2.0",
-    "compounds": [
-        {
-            "name": "Zeropoint Agent + WebUI",
-            "configurations": [
-                "Zeropoint Agent",
-                "WebUI"
-            ],
-            "stopAll": true
-        }
-    ],
     "configurations": [
         {
-            "name": "Zeropoint Agent",
+            "name": "Zeropoint Agent (Live)",
             "type": "debugpy",
             "request": "launch",
             "module": "zeropoint_agent",
@@ -21,18 +11,19 @@
             "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
+                "PYTHONUNBUFFERED": "1",
                 "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
                 "ZEROPOINT_MODE": "live",
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
             },
-            "preLaunchTask": "build-webui",
+            "preLaunchTask": "ensure-defaults-live",
             "args": [
                 "serve"
             ]
         },
         {
-            "name": "Zeropoint Agent (no WebUI)",
+            "name": "Zeropoint Agent (Mock)",
             "type": "debugpy",
             "request": "launch",
             "module": "zeropoint_agent",
@@ -41,28 +32,15 @@
             "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
+                "PYTHONUNBUFFERED": "1",
                 "ZEROPOINT_ROOT_PATH": "${workspaceFolder}",
-                "ZEROPOINT_MODE": "live",
+                "ZEROPOINT_MODE": "mock",
                 "ZP_MODULE_STORAGE": "${workspaceFolder}/data/modules",
                 "ZP_MARKER_DIR": "${workspaceFolder}/data/markers"
             },
+            "preLaunchTask": "ensure-defaults-mock",
             "args": [
                 "serve"
-            ]
-        },
-        {
-            "name": "WebUI",
-            "type": "chrome",
-            "request": "launch",
-            "browserLaunchLocation": "ui",
-            "runtimeExecutable": "stable",
-            "url": "http://localhost:2370",
-            "webRoot": "${workspaceFolder}/webui",
-            "preLaunchTask": "waitForServer",
-            "userDataDir": "${workspaceFolder}/.vscode/cache",
-            "sourceMaps": true,
-            "outFiles": [
-                "${workspaceFolder}/webui/dist/**/*.js"
             ]
         }
     ]

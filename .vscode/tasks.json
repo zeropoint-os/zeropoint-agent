@@ -2,49 +2,24 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build-webui",
-            "type": "npm",
-            "script": "build",
-            "path": "webui",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": [],
-            "detail": "Build WebUI with webpack"
-        },
-        {
-            "label": "watch-webui",
-            "type": "npm",
-            "script": "dev",
-            "path": "webui",
-            "group": {
-                "kind": "build",
-                "isDefault": false
-            },
-            "isBackground": true,
-            "problemMatcher": [],
-            "detail": "Watch WebUI with webpack"
-        },
-        {
-            "label": "waitForServer",
+            "label": "ensure-defaults-live",
             "type": "shell",
-            "command": "while ! nc -z localhost 2370; do sleep 1; done",
-            "group": "none",
-            "dependsOn": ["build-webui"],
-            "problemMatcher": {
-                "base": "$tsc",
-                "background": {
-                    "beginsPattern": ".*",
-                    "endsPattern": ".*"
-                }
-            }
+            "command": "ZEROPOINT_ROOT_PATH=${workspaceFolder} ZEROPOINT_MODE=live ZP_MODULE_STORAGE=${workspaceFolder}/data/modules bash ${workspaceFolder}/scripts/ensure-defaults.sh",
+            "problemMatcher": [],
+            "detail": "Seed an empty SQLite graph through the live CLI/API path"
+        },
+        {
+            "label": "ensure-defaults-mock",
+            "type": "shell",
+            "command": "ZEROPOINT_ROOT_PATH=${workspaceFolder} ZEROPOINT_MODE=mock ZP_MODULE_STORAGE=${workspaceFolder}/data/modules bash ${workspaceFolder}/scripts/ensure-defaults.sh",
+            "problemMatcher": [],
+            "detail": "Seed an empty SQLite graph through the mock CLI/API path"
         },
         {
             "label": "Reset zeropoint",
             "type": "shell",
             "command": "bash ${workspaceFolder}/scripts/reset.sh",
-            "detail": "Tear down agent-managed docker resources, wipe persisted state, and reseed the default graph. Errors out if the agent is running — stop your debug session first.",
+            "detail": "Stop agent-managed Docker resources, remove SQLite state and module data, then reseed the canonical graph. Stop the agent first.",
             "problemMatcher": [],
             "presentation": {
                 "echo": true,
@@ -58,15 +33,33 @@
             "label": "Reseed defaults",
             "type": "shell",
             "command": "bash ${workspaceFolder}/scripts/defaults.sh",
-            "detail": "Run the default-graph bootstrap without touching docker. Idempotent.",
-            "problemMatcher": [],
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "dedicated",
-                "clear": true
-            }
+            "detail": "Idempotently add the canonical graph without wiping state. In live mode this may reconcile Docker, Envoy and Terraform resources.",
+            "problemMatcher": []
+        },
+        {
+            "label": "Resolve graph (mock)",
+            "type": "shell",
+            "command": "ZEROPOINT_MODE=mock ZEROPOINT_AGENT_LOCAL=1 zeropoint-agent dag resolve --mode mock",
+            "detail": "Run a complete Promise-based GraphRun without external side effects",
+            "problemMatcher": []
+        },
+        {
+            "label": "Check agent API",
+            "type": "shell",
+            "command": "curl -fsS http://127.0.0.1:2370/api/health | python -m json.tool",
+            "detail": "Read the running agent health endpoint",
+            "problemMatcher": []
+        },
+        {
+            "label": "test-python",
+            "type": "shell",
+            "command": "python -m unittest discover -s tests -p 'test_*.py' && python tests/test_delete_closure.py",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "Run SQLite, Promise, JobManager, GraphRun, removal and closure tests",
+            "problemMatcher": []
         }
     ]
 }

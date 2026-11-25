@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Reset zeropoint to a fresh state.
 #
-# Tears down every docker container the agent has spun up, wipes the
-# persisted graph + module data dirs, and reseeds the canonical
-# default graph via scripts/defaults.sh.
+# Tears down every docker container the agent has spun up, removes the
+# SQLite state database and module data, then reseeds the canonical graph
+# through the normal CLI/API transaction path in scripts/defaults.sh.
 #
 # Usage:
 #   bash scripts/reset.sh
@@ -16,9 +16,9 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ---- refuse to run if the agent is up ------------------------------------
-# The agent holds graph.db open and a lock on data/. Wiping under a
-# running agent corrupts both. We don't auto-kill it — the user (or
-# their IDE) should explicitly stop the debug session first.
+# The agent holds data/state.db and its ownership lock open. Removing the
+# data directory underneath a running agent would invalidate its live SQLite
+# connection, so the user (or IDE) must stop the debug session first.
 
 if curl -fsS --max-time 1 http://127.0.0.1:2370/api/health >/dev/null 2>&1; then
     echo "ERROR: zeropoint-agent is running on :2370." >&2
@@ -48,6 +48,9 @@ mkdir -p "$WORKSPACE_ROOT/modules"
 
 echo "==> reseeding default graph ..."
 
+# The CLI falls back to an in-process FastAPI app while no server is running.
+# That creates data/state.db and applies each seed operation through the same
+# validation and SQLite transactions used by normal API clients.
 bash "$WORKSPACE_ROOT/scripts/defaults.sh"
 
 echo

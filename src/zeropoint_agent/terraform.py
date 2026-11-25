@@ -7,7 +7,9 @@ terraform-exec needed for our limited use).
 
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
@@ -33,14 +35,59 @@ def _vars_args(variables: Mapping[str, str]) -> list:
     return args
 
 
-def _run(cmd: list, cwd: Path, check: bool = True,
-         capture: bool = True) -> subprocess.CompletedProcess:
+def _terminate(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=3)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=3)
+
+
+def _run(
+    cmd: list,
+    cwd: Path,
+    check: bool = True,
+    capture: bool = True,
+    cancellation=None,
+) -> subprocess.CompletedProcess:
     logger.debug("terraform: %s (cwd=%s)", " ".join(cmd), cwd)
-    proc = subprocess.run(
-        cmd, cwd=str(cwd),
-        text=True,
-        capture_output=capture,
-    )
+    if cancellation is None:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            text=True,
+            capture_output=capture,
+        )
+    else:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            text=True,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            start_new_session=True,
+        )
+        try:
+            while True:
+                cancellation.raise_if_requested()
+                try:
+                    stdout, stderr = process.communicate(timeout=0.1)
+                    proc = subprocess.CompletedProcess(
+                        cmd, process.returncode, stdout, stderr
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except BaseException:
+            _terminate(process)
+            raise
     if check and proc.returncode != 0:
         raise TerraformError(
             f"{' '.join(cmd)} failed (exit {proc.returncode}):\n"
@@ -51,12 +98,17 @@ def _run(cmd: list, cwd: Path, check: bool = True,
 class TerraformExecutor:
     """Run terraform commands in a module directory."""
 
-    def __init__(self, module_dir: str | Path):
+    def __init__(self, module_dir: str | Path, cancellation=None):
         self.module_dir = Path(module_dir).resolve()
         self.terraform = _find_terraform()
+        self.cancellation = cancellation
 
     def init(self) -> None:
-        _run([self.terraform, "init", "-input=false", "-no-color"], self.module_dir)
+        _run(
+            [self.terraform, "init", "-input=false", "-no-color"],
+            self.module_dir,
+            cancellation=self.cancellation,
+        )
 
     def apply(self, variables: Mapping[str, str]) -> None:
         cmd = [self.terraform, "apply", "-auto-approve", "-input=false", "-no-color"]
@@ -64,12 +116,22 @@ class TerraformExecutor:
         # Capture so that on failure the TerraformError carries the
         # actual stderr/stdout from terraform — otherwise diagnostics
         # become impossible from the agent log alone.
-        _run(cmd, self.module_dir, capture=True)
+        _run(
+            cmd,
+            self.module_dir,
+            capture=True,
+            cancellation=self.cancellation,
+        )
 
     def destroy(self, variables: Mapping[str, str]) -> None:
         cmd = [self.terraform, "destroy", "-auto-approve", "-input=false", "-no-color"]
         cmd.extend(_vars_args(variables))
-        _run(cmd, self.module_dir, capture=True)
+        _run(
+            cmd,
+            self.module_dir,
+            capture=True,
+            cancellation=self.cancellation,
+        )
 
     def plan(self, variables: Mapping[str, str]) -> Tuple[bool, str]:
         """Run terraform plan -detailed-exitcode.
@@ -80,7 +142,12 @@ class TerraformExecutor:
         cmd = [self.terraform, "plan", "-detailed-exitcode",
                "-input=false", "-no-color"]
         cmd.extend(_vars_args(variables))
-        proc = _run(cmd, self.module_dir, check=False)
+        proc = _run(
+            cmd,
+            self.module_dir,
+            check=False,
+            cancellation=self.cancellation,
+        )
         if proc.returncode == 0:
             return False, proc.stdout
         if proc.returncode == 2:
@@ -93,7 +160,9 @@ class TerraformExecutor:
         """Read terraform outputs as a dict of {name: {value, type, sensitive}}."""
         proc = _run(
             [self.terraform, "output", "-json", "-no-color"],
-            self.module_dir)
+            self.module_dir,
+            cancellation=self.cancellation,
+        )
         if not proc.stdout.strip():
             return {}
         return json.loads(proc.stdout)

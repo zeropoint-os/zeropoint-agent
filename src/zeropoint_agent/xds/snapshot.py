@@ -189,17 +189,17 @@ def make_route_config(http_endpoints: List[ResolvedEndpoint]) -> RouteConfigurat
                 route=RouteAction(cluster="__unused__"),
             )],
         ))
-    for ep in http_endpoints:
-        domains = [ep.name]
-        if not ep.name.endswith(".local"):
-            domains.append(f"{ep.name}.local")
+    for endpoint in http_endpoints:
+        domains = [endpoint.name]
+        if not endpoint.name.endswith(".local"):
+            domains.append(f"{endpoint.name}.local")
         vhosts.append(VirtualHost(
-            name=ep.name,
+            name=endpoint.name,
             domains=domains,
             routes=[Route(
                 match=RouteMatch(prefix="/"),
                 route=RouteAction(
-                    cluster=_cluster_name(ep),
+                    cluster=_cluster_name(endpoint),
                     timeout=timedelta(seconds=0),
                     idle_timeout=timedelta(seconds=300),
                 ),

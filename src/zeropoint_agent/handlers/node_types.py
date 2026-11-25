@@ -108,7 +108,7 @@ def _dataclass_field_schema(f: dataclasses.Field, resolved_type: Any) -> Dict[st
 
 
 def _class_schema(short_name: str, cls: type) -> Dict[str, Any]:
-    """Schema for a node class — kind='node', endpoint=POST /api/dag/nodes.
+    """Schema for a node class — kind='node', endpoint=POST /api/graph/nodes.
 
     Reads dataclass fields (not __init__) so the class is the single
     source of truth for what the API surface looks like. Read-only
@@ -129,7 +129,7 @@ def _class_schema(short_name: str, cls: type) -> Dict[str, Any]:
             "type": short_name,
             "class_name": cls.__name__,
             "kind": "node",
-            "endpoint": "/api/dag/nodes",
+            "endpoint": "/api/graph/nodes",
             "module": cls.__module__,
             "default_perms": getattr(cls, "default_perms", "***"),
             "doc": (inspect.getdoc(cls) or "").split("\n\n", 1)[0],
@@ -150,7 +150,7 @@ def _class_schema(short_name: str, cls: type) -> Dict[str, Any]:
         "type": short_name,
         "class_name": cls.__name__,
         "kind": "node",
-        "endpoint": "/api/dag/nodes",
+        "endpoint": "/api/graph/nodes",
         "module": cls.__module__,
         "default_perms": getattr(cls, "default_perms", "***"),
         "doc": (inspect.getdoc(cls) or "").split("\n\n", 1)[0],
@@ -170,15 +170,14 @@ _OPERATION_SCHEMAS: List[Dict[str, Any]] = [
         "type": "module",
         "kind": "operation",
         "endpoint": "/api/modules",
-        "doc": ("Install a Terraform-managed module. Creates a namespace "
-                "under the chosen parent (default 'modules'), Vars "
-                "for every declared variable, and a Terraform that "
-                "runs terraform apply."),
+        "doc": ("Create a Promise-backed Module node. Its resolve fetches "
+                "the pinned source, produces Vars and Terraform children, "
+                "and applies the module durably."),
         "fields": [
             {"name": "module_id", "type": "string", "required": True,
              "description": "Unique id for this module instance (becomes the namespace name)."},
             {"name": "source", "type": "string", "required": True,
-             "description": "Git URL with @<40-char-sha> ref, or a local path (/, ./, ~/, file://)."},
+             "description": "Git URL pinned with an @<40-character-commit-sha> ref."},
             {"name": "parent_namespace", "type": "string", "required": False,
              "default": "modules",
              "description": "Namespace to install under."},

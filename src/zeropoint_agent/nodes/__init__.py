@@ -10,19 +10,30 @@ Organized by concern:
 
 from zeropoint_agent.nodes.core import ShellScript
 from zeropoint_agent.nodes.system import (
-    SystemDocker, DockerNetwork, NvidiaGpu, AmdGpu, SystemEnvoy,
+    SystemDocker, DockerNetwork, NvidiaGpu, AmdGpu, SystemEnvoy, Reboot,
 )
-from zeropoint_agent.nodes.hw import Disk, Partition, Format, Mount, MountDir
+from zeropoint_agent.nodes.hw import (
+    Disks,
+    HardwareDevice,
+    HardwareInventory,
+    Disk,
+    Partition,
+    Format,
+    Mount,
+    MountDir,
+)
 from zeropoint_agent.nodes.config import (
     Var, Namespace, NamespacedVar, OutputVar, DirectoryVar,
 )
-from zeropoint_agent.nodes.user import Terraform, Exposure, Service
+from zeropoint_agent.nodes.user import Module, Terraform, Exposure, Service
 
 __all__ = [
     "ShellScript",
     "SystemDocker", "DockerNetwork", "NvidiaGpu", "AmdGpu", "SystemEnvoy",
+    "Reboot",
+    "Disks", "HardwareDevice", "HardwareInventory",
     "Disk", "Partition", "Format", "Mount", "MountDir",
     "Var", "NamespacedVar", "OutputVar", "DirectoryVar",
     "Namespace",
-    "Terraform", "Exposure", "Service",
+    "Module", "Terraform", "Exposure", "Service",
 ]

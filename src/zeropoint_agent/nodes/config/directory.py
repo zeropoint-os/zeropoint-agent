@@ -36,10 +36,11 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
-from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.nodes.config.var import Var
+from zeropoint_agent.inode import NodeResult, NodeStatus, ResolveMode, readonly
+from zeropoint_agent.jobs import JobContext, JobSpec
+from zeropoint_agent.nodes.config.var import Var, VarResult
 
 logger = logging.getLogger(__name__)
 
@@ -136,20 +137,86 @@ class DirectoryVar(Var[str]):
     persisted. See module docstring for full move semantics.
     """
 
-    def on_config_changed(self, old_config: dict, new_config: dict,
-                          mode: ResolveMode) -> None:
+    previous_value: Optional[str] = readonly(default=None)
+
+    def on_config_changed(
+        self,
+        old_config: dict,
+        new_config: dict,
+        mode: ResolveMode,
+    ) -> None:
         # We only react to a change in `value`. `name` doesn't have
         # on-disk consequences.
         old_value = old_config.get("value")
         new_value = new_config.get("value")
         if old_value == new_value:
             return
-        if not old_value or not new_value:
-            # Going from None -> path (or vice versa) — no move; the
-            # directory will be created/abandoned lazily.
-            return
-        if mode == ResolveMode.MOCK:
-            logger.info("DirectoryVar mock: would move %s -> %s",
-                        old_value, new_value)
-            return
-        _safe_move(Path(old_value), Path(new_value))
+        del mode
+        self.previous_value = str(old_value) if old_value else None
+
+    def verify(self, mode: ResolveMode) -> NodeResult[VarResult[str]]:
+        if (
+            mode == ResolveMode.LIVE
+            and self.previous_value
+            and self.value
+            and self.previous_value != self.value
+            and Path(self.previous_value).exists()
+        ):
+            return NodeResult()
+        return super().verify(mode)
+
+    def resolve_promise(self, input, mode, context):
+        if (
+            mode != ResolveMode.LIVE
+            or not self.previous_value
+            or not self.value
+            or self.previous_value == self.value
+        ):
+            return super().resolve_promise(input, mode, context)
+        paths = sorted({self.previous_value, self.value})
+        return context.jobs.submit(
+            context,
+            JobSpec(
+                kind="node.directory.move",
+                arguments={
+                    "name": self.name,
+                    "old": self.previous_value,
+                    "new": self.value,
+                },
+                resources=[f"path:{path}" for path in paths],
+                max_attempts=3,
+            ),
+        )
+
+    def on_result_applied(
+        self,
+        result: NodeResult[VarResult[str]],
+        mode: ResolveMode,
+    ) -> bool:
+        del mode
+        if (
+            result.status == NodeStatus.SUCCESS
+            and result.output is not None
+            and result.output.value == self.value
+            and self.previous_value is not None
+        ):
+            self.previous_value = None
+            return True
+        return False
+
+
+def execute_directory_move_job(
+    context: JobContext,
+    arguments: Dict[str, str],
+) -> NodeResult[VarResult[str]]:
+    old = Path(str(arguments["old"]))
+    new = Path(str(arguments["new"]))
+    context.progress(0.1, {"phase": "prepare"})
+    context.cancellation.raise_if_requested()
+    _safe_move(old, new)
+    context.cancellation.raise_if_requested()
+    context.progress(1.0, {"phase": "complete"})
+    return NodeResult.success(VarResult(
+        name=str(arguments["name"]),
+        value=str(new),
+    ))

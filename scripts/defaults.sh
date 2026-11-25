@@ -46,6 +46,24 @@ zeropoint-agent node ensure namespace modules \
 zeropoint-agent node ensure namespace system \
     -c name=system --perms rw-
 
+zeropoint-agent node ensure namespace hardware \
+    -c name=hardware --perms rwd
+
+zeropoint-agent node ensure disks hardware/disks \
+    -p hardware \
+    --perms r-- --tags system
+
+for kind in gpu network usb pci system; do
+    node_id="hardware/${kind}s"
+    if [ "$kind" = "system" ]; then
+        node_id="hardware/system"
+    fi
+    zeropoint-agent node ensure hardware_inventory "$node_id" \
+        -p hardware \
+        -c "kind=$kind" \
+        --perms r-- --tags system
+done
+
 # Docker daemon healthcheck. Root-of-the-system-subtree: every other
 # system node that needs docker depends on this one (transitively),
 # so its resolve runs first.

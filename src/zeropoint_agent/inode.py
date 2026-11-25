@@ -6,17 +6,17 @@ Edges are type-checked bindings: parent.O must match child.I.
 dag.add() is the compiler — validates types at construction time.
 dag.resolve() is the runtime — propagates values through the graph.
 
-All node methods return NodeResult[O], which bundles:
-  - output (the O value)
-  - status (SUCCESS, PENDING_REBOOT, ERROR, etc.)
-  - systemd_units (deferred work for next boot)
-  - error message (if any)
+Node resolution is exposed uniformly as Promise[NodeResult[O]]. Existing
+synchronous nodes still implement resolve() and are wrapped as immediately
+resolved Promises; long-running nodes override resolve_promise() and submit a
+durable Job. NodeResult bundles output, status, deferred systemd work and any
+domain error.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, MISSING
 from enum import Enum
-from typing import Any, ClassVar, Generic, TypeVar, Optional, List
+from typing import Any, ClassVar, Dict, Generic, TypeVar, Optional, List
 
 I = TypeVar("I")  # Input type (parent's output contract)
 O = TypeVar("O")  # Output type (this node's contract)
@@ -112,6 +112,41 @@ WantedBy=multi-user.target
 """
 
 
+@dataclass(frozen=True)
+class ProducedNode:
+    """Serializable specification for a child node produced by resolution."""
+
+    id: str
+    node_class: str
+    config: Dict[str, Any]
+    parents: List[str] = field(default_factory=list)
+    perms: str = "***"
+    tags: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_node(
+        cls,
+        node_id: str,
+        node: "INode[Any, Any]",
+        *,
+        parents: Optional[List[str]] = None,
+        perms: str = "***",
+        tags: Optional[List[str]] = None,
+    ) -> "ProducedNode":
+        return cls(
+            id=node_id,
+            node_class=f"{type(node).__module__}.{type(node).__qualname__}",
+            config={
+                key: value
+                for key, value in node.__dict__.items()
+                if not key.startswith("_")
+            },
+            parents=list(parents or []),
+            perms=perms,
+            tags=list(tags or []),
+        )
+
+
 class NodeResult(Generic[O]):
     """
     Result of a node operation (resolve, verify, remove).
@@ -124,6 +159,7 @@ class NodeResult(Generic[O]):
         self.output: Optional[O] = None
         self.status: NodeStatus = NodeStatus.PENDING
         self.systemd_units: List[SystemdUnit] = []
+        self.produced_nodes: List[ProducedNode] = []
         self.error: Optional[str] = None
 
     # --- Chainable builders ---
@@ -170,10 +206,32 @@ class NodeResult(Generic[O]):
         self.systemd_units.append(unit)
         return self
 
+    def produce(
+        self,
+        node_id: str,
+        node: "INode[Any, Any]",
+        *,
+        parents: Optional[List[str]] = None,
+        perms: str = "***",
+        tags: Optional[List[str]] = None,
+    ) -> "NodeResult[O]":
+        self.produced_nodes.append(ProducedNode.from_node(
+            node_id,
+            node,
+            parents=parents,
+            perms=perms,
+            tags=tags,
+        ))
+        return self
+
     def __repr__(self) -> str:
         units = f", {len(self.systemd_units)} units" if self.systemd_units else ""
+        produced = (
+            f", {len(self.produced_nodes)} produced nodes"
+            if self.produced_nodes else ""
+        )
         err = f", error={self.error!r}" if self.error else ""
-        return f"NodeResult({self.status.value}{units}{err})"
+        return f"NodeResult({self.status.value}{units}{produced}{err})"
 
 
 class INode(ABC, Generic[I, O]):
@@ -243,6 +301,34 @@ class INode(ABC, Generic[I, O]):
         """
         ...
 
+    def resolve_promise(self, input: I, mode: ResolveMode, context):
+        """Return this node's result through the uniform Promise contract.
+
+        Existing synchronous nodes keep implementing ``resolve`` and are
+        wrapped as already-resolved Promises. Long-running nodes override this
+        hook and submit a durable Job through ``context.jobs``.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.resolve(input, mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
+
+    def verify_promise(self, input: I, mode: ResolveMode, context):
+        """Return verification through the uniform Promise contract.
+
+        Existing nodes remain synchronous until they opt into durable verify
+        Jobs. Parent inputs are available here even though legacy verify()
+        cannot accept them.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.verify(mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
+
     @abstractmethod
     def verify(self, mode: ResolveMode) -> NodeResult[O]:
         """
@@ -263,6 +349,20 @@ class INode(ABC, Generic[I, O]):
         May return PENDING_REBOOT with systemd units for deferred teardown.
         """
         ...
+
+    def remove_promise(self, input: I, mode: ResolveMode, context):
+        """Return removal through the same typed Promise contract.
+
+        Synchronous nodes are wrapped immediately. Nodes with durable teardown
+        override this hook and submit a Job while remaining in the graph until
+        the Promise resolves successfully.
+        """
+        from zeropoint_agent.promise import Promise
+
+        result = self.remove(mode)
+        if isinstance(result, Promise):
+            return result
+        return Promise.resolved(result)
 
     def on_config_changed(self, old_config: dict, new_config: dict,
                           mode: ResolveMode) -> None:
@@ -288,3 +388,15 @@ class INode(ABC, Generic[I, O]):
                 hooks should not perform real side effects.
         """
         return None
+
+    def on_result_applied(
+        self,
+        result: NodeResult[O],
+        mode: ResolveMode,
+    ) -> bool:
+        """Finalize runtime metadata after a result is durably accepted.
+
+        Return True when public node configuration changed and should be
+        persisted without advancing desired revision.
+        """
+        return False

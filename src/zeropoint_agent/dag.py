@@ -7,12 +7,19 @@ The executor is a generic NodeResult processor — it doesn't know
 what any node does, just reads the result and does the plumbing.
 """
 
+import importlib
 import logging
 from dataclasses import dataclass, asdict, field
 from pathlib import Path as FilePath
 from typing import Any, Dict, Iterable, List, Optional, Set, get_args
 
-from zeropoint_agent.inode import INode, ResolveMode, NodeStatus, NodeResult
+from zeropoint_agent.inode import (
+    INode,
+    NodeResult,
+    NodeStatus,
+    ProducedNode,
+    ResolveMode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +82,21 @@ class NodeEntry:
     # metadata (NOT declared on node types) — the code that places the node
     # in the graph stamps them. See zeropoint-agent/tags-model.
     tags: Set[str] = field(default_factory=set)
+    # Node whose successful resolve produced this definition. None for
+    # user-authored and statically seeded nodes.
+    producer_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ProducedReconciliation:
+    added: Set[str] = field(default_factory=set)
+    updated: Set[str] = field(default_factory=set)
+    removed: Set[str] = field(default_factory=set)
+    retained: Set[str] = field(default_factory=set)
+
+    @property
+    def changed(self) -> Set[str]:
+        return self.added | self.updated | self.retained
 
 
 class DAG:
@@ -159,7 +181,8 @@ class DAG:
     def add(self, node_id: str, node: INode,
             parents: Optional[List[str]] = None,
             perms: str = "***",
-            tags: Optional[Iterable[str]] = None) -> str:
+            tags: Optional[Iterable[str]] = None,
+            producer_id: Optional[str] = None) -> str:
         """Add a new node with type-checked edges.
 
         Raises:
@@ -224,23 +247,26 @@ class DAG:
         entry.path = self._compute_path(node, parents)
         entry.perms = perms
         entry.tags = set(tags) if tags else set()
-        # Stamp identity + back-ref onto the node so it can address
-        # its own position in the graph (e.g. ensure children).
+        entry.producer_id = producer_id
+        if self._store:
+            from zeropoint_agent.graph_store import StoredNode
+            config = {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
+            with self._store.transaction():
+                self._store.add_node(StoredNode(
+                    id=node_id, node_type=type(node).__name__,
+                    node_class=f"{type(node).__module__}.{type(node).__name__}",
+                    config=config, perms=entry.perms,
+                    tags=sorted(entry.tags),
+                    producer_id=producer_id))
+                for parent_id in parents:
+                    self._store.add_edge(parent_id, node_id)
+
+        # Stamp identity + back-ref only after persistence succeeds, so a
+        # direct DAG.add() cannot leave memory ahead of durable state.
         node.id = node_id
         node.dag = self
         self._nodes[node_id] = entry
         self._order.append(node_id)
-
-        if self._store:
-            from zeropoint_agent.graph_store import StoredNode
-            config = {k: v for k, v in node.__dict__.items() if not k.startswith("_")}
-            self._store.add_node(StoredNode(
-                id=node_id, node_type=type(node).__name__,
-                node_class=f"{type(node).__module__}.{type(node).__name__}",
-                config=config, perms=entry.perms,
-                tags=sorted(entry.tags)))
-            for parent_id in parents:
-                self._store.add_edge(parent_id, node_id)
 
         logger.debug(f"Added {node_id}: {type(node).__name__} "
                      f"[{i_type.__name__ if i_type else '∅'} → {o_type.__name__}] "
@@ -271,17 +297,247 @@ class DAG:
             entry.perms = stored_perms if _valid_perms(stored_perms) else "***"
             stored_tags = getattr(stored, "tags", None) or []
             entry.tags = set(stored_tags)
-            # Restore the persisted output (as a dict). Consumers that
-            # type-check should accept dicts as well as the original
-            # dataclass shape.
+            entry.producer_id = getattr(stored, "producer_id", None)
             if getattr(stored, "output", None) is not None:
-                entry.output = stored.output
+                from zeropoint_agent.promise import decode_output
+
+                entry.output = decode_output(
+                    getattr(stored, "output_type", None),
+                    stored.output,
+                )
         entry.path = self._compute_path(node, parents)
         self._nodes[node_id] = entry
         self._order.append(node_id)
         logger.debug(
             f"Rehydrated {node_id} (status={entry.status.value}, "
             f"path={entry.path!r}, perms={entry.perms})")
+
+    def reconcile_produced(
+        self,
+        producer_id: str,
+        specs: Iterable[ProducedNode],
+    ) -> ProducedReconciliation:
+        """Replace the child subgraph owned by one producer.
+
+        Missing produced nodes are removed only when no node outside the
+        missing set depends on them. Referenced missing nodes stay in the
+        graph, are invalidated, and fail through their ordinary verify/resolve
+        behavior until the producer emits them again.
+        """
+        if producer_id not in self._nodes:
+            raise KeyError(f"producer node not found: {producer_id}")
+
+        specs_by_id: Dict[str, ProducedNode] = {}
+        for spec in specs:
+            if spec.id == producer_id:
+                raise ValueError("a node cannot produce itself")
+            if spec.id in specs_by_id:
+                raise ValueError(f"duplicate produced node: {spec.id}")
+            specs_by_id[spec.id] = spec
+
+        added: Set[str] = set()
+        updated: Set[str] = set()
+        pending = dict(specs_by_id)
+        while pending:
+            progressed = False
+            for node_id, spec in list(pending.items()):
+                if any(
+                    parent_id not in self._nodes
+                    and parent_id not in specs_by_id
+                    for parent_id in spec.parents
+                ):
+                    missing = [
+                        parent_id for parent_id in spec.parents
+                        if parent_id not in self._nodes
+                        and parent_id not in specs_by_id
+                    ]
+                    raise KeyError(
+                        f"produced node {node_id!r} has missing parents: {missing}"
+                    )
+                if any(parent_id in pending for parent_id in spec.parents):
+                    continue
+                node = self._instantiate_produced(spec)
+                existing = self._nodes.get(node_id)
+                if existing is None:
+                    self.add(
+                        node_id,
+                        node,
+                        parents=list(spec.parents),
+                        perms=spec.perms,
+                        tags=spec.tags,
+                        producer_id=producer_id,
+                    )
+                    added.add(node_id)
+                else:
+                    if existing.producer_id is None:
+                        updated.add(node_id)
+                        del pending[node_id]
+                        progressed = True
+                        continue
+                    if existing.producer_id != producer_id:
+                        raise NodeExists(
+                            f"produced node {node_id!r} collides with a node "
+                            "owned outside this producer"
+                        )
+                    from zeropoint_agent.nodes.config.var import Var
+                    if (
+                        isinstance(existing.node, Var)
+                        and isinstance(node, Var)
+                        and type(existing.node) is type(node)
+                    ):
+                        external_parents = [
+                            parent_id
+                            for parent_id in existing.parents
+                            if parent_id not in spec.parents
+                            and self._nodes[parent_id].producer_id != producer_id
+                        ]
+                        spec = ProducedNode(
+                            id=spec.id,
+                            node_class=spec.node_class,
+                            config=self._node_config(existing.node),
+                            parents=[*spec.parents, *external_parents],
+                            perms=spec.perms,
+                            tags=spec.tags,
+                        )
+                        node = self._instantiate_produced(spec)
+                    definition_changed = (
+                        f"{type(existing.node).__module__}."
+                        f"{type(existing.node).__qualname__}" != spec.node_class
+                        or self._node_config(existing.node) != spec.config
+                        or existing.parents != list(spec.parents)
+                        or existing.perms != spec.perms
+                        or existing.tags != set(spec.tags)
+                    )
+                    if definition_changed:
+                        self._replace_produced_node(
+                            node_id,
+                            node,
+                            spec,
+                            producer_id,
+                        )
+                        updated.add(node_id)
+                del pending[node_id]
+                progressed = True
+            if not progressed:
+                raise ValueError(
+                    "produced child specifications contain a dependency cycle"
+                )
+
+        owned = {
+            node_id for node_id, entry in self._nodes.items()
+            if entry.producer_id == producer_id
+        }
+        missing = owned - set(specs_by_id)
+        removed: Set[str] = set()
+        retained: Set[str] = set()
+        for node_id in reversed(self._order.copy()):
+            if node_id not in missing:
+                continue
+            external_children = {
+                child_id for child_id, entry in self._nodes.items()
+                if node_id in entry.parents and child_id not in missing
+            }
+            if external_children:
+                entry = self._nodes[node_id]
+                entry.status = NodeStatus.PENDING
+                entry.output = None
+                entry.error = None
+                if self._store:
+                    self._store.update_status(node_id, NodeStatus.PENDING.value)
+                    self._store.invalidate_descendants(node_id)
+                retained.add(node_id)
+                missing.remove(node_id)
+                continue
+            self.remove(node_id)
+            removed.add(node_id)
+            missing.remove(node_id)
+
+        return ProducedReconciliation(
+            added=added,
+            updated=updated,
+            removed=removed,
+            retained=retained,
+        )
+
+    @staticmethod
+    def _node_config(node: INode) -> Dict[str, Any]:
+        return {
+            key: value
+            for key, value in node.__dict__.items()
+            if not key.startswith("_")
+        }
+
+    @staticmethod
+    def _instantiate_produced(spec: ProducedNode) -> INode:
+        module_name, _, qualname = spec.node_class.rpartition(".")
+        if not module_name:
+            raise ValueError(f"invalid produced node class: {spec.node_class}")
+        target: Any = importlib.import_module(module_name)
+        for part in qualname.split("."):
+            target = getattr(target, part)
+        node = target(**spec.config)
+        if not isinstance(node, INode):
+            raise TypeError(
+                f"produced node class is not an INode: {spec.node_class}"
+            )
+        return node
+
+    def _replace_produced_node(
+        self,
+        node_id: str,
+        node: INode,
+        spec: ProducedNode,
+        producer_id: str,
+    ) -> None:
+        i_type, o_type = _get_io_types(node)
+        for parent_id in spec.parents:
+            if parent_id not in self._nodes:
+                raise KeyError(f"Parent node not found: {parent_id}")
+            parent_o = self._nodes[parent_id].output_type
+            if i_type is type(None) or i_type is object or i_type is Any:
+                continue
+            try:
+                matches = issubclass(parent_o, i_type)
+            except TypeError:
+                continue
+            if not matches:
+                raise TypeError(
+                    f"Type mismatch: {parent_id}.O "
+                    f"({parent_o.__name__}) does not match "
+                    f"{node_id}.I ({i_type.__name__})"
+                )
+
+        from zeropoint_agent.graph_store import StoredNode
+
+        if self._store:
+            self._store.replace_node_definition(
+                StoredNode(
+                    id=node_id,
+                    node_type=type(node).__name__,
+                    node_class=spec.node_class,
+                    config=dict(spec.config),
+                    perms=spec.perms,
+                    tags=list(spec.tags),
+                    producer_id=producer_id,
+                ),
+                list(spec.parents),
+            )
+            self._store.invalidate_descendants(node_id)
+
+        node.id = node_id
+        node.dag = self
+        entry = self._nodes[node_id]
+        entry.node = node
+        entry.parents = list(spec.parents)
+        entry.status = NodeStatus.PENDING
+        entry.output = None
+        entry.error = None
+        entry.input_type = i_type
+        entry.output_type = o_type
+        entry.path = self._compute_path(node, list(spec.parents))
+        entry.perms = spec.perms
+        entry.tags = set(spec.tags)
+        entry.producer_id = producer_id
 
     def _compute_path(self, node: INode, parents: List[str]) -> str:
         """Compute a node's path from its Namespace parents.
@@ -376,8 +632,87 @@ class DAG:
             results[node_id] = result.status
         return results
 
+    def verify_node_promise(self, node_id: str, input_val, mode: ResolveMode, context):
+        """Start one node's verification phase."""
+        from zeropoint_agent.promise import Promise
+
+        entry = self._nodes[node_id]
+        try:
+            logger.info(f"Verifying {node_id} ({type(entry.node).__name__})")
+            return entry.node.verify_promise(input_val, mode, context)
+        except Exception as error:
+            logger.error(f"✗ {node_id} — verification failed: {error}")
+            return Promise.resolved(NodeResult.failed(str(error)))
+
+    def resolve_node_promise(self, node_id: str, input_val, mode: ResolveMode, context):
+        """Start one ready node's resolution phase."""
+        from zeropoint_agent.promise import Promise
+
+        entry = self._nodes[node_id]
+        node = entry.node
+        try:
+            if mode == ResolveMode.DRY_RUN:
+                mock_result = node.resolve(input_val, ResolveMode.MOCK)
+                if isinstance(mock_result, Promise):
+                    if mock_result.is_pending:
+                        raise RuntimeError("mock resolve returned a pending Promise")
+                    mock_result = mock_result.result()
+                result = NodeResult()
+                result.status = NodeStatus.PENDING
+                result.output = mock_result.output
+                self.apply_promise_result(node_id, result, mode)
+                logger.info(f"~ {node_id} — would change (dry run)")
+                return Promise.resolved(result)
+
+            entry.status = NodeStatus.RUNNING
+            entry.error = None
+            logger.info(f"Resolving {node_id} ({type(node).__name__})")
+            return node.resolve_promise(input_val, mode, context)
+        except Exception as error:
+            logger.error(f"✗ {node_id} — failed: {error}")
+            result = NodeResult.failed(str(error))
+            self.apply_promise_result(node_id, result, mode)
+            return Promise.resolved(result)
+
+    def remove_node_promise(self, node_id: str, input_val, mode: ResolveMode, context):
+        """Start durable teardown while retaining the node until success."""
+        from zeropoint_agent.promise import Promise
+
+        entry = self._nodes[node_id]
+        try:
+            entry.status = NodeStatus.RUNNING
+            entry.error = None
+            logger.info(f"Removing {node_id} ({type(entry.node).__name__})")
+            promise = entry.node.remove_promise(input_val, mode, context)
+            if promise.is_resolved:
+                result = promise.result()
+                entry.status = result.status
+                entry.error = result.error
+            return promise
+        except Exception as error:
+            logger.error(f"✗ {node_id} — removal failed: {error}")
+            result = NodeResult.failed(str(error))
+            entry.status = result.status
+            entry.error = result.error
+            return Promise.resolved(result)
+
+    def apply_promise_result(
+        self,
+        node_id: str,
+        result: NodeResult,
+        mode: ResolveMode,
+    ) -> None:
+        """Publish a resolved Promise into the in-memory DAG."""
+        entry = self._nodes[node_id]
+        entry.status = result.status
+        entry.output = result.output
+        entry.error = result.error
+        if mode != ResolveMode.MOCK:
+            for unit in result.systemd_units:
+                self._write_systemd_unit(unit)
+
     def _resolve_node(self, node_id: str, entry: NodeEntry, mode: ResolveMode) -> NodeResult:
-        """Resolve a single node — the generic NodeResult processor."""
+        """Resolve a single node — the legacy synchronous processor."""
         node = entry.node
 
         try:
@@ -493,18 +828,17 @@ class DAG:
         except Exception as e:
             logger.warning(f"Failed to write systemd unit {unit.name}: {e}")
 
-    def remove(self, node_id: str) -> None:
-        """Remove a node from the graph."""
-        if node_id in self._nodes:
-            del self._nodes[node_id]
-            self._order = [nid for nid in self._order if nid != node_id]
-            for entry in self._nodes.values():
-                if node_id in entry.parents:
-                    entry.parents.remove(node_id)
-            if self._store:
-                self._store.remove_node(node_id)
-        else:
+    def remove(self, node_id: str, *, persist: bool = True) -> None:
+        """Remove a node from memory and, unless already deleted, storage."""
+        if node_id not in self._nodes:
             raise KeyError(f"Node not found: {node_id}")
+        if persist and self._store and not self._store.remove_node(node_id):
+            raise KeyError(f"Node not found in store: {node_id}")
+        del self._nodes[node_id]
+        self._order = [nid for nid in self._order if nid != node_id]
+        for entry in self._nodes.values():
+            if node_id in entry.parents:
+                entry.parents.remove(node_id)
 
     def get(self, node_id: str) -> NodeEntry:
         return self._nodes[node_id]

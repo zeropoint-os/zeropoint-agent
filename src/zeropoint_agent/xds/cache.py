@@ -166,8 +166,14 @@ class XdsCache:
             try:
                 from zeropoint_agent.mdns import get_registry
                 registry = get_registry()
-                registry.reconcile([(n, 80) for n in http_names])
-                self._last_http_names = http_names
+                reconciled = await asyncio.to_thread(
+                    registry.reconcile,
+                    [(name, 80) for name in http_names],
+                )
+                if reconciled:
+                    self._last_http_names = http_names
+                else:
+                    self._dirty = True
             except Exception as e:
                 logger.warning("mDNS reconcile failed (continuing): %s", e)
-
+                self._dirty = True

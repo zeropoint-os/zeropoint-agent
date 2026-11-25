@@ -10,7 +10,7 @@ from zeropoint_agent.handlers import node_to_dict
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/dag", tags=["query"])
+router = APIRouter(tags=["graph"])
 
 
 @router.get("/query/{pattern:path}")
@@ -19,14 +19,14 @@ async def query_graph(pattern: str, request: Request,
     """Query the graph with a glob-style path pattern.
 
     Examples:
-        /api/dag/query/**                  → all nodes
-        /api/dag/query/disk-sda            → single node
-        /api/dag/query/disk-*              → all disks
-        /api/dag/query/disk-sda/*          → direct children
-        /api/dag/query/disk-sda/**         → entire subtree
-        /api/dag/query/**/ollama           → find anywhere
-        /api/dag/query/**?status=error     → all errors
-        /api/dag/query/**?type=Terraform  → all modules
+        /api/graph/query/**                  → all nodes
+        /api/graph/query/disk-sda            → single node
+        /api/graph/query/disk-*              → all disks
+        /api/graph/query/disk-sda/*          → direct children
+        /api/graph/query/disk-sda/**         → entire subtree
+        /api/graph/query/**/ollama           → find anywhere
+        /api/graph/query/**?status=error     → all errors
+        /api/graph/query/**?type=Terraform  → all modules
     """
     pattern = unquote(pattern)
     dag = request.app.state.dag
@@ -47,9 +47,9 @@ async def graph_health(pattern: str, request: Request):
     """Health check via glob pattern.
 
     Examples:
-        /api/dag/health/**              → whole graph health
-        /api/dag/health/disk-sda/**     → disk subtree health
-        /api/dag/health/ollama          → single node health
+        /api/graph/health/**              → whole graph health
+        /api/graph/health/disk-sda/**     → disk subtree health
+        /api/graph/health/ollama          → single node health
     """
     pattern = unquote(pattern)
     dag = request.app.state.dag

@@ -10,34 +10,25 @@
 	"remoteUser": "vscode",
 	"initializeCommand": "bash .devcontainer/init.sh",
 	"features": {
-		"ghcr.io/devcontainers/features/node:1": {
-			"version": "18.17.0"
-		},
 		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
 		"ghcr.io/nils-geistmann/devcontainers-features/create-remote-user:0": {
 			"passwordLessSudo": true
-		},
-		"ghcr.io/schlich/devcontainer-features/playwright:0": {
-			"browsers": "chromium"
 		}
 	},
 	"customizations": {
-        "vscode": {
-            "settings": {
-                "terminal.integrated.defaultProfile.linux": "bash"
+		"vscode": {
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
 			},
 			"extensions": [
 				"ms-python.python",
-				"zaaack.markdown-editor",
 				"ms-python.debugpy",
-				"idered.npm",
-				"msjsdiag.debugger-for-chrome",
 				"qwtel.sqlite-viewer"
 			]
-        }
-    },
-	"postCreateCommand": ". ${NVM_DIR}/nvm.sh && nvm install 18.17.0 && nvm use 18.17.0 && pip install -e . && bash .devcontainer/postCreateCommand.sh",
-	"postAttachCommand": ". ${NVM_DIR}/nvm.sh && nvm use 18.17.0 && npm install --prefix webui",
+		}
+	},
+	"postCreateCommand": "pip install -e .",
+	"postStartCommand": "bash .devcontainer/postStartCommand.sh",
 	"containerEnv": {
 		"ZP_MODULE_STORAGE": "${containerWorkspaceFolder}/modules",
 		"ZEROPOINT_MODE": "live"
@@ -53,7 +44,7 @@
 			"onAutoForward": "notify"
 		},
 		"2370": {
-			"label": "ZeroPoint Agent API + WebUI",
+			"label": "ZeroPoint Agent API",
 			"onAutoForward": "notify"
 		}
 	}

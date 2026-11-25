@@ -6,9 +6,10 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from zeropoint_agent.dag import NodeExists
 from zeropoint_agent.graph_transaction import graph_transaction
-from zeropoint_agent.module_installer import add_module
 from zeropoint_agent.inode import ResolveMode
+from zeropoint_agent.nodes.user.module_definition import Module
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +26,7 @@ class ModuleAddRequest(BaseModel):
 
 @router.post("")
 async def add_module_endpoint(req: ModuleAddRequest, request: Request):
-    """Install a Terraform module into the DAG.
-
-    Requires `w` on the target parent namespace (default ``modules``).
-
-    Clones the module to inspect ``variables.tf``, wires each declared
-    variable to an existing Var (by name) or auto-creates a new
-    ``{namespace}/{varname}`` Var with the module's default. Adds the
-    Terraform under the namespace.
-
-    The structural install (~15 dag.add calls) is wrapped in a
-    graph_transaction so any failure halfway through rolls back the
-    whole subgraph — no half-installed modules left in the store.
-
-    If ``resolve`` is true, immediately resolves the new module and its
-    parents. A resolve failure is NOT rolled back: the install is
-    complete and the user can fix config + retry.
-    """
+    """Create a Module producer and optionally start its durable GraphRun."""
     dag = request.app.state.dag
 
     # Permission check on the parent namespace.
@@ -49,6 +34,11 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
         raise HTTPException(
             status_code=404,
             detail=f"parent namespace {req.parent_namespace!r} not found")
+    if dag._store and dag._store.is_removal_pending(req.parent_namespace):
+        raise HTTPException(
+            status_code=409,
+            detail=f"parent namespace {req.parent_namespace!r} is pending removal",
+        )
     eff = dag.effective_perms(req.parent_namespace)
     if "w" not in eff:
         raise HTTPException(
@@ -59,11 +49,19 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
 
     try:
         with graph_transaction(dag):
-            result = add_module(
-                dag, req.module_id, req.source,
-                overrides=req.overrides or {},
-                parent_namespace=req.parent_namespace,
+            namespace_id = f"{req.parent_namespace}/{req.module_id}"
+            dag.add(
+                namespace_id,
+                Module(
+                    name=req.module_id,
+                    source=req.source,
+                    overrides=req.overrides or {},
+                ),
+                parents=[req.parent_namespace],
+                perms="rwd",
             )
+    except NodeExists as error:
+        raise HTTPException(status_code=409, detail=str(error))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -73,11 +71,9 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
     response: Dict = {
-        "module_id": result.module_id,
-        "namespace_id": result.namespace_id,
-        "terraform_id": result.terraform_id,
-        "created_var_nodes": result.created_var_nodes,
-        "wired_existing_nodes": sorted(set(result.wired_existing_nodes)),
+        "module_id": req.module_id,
+        "namespace_id": namespace_id,
+        "status": "pending",
     }
 
     if req.resolve:
@@ -88,44 +84,14 @@ async def add_module_endpoint(req: ModuleAddRequest, request: Request):
             "mock": ResolveMode.MOCK,
         }.get(mode_str, ResolveMode.MOCK)
 
-        targets = list(dict.fromkeys(
-            result.created_var_nodes
-            + list(set(result.wired_existing_nodes))
-        ))
-        statuses = dag.resolve_subset(targets, mode=mode)
-        response["resolve"] = {nid: s.value for nid, s in statuses.items()}
-        entry = dag.get(result.terraform_id)
-        response["status"] = entry.status.value
-        if entry.error:
-            response["error"] = entry.error
-
-    return response
-
-    response: Dict = {
-        "module_id": result.module_id,
-        "namespace_id": result.namespace_id,
-        "terraform_id": result.terraform_id,
-        "created_var_nodes": result.created_var_nodes,
-        "wired_existing_nodes": sorted(set(result.wired_existing_nodes)),
-    }
-
-    if req.resolve:
-        mode_str = getattr(request.app.state, "default_mode", "mock")
-        mode = {
-            "live": ResolveMode.LIVE,
-            "dry_run": ResolveMode.DRY_RUN,
-            "mock": ResolveMode.MOCK,
-        }.get(mode_str, ResolveMode.MOCK)
-
-        targets = list(dict.fromkeys(
-            result.created_var_nodes
-            + list(set(result.wired_existing_nodes))
-        ))
-        statuses = dag.resolve_subset(targets, mode=mode)
-        response["resolve"] = {nid: s.value for nid, s in statuses.items()}
-        entry = dag.get(result.terraform_id)
-        response["status"] = entry.status.value
-        if entry.error:
-            response["error"] = entry.error
+        run_promise = request.app.state.graph_runner.start(
+            mode,
+            node_ids=[req.parent_namespace, namespace_id],
+            pattern=namespace_id,
+        )
+        run_id = run_promise.id
+        run = request.app.state.graph_runner.describe(run_id)
+        response["run_id"] = run_id
+        response["status"] = run["status"]
 
     return response

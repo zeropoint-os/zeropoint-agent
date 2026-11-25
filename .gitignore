@@ -206,19 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# TypeScript
-*.tsbuildinfo
-
 # Build output
 dist/
 build/
@@ -228,7 +215,6 @@ coverage/
 temp/
 tmp/
 .cache/
-.eslintcache
 
 # Misc
 .DS_Store
@@ -245,5 +231,6 @@ modules/
 logs/
 envoy/
 
-# Generated per-checkout by .devcontainer/init.sh (worktree git mount)
+# Generated per-checkout by devcontainer tooling.
 .devcontainer/docker-compose.worktree.yml
+.devcontainer/devcontainer-lock.json
