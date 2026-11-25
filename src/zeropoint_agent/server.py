@@ -161,6 +161,7 @@ def create_app() -> FastAPI:
         app.state.identity = load_or_create_identity(app.state.store)
         # DAG.__init__ rehydrates persisted nodes from the store.
         app.state.dag = DAG(store=app.state.store)
+        app.state.dag.machine_name = app.state.identity.name
         if os.environ.get("ZEROPOINT_SEED_ROOTS") == "1":
             with graph_transaction(app.state.dag):
                 root_specs = (

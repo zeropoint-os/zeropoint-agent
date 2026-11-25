@@ -1,13 +1,8 @@
-"""Build Envoy xDS snapshots from a list of resolved Endpoints.
+"""Build Envoy xDS snapshots from resolved ingress routes.
 
-Mirrors internal/xds/snapshot.go from the Go agent. Each call returns
-a fresh (listeners, routes, clusters) triple at a monotonic version.
-
-HTTP endpoints share one Listener on :80 with HCM/RDS; each gets a
-VirtualHost (domain = name and name.local) routed to its own Cluster.
-TCP endpoints get one Listener per endpoint bound to host_port, with a
-TcpProxy filter pointing at its Cluster. Clusters are STRICT_DNS with
-a single endpoint at `<container>-main:<container_port>`.
+HTTP endpoints share the single machine Envoy listener on :80. Each endpoint
+gets one flat, machine-qualified `.local` VirtualHost routed to its upstream at
+`/`. TCP endpoints retain dedicated listeners.
 """
 
 from __future__ import annotations
@@ -51,7 +46,7 @@ HTTP_LISTEN_PORT = 80
 class ResolvedEndpoint:
     """An Endpoint plus the resolved facts needed to build a snapshot."""
     id: str                # graph id, stable resource discriminator
-    name: str              # mDNS hostname / vhost name (http) or label (tcp)
+    name: str              # flat mDNS hostname (http) or label (tcp)
     protocol: str          # "http" | "tcp"
     container: str         # docker DNS name on zeropoint-network (e.g. "echo-main")
     container_port: int    # port inside the container
@@ -190,12 +185,9 @@ def make_route_config(http_endpoints: List[ResolvedEndpoint]) -> RouteConfigurat
             )],
         ))
     for endpoint in http_endpoints:
-        domains = [endpoint.name]
-        if not endpoint.name.endswith(".local"):
-            domains.append(f"{endpoint.name}.local")
         vhosts.append(VirtualHost(
             name=endpoint.name,
-            domains=domains,
+            domains=[endpoint.name],
             routes=[Route(
                 match=RouteMatch(prefix="/"),
                 route=RouteAction(

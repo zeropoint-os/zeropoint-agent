@@ -1,12 +1,4 @@
-"""mDNS / Zeroconf registry for http exposures.
-
-For every http Exposure with a name N, we advertise `N.local` over
-mDNS. Other hosts on the LAN can then resolve it to this host's IP
-and reach the Envoy HTTP listener on :80.
-
-In mock mode and when zeroconf isn't available we are silently a no-op
-so tests and dev environments don't need extra dependencies.
-"""
+"""mDNS / Zeroconf registry for machine-scoped HTTP exposures."""
 
 from __future__ import annotations
 
@@ -22,32 +14,38 @@ def _zeroconf():
     try:
         from zeroconf import Zeroconf, ServiceInfo  # type: ignore
         return Zeroconf, ServiceInfo
-    except Exception as e:
-        logger.debug("zeroconf unavailable: %s", e)
+    except Exception as error:
+        logger.debug("zeroconf unavailable: %s", error)
         return None, None
 
 
 def _host_ip() -> str:
     """Best-effort LAN IP of this host (the one Envoy will be reachable on)."""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            # Doesn't actually send; uses routing table to pick local iface.
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
         finally:
-            s.close()
+            sock.close()
     except Exception:
         return "127.0.0.1"
 
 
+def _canonical_local_hostname(name: str) -> str:
+    hostname = name.strip().rstrip(".")
+    if not hostname.lower().endswith(".local"):
+        raise ValueError(f"mDNS exposure hostname must end in .local: {name!r}")
+    return hostname
+
+
 class MdnsRegistry:
-    """Process-wide singleton-ish registry of registered http endpoints."""
+    """Process-wide registry of canonical HTTP exposure hostnames."""
 
     def __init__(self):
         self._zc = None
         self._info_type = None
-        self._registered: Dict[str, object] = {}  # name -> ServiceInfo
+        self._registered: Dict[str, object] = {}
         self._lock = threading.Lock()
 
     def _ensure_zc(self) -> bool:
@@ -60,27 +58,26 @@ class MdnsRegistry:
             self._zc = Zeroconf()
             self._info_type = ServiceInfo
             return True
-        except Exception as e:
-            logger.warning("zeroconf init failed: %s", e)
+        except Exception as error:
+            logger.warning("zeroconf init failed: %s", error)
             return False
 
     def register(self, name: str, port: int = 80) -> bool:
-        """Register `<name>.local` pointing at this host on `port`."""
+        """Register a canonical machine-scoped `.local` hostname."""
+        hostname = _canonical_local_hostname(name)
         if not self._ensure_zc():
             return False
         with self._lock:
-            if name in self._registered:
+            if hostname in self._registered:
                 return True
             ip = _host_ip()
             try:
-                # Advertise an HTTP service so OS-level mDNS resolvers
-                # publish a matching A record for the hostname.
                 info = self._info_type(
                     type_="_http._tcp.local.",
-                    name=f"{name}._http._tcp.local.",
+                    name=f"{hostname}._http._tcp.local.",
                     addresses=[socket.inet_aton(ip)],
                     port=port,
-                    server=f"{name}.local.",
+                    server=f"{hostname}.",
                     properties={},
                 )
                 self._zc.register_service(
@@ -88,38 +85,40 @@ class MdnsRegistry:
                     allow_name_change=False,
                     cooperating_responders=True,
                 )
-                self._registered[name] = info
-                logger.info("mDNS registered %s.local -> %s:%d", name, ip, port)
+                self._registered[hostname] = info
+                logger.info("mDNS registered %s -> %s:%d", hostname, ip, port)
                 return True
-            except Exception as e:
-                logger.warning("mDNS register %s failed: %r", name, e)
+            except Exception as error:
+                logger.warning("mDNS register %s failed: %r", hostname, error)
                 return False
 
     def unregister(self, name: str) -> None:
         if self._zc is None:
             return
+        hostname = _canonical_local_hostname(name)
         with self._lock:
-            info = self._registered.pop(name, None)
+            info = self._registered.pop(hostname, None)
         if info is not None:
             try:
                 self._zc.unregister_service(info)
-                logger.info("mDNS unregistered %s.local", name)
-            except Exception as e:
-                logger.warning("mDNS unregister %s failed: %s", name, e)
+                logger.info("mDNS unregistered %s", hostname)
+            except Exception as error:
+                logger.warning("mDNS unregister %s failed: %s", hostname, error)
 
     def reconcile(self, names: Iterable[Tuple[str, int]]) -> bool:
-        """Ensure exactly the given (name, port) entries are registered."""
-        desired = dict(names)
+        """Ensure exactly the given canonical (hostname, port) entries exist."""
+        desired = {
+            _canonical_local_hostname(name): port
+            for name, port in names
+        }
         succeeded = True
         with self._lock:
             current = set(self._registered.keys())
-        # Remove stale
-        for name in current - set(desired):
-            self.unregister(name)
-        # Add missing
-        for name, port in desired.items():
-            if name not in current:
-                succeeded = self.register(name, port) and succeeded
+        for hostname in current - set(desired):
+            self.unregister(hostname)
+        for hostname, port in desired.items():
+            if hostname not in current:
+                succeeded = self.register(hostname, port) and succeeded
         return succeeded
 
     def close(self) -> None:

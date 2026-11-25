@@ -37,7 +37,11 @@ from pydantic import BaseModel, ConfigDict
 
 from zeropoint_agent.graph_transaction import graph_transaction
 from zeropoint_agent.nodes.config.namespace import Namespace
-from zeropoint_agent.nodes.user.exposure import Exposure
+from zeropoint_agent.nodes.user.exposure import (
+    Exposure,
+    SYSTEM_ENVOY_NODE_ID,
+    canonical_local_hostname,
+)
 from zeropoint_agent.nodes.user.service import Service
 
 logger = logging.getLogger(__name__)
@@ -196,8 +200,20 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
             detail=f"Exposure name {name!r} must be alphanumeric (with _ or -).")
 
     protocol = _service_protocol(svc_entry) or "tcp"
+    hostname = None
     if protocol == "http":
         _validate_http_hostname(request, dag, name)
+        identity = getattr(request.app.state, "identity", None)
+        machine_name = str(getattr(identity, "name", ""))
+        if not machine_name:
+            raise HTTPException(
+                status_code=500,
+                detail="ZeroPoint machine identity is unavailable.",
+            )
+        try:
+            hostname = canonical_local_hostname(name, machine_name)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     host_port = int(body.host_port or 0)
     if protocol == "tcp" and host_port == 0:
         host_port = _allocate_host_port(dag)
@@ -209,10 +225,13 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
 
     try:
         with graph_transaction(dag):
+            parents = [body.service_id]
+            if SYSTEM_ENVOY_NODE_ID in dag.nodes:
+                parents.append(SYSTEM_ENVOY_NODE_ID)
             dag.add(
                 exposure_id,
                 Exposure(name=name, host_port=host_port),
-                parents=[body.service_id],
+                parents=parents,
                 perms="r--",
                 tags={"exposure"},
             )
@@ -234,7 +253,8 @@ async def expose(body: ExposeRequest, request: Request) -> Dict[str, Any]:
         "protocol": protocol,
         "host_port": host_port,
         "service_id": body.service_id,
-        "url": f"http://{name}.local/" if protocol == "http" else None,
+        "hostname": hostname,
+        "url": f"http://{hostname}/" if hostname else None,
     }
 
 
