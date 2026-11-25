@@ -140,11 +140,6 @@ def create_app() -> FastAPI:
     graph_routers = (dag.router, resolve.router, query.router, mutations.router)
     for graph_router in graph_routers:
         app.include_router(graph_router, prefix="/api/graph")
-        app.include_router(
-            graph_router,
-            prefix="/api/dag",
-            include_in_schema=False,
-        )
     app.include_router(hw.router)
     app.include_router(modules.router)
     app.include_router(detect.router)

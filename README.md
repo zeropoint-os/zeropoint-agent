@@ -112,8 +112,6 @@ Canonical resources include:
 - `/api/expose`
 - `/api/meta`
 
-`/api/dag` remains a compatibility alias and is hidden from OpenAPI.
-
 ## Development
 
 ```bash
