@@ -80,6 +80,7 @@ class ServerSQLiteTests(unittest.TestCase):
             }, clear=False):
                 app = create_app()
                 with TestClient(app) as client:
+                    self.assertEqual(client.get("/api/dag").status_code, 404)
                     graph = client.get("/api/graph").json()
                     node_ids = {node["id"] for node in graph["nodes"]}
                     self.assertIn("hardware/disks", node_ids)
@@ -218,31 +219,31 @@ class ServerSQLiteTests(unittest.TestCase):
             }, clear=False):
                 app = create_app()
                 with TestClient(app) as client:
-                    client.post("/api/dag/nodes", json={
+                    client.post("/api/graph/nodes", json={
                         "id": "settings",
                         "type": "namespace",
                         "config": {"name": "settings"},
                         "parents": [],
                         "perms": "rwd",
                     })
-                    client.post("/api/dag/nodes", json={
+                    client.post("/api/graph/nodes", json={
                         "id": "settings/value",
                         "type": "var",
                         "config": {"name": "value", "value": "old"},
                         "parents": ["settings"],
                         "perms": "rwd",
                     })
-                    deleted = client.delete("/api/dag/settings")
+                    deleted = client.delete("/api/graph/settings")
                     self.assertEqual(deleted.status_code, 200, deleted.text)
                     body = deleted.json()
                     self.assertEqual(body["status"], "succeeded")
                     self.assertEqual(body["operation"], "remove")
                     self.assertEqual(
-                        client.get("/api/dag/nodes/settings").status_code,
+                        client.get("/api/graph/nodes/settings").status_code,
                         404,
                     )
                     self.assertEqual(
-                        client.get("/api/dag/nodes/settings/value").status_code,
+                        client.get("/api/graph/nodes/settings/value").status_code,
                         404,
                     )
 
@@ -256,7 +257,7 @@ class ServerSQLiteTests(unittest.TestCase):
             }, clear=False):
                 app = create_app()
                 with TestClient(app) as client:
-                    added = client.post("/api/dag/nodes", json={
+                    added = client.post("/api/graph/nodes", json={
                         "id": "script",
                         "type": "shell",
                         "config": {
@@ -278,7 +279,7 @@ class ServerSQLiteTests(unittest.TestCase):
                         200,
                     )
                     self.assertEqual(
-                        client.get("/api/dag").status_code,
+                        client.get("/api/graph").status_code,
                         200,
                     )
                     deadline = time.monotonic() + 3
@@ -322,7 +323,7 @@ class ServerSQLiteTests(unittest.TestCase):
             }, clear=False):
                 app = create_app()
                 with TestClient(app) as client:
-                    response = client.post("/api/dag/nodes", json={
+                    response = client.post("/api/graph/nodes", json={
                         "id": "settings",
                         "type": "namespace",
                         "config": {"name": "settings"},
@@ -336,7 +337,7 @@ class ServerSQLiteTests(unittest.TestCase):
                     first_agent_id = meta.json()["agent_id"]
                     self.assertTrue(first_agent_id.startswith("zp_"))
                     self.assertEqual(meta.json()["security_mode"], "trusted_lan")
-                    variable = client.post("/api/dag/nodes", json={
+                    variable = client.post("/api/graph/nodes", json={
                         "id": "settings/value",
                         "type": "var",
                         "config": {"name": "value", "value": "old"},
@@ -356,11 +357,11 @@ class ServerSQLiteTests(unittest.TestCase):
                     self.assertEqual(run.json()["summary"]["success"], 2)
 
                     updated = client.put(
-                        "/api/dag/settings/value",
+                        "/api/graph/settings/value",
                         json={"config": {"value": "new"}},
                     )
                     self.assertEqual(updated.status_code, 200, updated.text)
-                    client.post("/api/dag/resolve", json={"mode": "mock"})
+                    client.post("/api/graph/resolve", json={"mode": "mock"})
                     historical = client.get(f"/api/runs/{run_id}").json()
                     old_value = next(
                         node["output"]["value"]
@@ -380,7 +381,7 @@ class ServerSQLiteTests(unittest.TestCase):
 
                 second_app = create_app()
                 with TestClient(second_app) as client:
-                    response = client.get("/api/dag/nodes/settings")
+                    response = client.get("/api/graph/nodes/settings")
                     self.assertEqual(response.status_code, 200, response.text)
                     self.assertEqual(response.json()["id"], "settings")
                     self.assertEqual(
