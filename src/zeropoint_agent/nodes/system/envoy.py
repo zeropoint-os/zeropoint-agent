@@ -25,6 +25,7 @@ class SystemEnvoyResult:
     state: str = "unknown"
     image: str = ""
     container_id: str = ""
+    runtime_generation: str = ""
     xds_port: int = 0
     http_port: int = 80
     https_port: int = 443
@@ -45,6 +46,8 @@ class SystemEnvoy(INode[Any, SystemEnvoyResult]):
             return NodeResult.success(SystemEnvoyResult(
                 state="mock",
                 image="envoyproxy/envoy:mock",
+                container_id="mock-envoy",
+                runtime_generation="mock-generation",
                 xds_port=self.xds_port,
                 http_port=self.http_port,
                 https_port=self.https_port,
@@ -66,6 +69,7 @@ class SystemEnvoy(INode[Any, SystemEnvoyResult]):
             state=info.get("state", "unknown"),
             image=info.get("image", ""),
             container_id=info.get("id", ""),
+            runtime_generation=info.get("runtime_generation", ""),
             xds_port=self.xds_port,
             http_port=self.http_port,
             https_port=self.https_port,

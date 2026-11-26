@@ -164,6 +164,24 @@ def _ensure_image(client, image: str) -> None:
             logger.warning("failed to pull envoy image: %s", e)
 
 
+def _container_info(container, image: str = "") -> dict:
+    container.reload()
+    state = container.attrs.get("State") or {}
+    pid = int(state.get("Pid") or 0)
+    started_at = str(state.get("StartedAt") or "")
+    generation = f"{pid}@{started_at}" if pid > 0 and started_at else ""
+    return {
+        "state": container.status,
+        "image": (
+            container.image.tags[0]
+            if container.image and container.image.tags
+            else image
+        ),
+        "id": container.id,
+        "runtime_generation": generation,
+    }
+
+
 def ensure_envoy(
     xds_port: int = 18000,
     http_port: int = 80,
@@ -191,11 +209,11 @@ def ensure_envoy(
     if c is not None:
         if c.status == "running":
             logger.info("envoy already running (id=%s)", c.short_id)
-            return {"state": "running", "image": image, "id": c.short_id}
+            return _container_info(c, image)
         try:
             c.start()
             logger.info("started existing envoy container (id=%s)", c.short_id)
-            return {"state": "running", "image": image, "id": c.short_id}
+            return _container_info(c, image)
         except Exception as e:
             logger.warning("failed to start existing envoy: %s; recreating", e)
             try:
@@ -218,7 +236,7 @@ def ensure_envoy(
             network=NETWORK_NAME,
         )
         logger.info("created envoy container (id=%s)", c.short_id)
-        return {"state": "running", "image": image, "id": c.short_id}
+        return _container_info(c, image)
     except Exception as e:
         logger.error("failed to start envoy container: %s", e)
         return {"state": "error", "image": image, "error": str(e)}
@@ -231,11 +249,7 @@ def envoy_status() -> Optional[dict]:
         return None
     try:
         c = client.containers.get(CONTAINER_NAME)
-        return {
-            "state": c.status,
-            "image": c.image.tags[0] if c.image and c.image.tags else "",
-            "id": c.short_id,
-        }
+        return _container_info(c)
     except Exception:
         return {"state": "not_running"}
 

@@ -60,6 +60,46 @@ class UnsupportedCheckpoint:
         self.manager = manager
 
 
+class JobCancellation:
+    """Generic cancellation control for durable interactive Jobs."""
+
+    key = "job-cancellation"
+
+    def __init__(self, promise_id: str, manager: Any):
+        self.promise_id = promise_id
+        self.manager = manager
+
+    async def cancel(self) -> Dict[str, Any]:
+        status = self.manager.cancel_promise(self.promise_id)
+        return {"promise_id": self.promise_id, "status": status}
+
+
+class JobProgress:
+    """Generic durable Job progress reader."""
+
+    key = "job-progress"
+
+    def __init__(self, promise_id: str, manager: Any):
+        self.promise_id = promise_id
+        self.manager = manager
+
+    async def current(self) -> Dict[str, Any]:
+        return self.manager.promise_progress(self.promise_id)
+
+
+class JobCheckpoint:
+    """Generic durable Job checkpoint reader."""
+
+    key = "job-checkpoint"
+
+    def __init__(self, promise_id: str, manager: Any):
+        self.promise_id = promise_id
+        self.manager = manager
+
+    async def current(self) -> Dict[str, Any] | None:
+        return self.manager.promise_progress(self.promise_id).get("checkpoint")
+
+
 class ShellScriptCancellation:
     key = "shell-process-group"
 
