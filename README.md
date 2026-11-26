@@ -136,6 +136,22 @@ persists one unique HTTPS port from the bounded `10000-10999` range and is
 available as `https://<machine>.<tailnet>.ts.net:<port>/`. Named Tailscale
 Services, tags, approvals, TailVIP, HA, and Funnel are not used.
 
+Tailnet access is also enforced locally at the trusted Envoy listener using
+Tailscale Serve's verified `Tailscale-User-Login` header. `system/tailscale`
+holds an editable global `allowed_users` list and automatically discovers the
+enrolled primary owner login. Each Tailnet Exposure can add `allowed_users` and
+`denied_users`. Effective access is:
+
+`{primary owner} union ((global allowed union exposure allowed) minus exposure denied)`
+
+The owner is always authorized even if listed in `denied_users`; deny wins for
+all other users. Missing or unauthorized identities receive HTTP 403. LAN
+routes do not apply this policy and continue stripping all Tailscale identity
+headers. Update the global policy with `PUT /api/tailscale/policy` and one app's
+policy with `PUT /api/tailscale/expose/policy`; both actions durably invalidate
+and reconcile the affected graph routes, including nodes created by earlier
+prerelease builds with read-only permissions.
+
 `system/tailscale` is graph-parented to `system/envoy` and consumes Envoy's
 resolved container/runtime-generation contract. If Envoy restarts into a new
 network namespace—even with the same container ID—the Tailscale runtime is

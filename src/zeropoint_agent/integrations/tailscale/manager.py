@@ -80,6 +80,9 @@ def _container_status(container) -> dict[str, Any]:
     self_status = payload.get("Self") or {}
     current_tailnet = payload.get("CurrentTailnet") or {}
     backend_state = str(payload.get("BackendState") or "")
+    user_id = self_status.get("UserID")
+    users = payload.get("User") or {}
+    owner = users.get(str(user_id)) or users.get(user_id) or {}
     active = backend_state == "Running"
     authenticated = active and bool(self_status.get("TailscaleIPs"))
     dns_name = (
@@ -134,6 +137,11 @@ def _container_status(container) -> dict[str, Any]:
         ),
         "magic_dns_suffix": magic_dns_suffix,
         "node_dns_name": dns_name,
+        "primary_user_login": (
+            str(owner.get("LoginName") or "").strip().lower()
+            if authenticated and user_id
+            else ""
+        ),
         "health": health,
         "error": error,
     }

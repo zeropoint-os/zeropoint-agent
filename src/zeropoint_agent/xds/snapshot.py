@@ -18,7 +18,7 @@ from envoy_data_plane.envoy.config.cluster.v3 import (
     Cluster, ClusterDiscoveryType, ClusterLbPolicy,
 )
 from envoy_data_plane.envoy.config.core.v3 import (
-    Address, AggregatedConfigSource, ApiVersion, ConfigSource,
+    Address, AggregatedConfigSource, ApiVersion, ConfigSource, DataSource,
     SocketAddress, SocketAddressProtocol,
 )
 from envoy_data_plane.envoy.config.endpoint.v3 import (
@@ -29,7 +29,8 @@ from envoy_data_plane.envoy.config.listener.v3 import (
     Filter, FilterChain, Listener,
 )
 from envoy_data_plane.envoy.config.route.v3 import (
-    Route, RouteAction, RouteConfiguration, RouteMatch, VirtualHost,
+    DirectResponseAction, HeaderMatcher, Route, RouteAction,
+    RouteConfiguration, RouteMatch, VirtualHost,
 )
 from envoy_data_plane.envoy.extensions.filters.http.router.v3 import Router
 from envoy_data_plane.envoy.extensions.filters.network.http_connection_manager.v3 import (
@@ -37,6 +38,7 @@ from envoy_data_plane.envoy.extensions.filters.network.http_connection_manager.v
     HttpFilter, Rds,
 )
 from envoy_data_plane.envoy.extensions.filters.network.tcp_proxy.v3 import TcpProxy
+from envoy_data_plane.envoy.type.matcher.v3 import StringMatcher
 from envoy_data_plane.google.protobuf import Any as PbAny
 
 HTTP_LISTENER_NAME = "http_listener"
@@ -67,10 +69,11 @@ class ResolvedEndpoint:
 
 @dataclass
 class TailnetRoute:
-    """Private ingress adaptation for one ordinary Tailscale Serve port."""
+    """Private ingress adaptation and identity policy for one Serve port."""
     id: str
     endpoint_id: str
     path_prefix: str
+    allowed_users: tuple[str, ...] = ()
 
 
 def _pack_any(msg: betterproto2.Message, type_url: str) -> PbAny:
@@ -250,24 +253,43 @@ def make_tailnet_route_config(
     if missing:
         raise ValueError(f"tailnet routes reference missing endpoints: {missing}")
     ordered = sorted(routes, key=lambda route: len(route.path_prefix), reverse=True)
+    envoy_routes: List[Route] = []
+    for route in ordered:
+        for user_login in route.allowed_users:
+            envoy_routes.append(Route(
+                name=f"{route.id}:{user_login}",
+                match=RouteMatch(
+                    prefix=route.path_prefix,
+                    headers=[HeaderMatcher(
+                        name="tailscale-user-login",
+                        string_match=StringMatcher(
+                            exact=user_login,
+                            ignore_case=True,
+                        ),
+                    )],
+                ),
+                route=RouteAction(
+                    cluster=_cluster_name(route.endpoint_id),
+                    prefix_rewrite="/",
+                    host_rewrite_literal=endpoints_by_id[route.endpoint_id].name,
+                    timeout=timedelta(seconds=0),
+                    idle_timeout=timedelta(seconds=300),
+                ),
+            ))
+        envoy_routes.append(Route(
+            name=f"{route.id}:forbidden",
+            match=RouteMatch(prefix=route.path_prefix),
+            direct_response=DirectResponseAction(
+                status=403,
+                body=DataSource(inline_string="Forbidden\n"),
+            ),
+        ))
     return RouteConfiguration(
         name=TAILNET_ROUTES_NAME,
         virtual_hosts=[VirtualHost(
             name="tailnet_private",
             domains=["*"],
-            routes=[
-                Route(
-                    match=RouteMatch(prefix=route.path_prefix),
-                    route=RouteAction(
-                        cluster=_cluster_name(route.endpoint_id),
-                        prefix_rewrite="/",
-                        host_rewrite_literal=endpoints_by_id[route.endpoint_id].name,
-                        timeout=timedelta(seconds=0),
-                        idle_timeout=timedelta(seconds=300),
-                    ),
-                )
-                for route in ordered
-            ],
+            routes=envoy_routes,
         )],
     )
 

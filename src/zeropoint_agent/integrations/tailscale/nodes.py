@@ -21,6 +21,34 @@ TAILNET_HTTPS_PORT_MIN = 10000
 TAILNET_HTTPS_PORT_MAX = 10999
 
 
+def normalize_user_logins(values: list[str]) -> list[str]:
+    """Normalize configured Tailscale login names without accepting empties."""
+    normalized: set[str] = set()
+    for value in values:
+        login = str(value).strip().lower()
+        if not login or any(ord(char) < 32 for char in login):
+            raise ValueError(f"invalid Tailscale user login: {value!r}")
+        normalized.add(login)
+    return sorted(normalized)
+
+
+def effective_allowed_users(
+    primary_user_login: str,
+    global_allowed_users: list[str],
+    exposure_allowed_users: list[str],
+    exposure_denied_users: list[str],
+) -> list[str]:
+    """Owner is non-deniable; deny wins for every other identity."""
+    owner = primary_user_login.strip().lower()
+    inherited = set(normalize_user_logins(global_allowed_users))
+    inherited.update(normalize_user_logins(exposure_allowed_users))
+    denied = set(normalize_user_logins(exposure_denied_users))
+    effective = inherited - denied
+    if owner:
+        effective.add(owner)
+    return sorted(effective)
+
+
 @dataclass
 class SystemTailscaleResult:
     state: str = "unknown"
@@ -33,6 +61,8 @@ class SystemTailscaleResult:
     tailnet: str = ""
     magic_dns_suffix: str = ""
     node_dns_name: str = ""
+    primary_user_login: str = ""
+    allowed_users: list[str] | None = None
     health: str = "unknown"
     error: str = ""
 
@@ -53,6 +83,7 @@ def system_tailscale_result(
         tailnet=str(status.get("tailnet") or ""),
         magic_dns_suffix=str(status.get("magic_dns_suffix") or ""),
         node_dns_name=str(status.get("node_dns_name") or ""),
+        primary_user_login=str(status.get("primary_user_login") or ""),
         health=str(status.get("health") or "unknown"),
         error="" if authenticated else str(status.get("error") or ""),
     )
@@ -62,11 +93,14 @@ def system_tailscale_result(
 class SystemTailscale(INode[Any, SystemTailscaleResult]):
     """The optional machine-wide Tailscale device and persistent runtime."""
 
-    default_perms: ClassVar[str] = "r-d"
+    default_perms: ClassVar[str] = "rw-"
     image: str = readonly(default=manager.IMAGE)
+    allowed_users: list[str] | None = None
 
     def _result(self, status: dict[str, Any]) -> SystemTailscaleResult:
-        return system_tailscale_result(status, self.image)
+        result = system_tailscale_result(status, self.image)
+        result.allowed_users = normalize_user_logins(self.allowed_users or [])
+        return result
 
     @staticmethod
     def _envoy_output(input: Any) -> Optional[SystemEnvoyResult]:
@@ -100,6 +134,8 @@ class SystemTailscale(INode[Any, SystemTailscaleResult]):
                 tailnet="example",
                 magic_dns_suffix="example.ts.net",
                 node_dns_name=f"{machine_name}.example.ts.net",
+                primary_user_login="owner@example.com",
+                allowed_users=normalize_user_logins(self.allowed_users or []),
                 health="healthy",
             ))
         if mode == ResolveMode.DRY_RUN:
@@ -146,6 +182,7 @@ class SystemTailscale(INode[Any, SystemTailscaleResult]):
                     "machine_name": machine_name,
                     "image": self.image,
                     "envoy": envoy_contract,
+                    "allowed_users": normalize_user_logins(self.allowed_users or []),
                 },
                 resources=["tailscale:enrollment"],
                 max_attempts=ENROLLMENT_MAX_ATTEMPTS,
@@ -175,6 +212,7 @@ class TailnetExposureResult:
     url: str = ""
     private_target: str = ""
     publication_status: str = "pending"
+    effective_allowed_users: list[str] | None = None
     healthy: bool = False
     error: str = ""
 
@@ -183,9 +221,11 @@ class TailnetExposureResult:
 class TailnetExposure(INode[Any, TailnetExposureResult]):
     """One ordinary Tailscale Serve port layered over a local Exposure."""
 
-    default_perms: ClassVar[str] = "r-d"
+    default_perms: ClassVar[str] = "rw-"
     slug: str
     https_port: int = readonly()
+    allowed_users: list[str] | None = None
+    denied_users: list[str] | None = None
 
     def _parents(self) -> tuple[Optional[Exposure], Optional[SystemTailscale], str]:
         if self.dag is None or not self.id:
@@ -227,6 +267,12 @@ class TailnetExposure(INode[Any, TailnetExposureResult]):
         error: str = "",
     ) -> TailnetExposureResult:
         machine_name = str(getattr(self.dag, "machine_name", ""))
+        allowed_users = effective_allowed_users(
+            root.primary_user_login,
+            root.allowed_users or [],
+            self.allowed_users or [],
+            self.denied_users or [],
+        )
         return TailnetExposureResult(
             slug=self.slug,
             node_hostname=root.node_dns_name,
@@ -235,11 +281,16 @@ class TailnetExposure(INode[Any, TailnetExposureResult]):
             url=manager.node_serve_url(root.node_dns_name, self.https_port),
             private_target=manager.private_target_url(self.https_port),
             publication_status=status,
+            effective_allowed_users=allowed_users,
             healthy=healthy,
             error=error,
         )
 
-    def _sync_private_route(self, service_id: str) -> None:
+    def _sync_private_route(
+        self,
+        service_id: str,
+        root: SystemTailscaleResult,
+    ) -> None:
         cache = getattr(self.dag, "xds_cache", None)
         if cache is not None:
             cache.set_tailnet_route(
@@ -248,6 +299,12 @@ class TailnetExposure(INode[Any, TailnetExposureResult]):
                     id=self.id,
                     endpoint_id=service_id,
                     path_prefix=manager.private_route_prefix(self.https_port),
+                    allowed_users=tuple(effective_allowed_users(
+                        root.primary_user_login,
+                        root.allowed_users or [],
+                        self.allowed_users or [],
+                        self.denied_users or [],
+                    )),
                 ),
             )
 
@@ -258,7 +315,7 @@ class TailnetExposure(INode[Any, TailnetExposureResult]):
             return NodeResult.failed(
                 "Tailnet Exposure requires a resolved local Exposure and system/tailscale"
             )
-        self._sync_private_route(service_id)
+        self._sync_private_route(service_id, root)
         if mode == ResolveMode.MOCK:
             return NodeResult.success(self._output(root, status="published", healthy=True))
         if mode == ResolveMode.DRY_RUN:

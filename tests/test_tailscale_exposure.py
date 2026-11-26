@@ -25,6 +25,7 @@ from zeropoint_agent.integrations.tailscale.nodes import (
     SystemTailscale,
     SystemTailscaleResult,
     TailnetExposure,
+    effective_allowed_users,
     system_tailscale_result,
 )
 from zeropoint_agent.interaction import interaction_from_checkpoint
@@ -119,19 +120,53 @@ def add_tailscale_nodes(dag: DAG, exposure_id: str, port: int) -> str:
             SYSTEM_TAILSCALE_NODE_ID,
             SystemTailscale(),
             parents=["system", "system/docker", SYSTEM_ENVOY_NODE_ID],
-            perms="r-d",
+            perms="rw-",
         )
     node_id = f"{exposure_id}/tailnet"
     dag.add(
         node_id,
         TailnetExposure(slug="qbittorrent", https_port=port),
         parents=[exposure_id, SYSTEM_TAILSCALE_NODE_ID],
-        perms="r-d",
+        perms="rw-",
     )
     return node_id
 
 
 class TailscaleExposureTests(unittest.TestCase):
+    def test_effective_users_include_owner_global_and_exposure_users(self):
+        self.assertEqual(
+            effective_allowed_users(
+                "Owner@Example.com",
+                ["global@example.com"],
+                ["app@example.com"],
+                [],
+            ),
+            ["app@example.com", "global@example.com", "owner@example.com"],
+        )
+
+    def test_deny_removes_inherited_non_owner_but_never_owner(self):
+        self.assertEqual(
+            effective_allowed_users(
+                "owner@example.com",
+                ["global@example.com", "owner@example.com"],
+                ["app@example.com"],
+                ["global@example.com", "app@example.com", "owner@example.com"],
+            ),
+            ["owner@example.com"],
+        )
+
+    def test_ownerless_node_defaults_to_configured_users_only(self):
+        self.assertEqual(
+            effective_allowed_users(
+                "",
+                ["global@example.com"],
+                ["app@example.com"],
+                ["global@example.com"],
+            ),
+            ["app@example.com"],
+        )
+        self.assertEqual(effective_allowed_users("", [], [], []), [])
+
     def test_runtime_uses_linked_envoy_contract_and_persists_generation(self):
         captured = {}
         generation = "101@2026-11-25T00:00:00Z"
@@ -327,6 +362,10 @@ class TailscaleExposureTests(unittest.TestCase):
             "Self": {
                 "TailscaleIPs": ["100.64.0.1"],
                 "DNSName": "node.example.ts.net.",
+                "UserID": 42,
+            },
+            "User": {
+                "42": {"LoginName": "Owner@Example.com"},
             },
         }
 
@@ -345,6 +384,7 @@ class TailscaleExposureTests(unittest.TestCase):
         self.assertTrue(status["authenticated"])
         self.assertEqual(status["login_url"], "")
         self.assertEqual(status["error"], "")
+        self.assertEqual(status["primary_user_login"], "owner@example.com")
         result = system_tailscale_result({
             "authenticated": True,
             "login_url": "https://login.tailscale.com/a/stale",
@@ -533,11 +573,13 @@ class TailscaleExposureTests(unittest.TestCase):
                 id="qbittorrent-tailnet",
                 endpoint_id=endpoints[0].id,
                 path_prefix=manager.private_route_prefix(10000),
+                allowed_users=("owner@example.com",),
             ),
             TailnetRoute(
                 id="youtube-dl-tailnet",
                 endpoint_id=endpoints[1].id,
                 path_prefix=manager.private_route_prefix(10001),
+                allowed_users=("friend@example.com",),
             ),
         ]
         snapshot = build_snapshot("1", endpoints, routes)
@@ -555,14 +597,35 @@ class TailscaleExposureTests(unittest.TestCase):
             config for config in snapshot.routes
             if config.name == TAILNET_ROUTES_NAME
         )
-        private_routes = {
-            route.match.prefix: route.route
+        allowed_routes = {
+            route.match.prefix: route
             for route in private.virtual_hosts[0].routes
+            if route.route is not None and route.route.cluster
         }
         for route, endpoint in zip(routes, endpoints):
-            action = private_routes[route.path_prefix]
-            self.assertEqual(action.prefix_rewrite, "/")
-            self.assertEqual(action.host_rewrite_literal, endpoint.name)
+            allowed = allowed_routes[route.path_prefix]
+            self.assertEqual(allowed.route.prefix_rewrite, "/")
+            self.assertEqual(allowed.route.host_rewrite_literal, endpoint.name)
+            self.assertEqual(
+                allowed.match.headers[0].name,
+                "tailscale-user-login",
+            )
+            self.assertEqual(
+                allowed.match.headers[0].string_match.exact,
+                route.allowed_users[0],
+            )
+            self.assertTrue(allowed.match.headers[0].string_match.ignore_case)
+        denied = [
+            route for route in private.virtual_hosts[0].routes
+            if route.direct_response is not None
+            and route.direct_response.status == 403
+        ]
+        self.assertEqual(len(denied), 2)
+        self.assertTrue(all(not route.match.headers for route in denied))
+        self.assertTrue(all(
+            route.direct_response.body.inline_string == "Forbidden\n"
+            for route in denied
+        ))
         self.assertEqual(private.virtual_hosts[0].request_headers_to_remove, [])
 
     def test_ports_persist_and_are_unique(self):
@@ -623,9 +686,14 @@ class TailscaleExposureTests(unittest.TestCase):
         add_system_roots(dag)
         service_id, exposure_id = add_http_exposure(dag, "qbittorrent")
         child_id = add_tailscale_nodes(dag, exposure_id, 10000)
+        child = dag.get(child_id).node
+        child.allowed_users = ["app@example.com"]
+        child.denied_users = ["global@example.com", "owner@example.com"]
         root = SystemTailscaleResult(
             authenticated=True,
             node_dns_name="zeropoint-sahal-velas.example.ts.net",
+            primary_user_login="owner@example.com",
+            allowed_users=["global@example.com"],
         )
         with patch.object(manager, "publish_port", return_value={"ok": True}):
             result = dag.get(child_id).node.resolve(
@@ -638,6 +706,14 @@ class TailscaleExposureTests(unittest.TestCase):
             "https://zeropoint-sahal-velas.example.ts.net:10000/",
         )
         self.assertEqual(dag.xds_cache.routes[child_id].endpoint_id, service_id)
+        self.assertEqual(
+            dag.xds_cache.routes[child_id].allowed_users,
+            ("app@example.com", "owner@example.com"),
+        )
+        self.assertEqual(
+            result.output.effective_allowed_users,
+            ["app@example.com", "owner@example.com"],
+        )
 
     def test_api_allocates_ports_atomically_and_matrix_reports_node_url(self):
         with tempfile.TemporaryDirectory() as root:
@@ -657,15 +733,24 @@ class TailscaleExposureTests(unittest.TestCase):
                         "zeropoint_agent.handlers.tailscale._start_resolve",
                         side_effect=["run-1", "run-2"],
                     ):
-                        first_response = client.post("/api/tailscale/expose", json={"exposure_id": first})
+                        first_response = client.post("/api/tailscale/expose", json={
+                            "exposure_id": first,
+                            "allowed_users": ["App@Example.com"],
+                            "denied_users": ["blocked@example.com"],
+                        })
                         second_response = client.post("/api/tailscale/expose", json={"exposure_id": second})
                     self.assertEqual(first_response.json()["https_port"], TAILNET_HTTPS_PORT_MIN)
+                    self.assertEqual(first_response.json()["allowed_users"], ["app@example.com"])
+                    self.assertEqual(first_response.json()["denied_users"], ["blocked@example.com"])
                     self.assertEqual(second_response.json()["https_port"], TAILNET_HTTPS_PORT_MIN + 1)
                     first_node = dag.get(first_response.json()["node_id"])
+                    self.assertEqual(first_node.node.allowed_users, ["app@example.com"])
+                    self.assertEqual(first_node.node.denied_users, ["blocked@example.com"])
                     first_node.output = first_node.node._output(
                         SystemTailscaleResult(
                             authenticated=True,
                             node_dns_name="zeropoint-sahal-velas.example.ts.net",
+                            primary_user_login="owner@example.com",
                         ),
                         status="published",
                         healthy=True,
@@ -677,6 +762,58 @@ class TailscaleExposureTests(unittest.TestCase):
                         qb["tailnet"]["url"],
                         "https://zeropoint-sahal-velas.example.ts.net:10000/",
                     )
+                    self.assertEqual(
+                        qb["tailnet"]["effective_allowed_users"],
+                        ["app@example.com", "owner@example.com"],
+                    )
+
+    def test_policy_endpoints_update_legacy_readonly_nodes_and_reconcile(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {
+                "ZEROPOINT_ROOT_PATH": root,
+                "ZEROPOINT_MODE": "mock",
+                "ZEROPOINT_XDS_PORT": "0",
+                "ZEROPOINT_MDNS_ADVERTISE": "0",
+                "ZEROPOINT_SEED_ROOTS": "1",
+            }, clear=False):
+                with TestClient(create_app()) as client:
+                    dag = client.app.state.dag
+                    _, exposure_id = add_http_exposure(dag, "qbittorrent")
+                    child_id = add_tailscale_nodes(dag, exposure_id, 10000)
+                    dag.get(SYSTEM_TAILSCALE_NODE_ID).perms = "r-d"
+                    dag.get(child_id).perms = "r-d"
+                    with patch(
+                        "zeropoint_agent.handlers.tailscale._start_resolve",
+                        side_effect=["run-global", "run-exposure"],
+                    ):
+                        global_policy = client.put(
+                            "/api/tailscale/policy",
+                            json={"allowed_users": ["Global@Example.com"]},
+                        )
+                        exposure_policy = client.put(
+                            "/api/tailscale/expose/policy",
+                            json={
+                                "exposure_id": exposure_id,
+                                "allowed_users": ["App@Example.com"],
+                                "denied_users": ["Global@Example.com"],
+                            },
+                        )
+                    self.assertEqual(global_policy.status_code, 200)
+                    self.assertEqual(exposure_policy.status_code, 200)
+                    self.assertEqual(
+                        dag.get(SYSTEM_TAILSCALE_NODE_ID).node.allowed_users,
+                        ["global@example.com"],
+                    )
+                    self.assertEqual(
+                        dag.get(child_id).node.allowed_users,
+                        ["app@example.com"],
+                    )
+                    self.assertEqual(
+                        dag.get(child_id).node.denied_users,
+                        ["global@example.com"],
+                    )
+                    self.assertEqual(dag.get(SYSTEM_TAILSCALE_NODE_ID).status, NodeStatus.PENDING)
+                    self.assertEqual(dag.get(child_id).status, NodeStatus.PENDING)
 
     def test_reverse_removal_preserves_local_exposure(self):
         with tempfile.TemporaryDirectory() as root:

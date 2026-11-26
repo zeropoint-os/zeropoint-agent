@@ -17,4 +17,6 @@ def execute_tailscale_enroll_job(context, arguments: Dict[str, Any]):
         dict(arguments["envoy"]),
         str(arguments.get("image") or manager.IMAGE),
     )
-    return NodeResult.success(system_tailscale_result(status))
+    result = system_tailscale_result(status)
+    result.allowed_users = list(arguments.get("allowed_users") or [])
+    return NodeResult.success(result)
