@@ -25,7 +25,7 @@ import asyncio
 import logging
 from typing import Dict, Optional, TYPE_CHECKING
 
-from zeropoint_agent.xds.snapshot import ResolvedEndpoint, build_snapshot
+from zeropoint_agent.xds.snapshot import TailnetRoute, ResolvedEndpoint, build_snapshot
 
 if TYPE_CHECKING:
     from zeropoint_agent.xds.server import AdsServer
@@ -49,6 +49,7 @@ class XdsCache:
     def __init__(self, ads: "AdsServer", flush_interval_sec: float = 0.5):
         self._ads = ads
         self._live: Dict[str, ResolvedEndpoint] = {}
+        self._tailnet_routes: Dict[str, TailnetRoute] = {}
         self._staging: Optional[Dict[str, ResolvedEndpoint]] = None
         self._dirty = False
         self._cond = asyncio.Condition()
@@ -99,9 +100,26 @@ class XdsCache:
             if self._staging is None:
                 self._mark_dirty()
 
+    def set_tailnet_route(self, id: str, route: TailnetRoute) -> None:
+        """Upsert one private tailnet ingress route."""
+        if self._tailnet_routes.get(id) == route:
+            return
+        self._tailnet_routes[id] = route
+        self._mark_dirty()
+
+    def clear_tailnet_route(self, id: str) -> None:
+        """Remove one private tailnet ingress route."""
+        if id not in self._tailnet_routes:
+            return
+        del self._tailnet_routes[id]
+        self._mark_dirty()
+
     def snapshot_now(self) -> list[ResolvedEndpoint]:
         """Current live entries (read-only view, for debugging/tests)."""
         return list(self._live.values())
+
+    def tailnet_routes_now(self) -> list[TailnetRoute]:
+        return list(self._tailnet_routes.values())
 
     # --- flush loop ------------------------------------------------------
 
@@ -153,8 +171,9 @@ class XdsCache:
 
     async def _flush_once(self) -> None:
         entries = list(self._live.values())
+        tailnet_routes = list(self._tailnet_routes.values())
         version = self._ads.next_version()
-        snapshot = build_snapshot(version, entries)
+        snapshot = build_snapshot(version, entries, tailnet_routes)
         try:
             await self._ads.update_snapshot(snapshot)
         except Exception as e:

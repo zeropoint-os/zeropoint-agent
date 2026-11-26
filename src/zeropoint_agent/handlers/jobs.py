@@ -4,6 +4,11 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from zeropoint_agent.interaction import (
+    PromiseRestResource,
+    interaction_from_checkpoint,
+)
+
 router = APIRouter(prefix="/api", tags=["jobs"])
 
 
@@ -22,12 +27,29 @@ async def list_promises(
     }
 
 
-@router.get("/promises/{promise_id}")
+@router.get(
+    "/promises/{promise_id}",
+    response_model=PromiseRestResource,
+    response_model_exclude_none=True,
+)
 async def get_promise(promise_id: str, request: Request):
     promise = request.app.state.jobs.promise(promise_id)
     if promise is None:
         raise HTTPException(status_code=404, detail=f"promise not found: {promise_id}")
-    return promise
+    progress = request.app.state.jobs.promise_progress(promise_id)
+    interaction = interaction_from_checkpoint(progress["checkpoint"])
+    response = {
+        **promise,
+        "progress": progress["progress"],
+        "controls": progress["controls"],
+    }
+    if interaction is not None and promise["status"] == "pending":
+        response["internal_status"] = promise["status"]
+        response["status"] = "requires_interaction"
+        response["interaction"] = interaction
+    else:
+        response["checkpoint"] = progress["checkpoint"]
+    return response
 
 
 @router.post("/promises/{promise_id}/cancel")

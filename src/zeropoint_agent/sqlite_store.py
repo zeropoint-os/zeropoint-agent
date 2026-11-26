@@ -1541,8 +1541,8 @@ class SQLiteGraphStore(GraphStore):
                 if row["status"] == "cancel_requested":
                     self._conn.execute(
                         """
-                        UPDATE jobs SET status = 'cancelled', lease_owner = NULL,
-                            lease_expires_at = NULL,
+                        UPDATE jobs SET status = 'cancelled', checkpoint_json = NULL,
+                            lease_owner = NULL, lease_expires_at = NULL,
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                         WHERE id = ?
                         """,
@@ -1569,8 +1569,8 @@ class SQLiteGraphStore(GraphStore):
                     }
                     self._conn.execute(
                         """
-                        UPDATE jobs SET status = 'failed', lease_owner = NULL,
-                            lease_expires_at = NULL,
+                        UPDATE jobs SET status = 'failed', checkpoint_json = NULL,
+                            lease_owner = NULL, lease_expires_at = NULL,
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                         WHERE id = ?
                         """,
@@ -1804,6 +1804,7 @@ class SQLiteGraphStore(GraphStore):
             self._conn.execute(
                 """
                 UPDATE jobs SET status = ?, progress = 1,
+                    checkpoint_json = NULL,
                     lease_owner = NULL, lease_expires_at = NULL,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ?
@@ -1883,12 +1884,13 @@ class SQLiteGraphStore(GraphStore):
             )
             self._conn.execute(
                 """
-                UPDATE jobs SET status = ?, lease_owner = NULL,
-                    lease_expires_at = NULL,
+                UPDATE jobs SET status = ?,
+                    checkpoint_json = CASE WHEN ? THEN checkpoint_json ELSE NULL END,
+                    lease_owner = NULL, lease_expires_at = NULL,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ?
                 """,
-                (next_status, job_id),
+                (next_status, 1 if retry else 0, job_id),
             )
             if retry:
                 self._insert_event(
@@ -1941,7 +1943,7 @@ class SQLiteGraphStore(GraphStore):
             if status == "queued":
                 self._conn.execute(
                     """
-                    UPDATE jobs SET status = 'cancelled',
+                    UPDATE jobs SET status = 'cancelled', checkpoint_json = NULL,
                         cancel_requested_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                     WHERE id = ?

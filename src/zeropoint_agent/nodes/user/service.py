@@ -149,7 +149,10 @@ class Service(INode[Any, ServiceResult]):
             return
 
         # Find an Exposure child (the user's "expose this" declaration).
-        from zeropoint_agent.nodes.user.exposure import Exposure
+        from zeropoint_agent.nodes.user.exposure import (
+            Exposure,
+            canonical_local_hostname,
+        )
         exposure = None
         for nid, entry in self.dag.nodes.items():
             if isinstance(entry.node, Exposure) and self.id in entry.parents:
@@ -167,11 +170,20 @@ class Service(INode[Any, ServiceResult]):
             return
         container = f"{module_leaf}-main"
 
+        machine_name = str(getattr(self.dag, "machine_name", ""))
+        if not machine_name:
+            logger.warning("cannot publish %s without a machine identity", self.id)
+            cache.clear(self.id)
+            return
+
         # Lazy import to avoid pulling xds at module load time.
         from zeropoint_agent.xds.snapshot import ResolvedEndpoint
         slice_ = ResolvedEndpoint(
             id=self.id,
-            name=exposure.name or module_leaf,
+            name=canonical_local_hostname(
+                exposure.name or module_leaf,
+                machine_name,
+            ),
             protocol=my_result.protocol,
             container=container,
             container_port=my_result.port,

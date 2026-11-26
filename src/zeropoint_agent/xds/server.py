@@ -39,14 +39,23 @@ def _pack(msg: betterproto2.Message, type_url: str) -> PbAny:
     return PbAny(type_url=type_url, value=bytes(msg))
 
 
-def _resources_for(snapshot: Snapshot, type_url: str) -> List[PbAny]:
+def _resources_for(
+    snapshot: Snapshot,
+    type_url: str,
+    resource_names: tuple[str, ...] = (),
+) -> List[PbAny]:
     if type_url == LDS_TYPE:
-        return [_pack(l, LDS_TYPE) for l in snapshot.listeners]
-    if type_url == RDS_TYPE:
-        return [_pack(r, RDS_TYPE) for r in snapshot.routes]
-    if type_url == CDS_TYPE:
-        return [_pack(c, CDS_TYPE) for c in snapshot.clusters]
-    return []
+        messages = snapshot.listeners
+    elif type_url == RDS_TYPE:
+        messages = snapshot.routes
+    elif type_url == CDS_TYPE:
+        messages = snapshot.clusters
+    else:
+        return []
+    if resource_names:
+        requested = set(resource_names)
+        messages = [message for message in messages if message.name in requested]
+    return [_pack(message, type_url) for message in messages]
 
 
 class AdsServer(AggregatedDiscoveryServiceBase):
@@ -86,9 +95,12 @@ class AdsServer(AggregatedDiscoveryServiceBase):
         sending the current snapshot for that type. When the snapshot
         changes, we re-push every type Envoy has previously asked for.
         """
-        # Per-stream state.
-        last_pushed_version: Dict[str, str] = {}   # type_url -> our version
-        subscribed: set[str] = set()              # type_urls Envoy cares about
+        # Per-stream state. A SotW subscription is identified by both type and
+        # requested resource names; Envoy may add names after acknowledging the
+        # current snapshot version (for example a newly installed RDS listener).
+        last_pushed: Dict[str, tuple[str, tuple[str, ...]]] = {}
+        requested_names: Dict[str, tuple[str, ...]] = {}
+        subscribed: set[str] = set()
         nonce_counter = 0
 
         async def push_for(type_url: str) -> Optional[DiscoveryResponse]:
@@ -96,14 +108,15 @@ class AdsServer(AggregatedDiscoveryServiceBase):
             if self._snapshot is None:
                 return None
             version = self._snapshot.version
+            names = requested_names.get(type_url, ())
             nonce_counter += 1
             resp = DiscoveryResponse(
                 version_info=version,
-                resources=_resources_for(self._snapshot, type_url),
+                resources=_resources_for(self._snapshot, type_url, names),
                 type_url=type_url,
                 nonce=f"n{nonce_counter}",
             )
-            last_pushed_version[type_url] = version
+            last_pushed[type_url] = (version, names)
             return resp
 
         async def request_reader():
@@ -115,26 +128,52 @@ class AdsServer(AggregatedDiscoveryServiceBase):
                             "xDS NACK from envoy: type=%s ver=%s err=%s",
                             req.type_url, req.version_info,
                             req.error_detail.message)
-                    subscribed.add(req.type_url)
+                    if not req.type_url:
+                        continue
+                    names = tuple(sorted(set(req.resource_names)))
                     async with self._cv:
-                        self._cv.notify_all()
+                        changed = (
+                            req.type_url not in subscribed
+                            or requested_names.get(req.type_url) != names
+                        )
+                        subscribed.add(req.type_url)
+                        requested_names[req.type_url] = names
+                        snapshot_key = (
+                            (self._snapshot.version, names)
+                            if self._snapshot is not None
+                            else None
+                        )
+                        if changed or last_pushed.get(req.type_url) != snapshot_key:
+                            self._cv.notify_all()
             finally:
                 async with self._cv:
                     self._cv.notify_all()
+
+        def pending_types() -> list[str]:
+            if self._snapshot is None:
+                return []
+            return [
+                type_url
+                for type_url in subscribed
+                if last_pushed.get(type_url) != (
+                    self._snapshot.version,
+                    requested_names.get(type_url, ()),
+                )
+            ]
 
         reader_task = asyncio.create_task(request_reader())
         try:
             while not reader_task.done():
                 async with self._cv:
-                    await self._cv.wait()
-                if not subscribed:
-                    continue
-                for type_url in list(subscribed):
-                    if (self._snapshot is not None and
-                            last_pushed_version.get(type_url) != self._snapshot.version):
-                        resp = await push_for(type_url)
-                        if resp is not None:
-                            yield resp
+                    await self._cv.wait_for(
+                        lambda: reader_task.done() or bool(pending_types())
+                    )
+                if reader_task.done():
+                    break
+                for type_url in pending_types():
+                    resp = await push_for(type_url)
+                    if resp is not None:
+                        yield resp
         finally:
             reader_task.cancel()
             try:
