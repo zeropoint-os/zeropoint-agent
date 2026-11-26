@@ -33,6 +33,12 @@ from .nodes.hw import (
 )
 from .nodes.config import VarResult, NamespaceResult
 from .nodes.user import TerraformResult, ExposureResult, ServiceResult
+from .integrations.tailscale import (
+    SystemTailscale,
+    SystemTailscaleResult,
+    TailnetExposure,
+    TailnetExposureResult,
+)
 
 __all__ = [
     "INode", "ResolveMode", "NodeStatus", "NodeResult", "SystemdUnit", "DAG",
@@ -51,4 +57,6 @@ __all__ = [
     "MountResult", "MountDirResult",
     "VarResult", "NamespaceResult",
     "TerraformResult", "ExposureResult", "ServiceResult",
+    "SystemTailscale", "SystemTailscaleResult",
+    "TailnetExposure", "TailnetExposureResult",
 ]

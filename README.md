@@ -21,8 +21,11 @@ language models inspect and mutate the same REST API and durable graph.
   produce their complete input/output/service subgraphs.
 - **Var links** compose modules without coupling them. Storage and library path
   resources can feed any compatible module input.
-- **Exposure nodes** publish one dedicated hostname per HTTP service through
-  Envoy and mDNS.
+- **Exposure nodes** publish one machine-qualified local hostname per HTTP
+  service through the shared Envoy ingress and mDNS.
+- **Tailscale integration nodes** optionally layer named tailnet Services over
+  those local Exposures without changing application modules or creating a
+  Tailscale device per application.
 
 SQLite is the authoritative store. The runtime does not maintain a second
 application-state database alongside the graph.
@@ -33,6 +36,10 @@ application-state database alongside the graph.
 - Terraform
 - Docker
 - Envoy for exposed services
+- Tailscale is optional; ZeroPoint runs official Tailscale v1.104.7 pinned to
+  the multi-arch OCI index
+  `tailscale/tailscale@sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4`
+  when tailnet access is enabled
 - Linux utilities used by live hardware operations (`lsblk`, `findmnt`,
   `sfdisk`, `wipefs`, filesystem tools, and `rsync`)
 
@@ -97,7 +104,58 @@ curl -X POST http://zeropoint-node.local:2370/api/expose \
   }'
 ```
 
-The service is then available at `http://jellyfin.local/`.
+For a machine named `zeropoint-sahal-velas`, the service is available at
+`http://jellyfin-zeropoint-sahal-velas.local/`.
+
+### Optional tailnet access
+
+Publish an existing local Exposure through ordinary Tailscale Serve. The first
+publication atomically creates the singleton `system/tailscale` root, allocates
+a durable HTTPS port for the child, and starts one GraphRun for enrollment
+followed by publication:
+
+```bash
+curl -X POST http://zeropoint-node.local:2370/api/tailscale/expose \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "exposure_id": "modules/jellyfin/main_ports/web/exposure_jellyfin"
+  }'
+```
+
+While human action is needed, GraphRun nodes and Promises return the
+nonterminal status `requires_interaction` with a typed `interaction` object.
+REST clients can render the standard `url_qr`, `device_code`, or `open_url`
+variants and continue polling the same run. Tailscale enrollment uses `url_qr`.
+Final node `output` appears only after the Job completes, and interaction links/codes are
+cleared on completion, cancellation, or supersession. Enrollment permits up to
+32 interrupted Job attempts, enough for repeated ordinary reboots while still
+bounding a permanently broken operation.
+
+ZeroPoint never accepts or persists Tailscale auth keys. Each Tailnet Exposure
+persists one unique HTTPS port from the bounded `10000-10999` range and is
+available as `https://<machine>.<tailnet>.ts.net:<port>/`. Named Tailscale
+Services, tags, approvals, TailVIP, HA, and Funnel are not used.
+
+`system/tailscale` is graph-parented to `system/envoy` and consumes Envoy's
+resolved container/runtime-generation contract. If Envoy restarts into a new
+network namespace—even with the same container ID—the Tailscale runtime is
+recreated against that generation while its bind-mounted identity state
+survives. Tailscale Serve then shares Envoy's namespace and reaches a dedicated
+`127.0.0.1` listener. Public LAN routes remove all Tailscale identity headers;
+only the loopback route preserves them, so LAN callers cannot spoof tailnet
+identity. The private route rewrites Host/authority to the target Exposure's
+canonical local hostname before proxying. Applications continue serving at `/`
+and remain unaware of both local and remote addressing.
+
+Inspect the graph-derived accessibility matrix:
+
+```bash
+curl http://zeropoint-node.local:2370/api/tailscale/matrix
+```
+
+Removing a Tailnet Exposure preserves local access. Deleting `/api/tailscale`
+removes remote children before the root runtime while retaining the persistent
+device state directory for a later re-enable.
 
 Canonical resources include:
 
@@ -110,6 +168,8 @@ Canonical resources include:
 - `/api/modules`
 - `/api/links`
 - `/api/expose`
+- `/api/tailscale`
+- `/api/tailscale/matrix`
 - `/api/meta`
 
 ## Development

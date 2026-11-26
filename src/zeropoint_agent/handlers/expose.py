@@ -269,6 +269,21 @@ async def unexpose(body: UnexposeRequest, request: Request) -> Dict[str, Any]:
     if not to_delete:
         return {"ok": True, "deleted": []}
 
+    dependents = [
+        node_id
+        for node_id, entry in dag.nodes.items()
+        if node_id not in to_delete
+        and any(exposure_id in entry.parents for exposure_id in to_delete)
+    ]
+    if dependents:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Remove dependent exposure layers before removing local access: "
+                f"{dependents}"
+            ),
+        )
+
     try:
         with graph_transaction(dag):
             for nid in to_delete:

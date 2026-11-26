@@ -44,6 +44,11 @@ from zeropoint_agent.nodes.hw.partition import (
     execute_partition_remove_job,
 )
 from zeropoint_agent.nodes.user.service import Service
+from zeropoint_agent.integrations.tailscale.nodes import (
+    SystemTailscale,
+    TailnetExposure,
+)
+from zeropoint_agent.integrations.tailscale.jobs import execute_tailscale_enroll_job
 from zeropoint_agent.query import _get_all_descendants
 from zeropoint_agent.nodes.user.module import (
     Terraform,
@@ -55,6 +60,9 @@ from zeropoint_agent.nodes.user.module_definition import (
     execute_module_prepare_job,
 )
 from zeropoint_agent.promise_controls import (
+    JobCancellation,
+    JobCheckpoint,
+    JobProgress,
     ShellScriptCancellation,
     ShellScriptProgress,
     HardwareCancellation,
@@ -65,7 +73,7 @@ from zeropoint_agent.promise_controls import (
 from zeropoint_agent.sqlite_store import SQLiteGraphStore
 from zeropoint_agent.identity import load_or_create_identity
 from zeropoint_agent.inode import ResolveMode
-from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules, detect, node_types, links, expose, jobs, runs, meta, events
+from zeropoint_agent.handlers import health, dag, query, resolve, mutations, hw, modules, detect, node_types, links, expose, tailscale, jobs, runs, meta, events
 from zeropoint_agent.xds.runner import XdsRunner
 
 
@@ -146,6 +154,7 @@ def create_app() -> FastAPI:
     app.include_router(node_types.router)
     app.include_router(links.router)
     app.include_router(expose.router)
+    app.include_router(tailscale.router)
     app.include_router(jobs.router)
     app.include_router(runs.router)
     app.include_router(meta.router)
@@ -285,6 +294,16 @@ def create_app() -> FastAPI:
             checkpoint=MODULE_JOB_CONTROLS["checkpoint"],
         )
         for kind, executor in (
+            ("tailscale.enroll", execute_tailscale_enroll_job),
+        ):
+            app.state.jobs.register_executor(
+                kind,
+                executor,
+                cancellation=JobCancellation,
+                progress=JobProgress,
+                checkpoint=JobCheckpoint,
+            )
+        for kind, executor in (
             ("node.partition", execute_partition_job),
             ("node.partition.remove", execute_partition_remove_job),
             ("node.format", execute_format_job),
@@ -342,7 +361,12 @@ def create_app() -> FastAPI:
         # stopped after host shutdown or storage-mount ordering changes.
         runtime_types = (Disks, HardwareInventory, Reboot)
         if app.state.xds is not None:
-            runtime_types += (SystemEnvoy, Service)
+            runtime_types += (
+                SystemEnvoy,
+                Service,
+                SystemTailscale,
+                TailnetExposure,
+            )
         runtime_node_set = {
             node_id
             for node_id, entry in app.state.dag.nodes.items()

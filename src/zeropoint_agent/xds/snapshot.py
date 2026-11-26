@@ -1,8 +1,10 @@
-"""Build Envoy xDS snapshots from resolved ingress routes.
+"""Build Envoy xDS snapshots from resolved local and tailnet routes.
 
-HTTP endpoints share the single machine Envoy listener on :80. Each endpoint
-gets one flat, machine-qualified `.local` VirtualHost routed to its upstream at
-`/`. TCP endpoints retain dedicated listeners.
+Local HTTP endpoints share the public listener on :80 and route by Host at
+`/`. Tailnet services enter through a loopback-only listener shared with the
+Tailscale runtime. That private listener removes an internal routing prefix and
+preserves Tailscale identity headers; public LAN routes remove those headers so
+callers cannot spoof tailnet identity.
 """
 
 from __future__ import annotations
@@ -40,17 +42,35 @@ from envoy_data_plane.google.protobuf import Any as PbAny
 HTTP_LISTENER_NAME = "http_listener"
 HTTP_ROUTES_NAME = "http_routes"
 HTTP_LISTEN_PORT = 80
+TAILNET_LISTENER_NAME = "tailnet_listener"
+TAILNET_ROUTES_NAME = "tailnet_routes"
+TAILNET_LISTEN_PORT = 18080
+
+TAILSCALE_IDENTITY_HEADERS = [
+    "tailscale-user-login",
+    "tailscale-user-name",
+    "tailscale-user-profile-pic",
+    "tailscale-app-capabilities",
+]
 
 
 @dataclass
 class ResolvedEndpoint:
-    """An Endpoint plus the resolved facts needed to build a snapshot."""
-    id: str                # graph id, stable resource discriminator
-    name: str              # flat mDNS hostname (http) or label (tcp)
-    protocol: str          # "http" | "tcp"
-    container: str         # docker DNS name on zeropoint-network (e.g. "echo-main")
-    container_port: int    # port inside the container
-    host_port: int         # only used for tcp
+    """An endpoint plus the resolved facts needed to build a snapshot."""
+    id: str
+    name: str
+    protocol: str
+    container: str
+    container_port: int
+    host_port: int
+
+
+@dataclass
+class TailnetRoute:
+    """Private ingress adaptation for one ordinary Tailscale Serve port."""
+    id: str
+    endpoint_id: str
+    path_prefix: str
 
 
 def _pack_any(msg: betterproto2.Message, type_url: str) -> PbAny:
@@ -68,18 +88,17 @@ def _socket_address(host: str, port: int) -> Address:
 
 
 def _ads_config() -> ConfigSource:
-    """ADS-pointing ConfigSource used by RDS inside the HTTP listener."""
     return ConfigSource(
         resource_api_version=ApiVersion.V3,
         ads=AggregatedConfigSource(),
     )
 
 
-def make_http_listener() -> Listener:
+def _http_listener(name: str, host: str, port: int, routes_name: str) -> Listener:
     router = Router()
     hcm = HttpConnectionManager(
         codec_type=HttpConnectionManagerCodecType.AUTO,
-        stat_prefix="http",
+        stat_prefix=name,
         request_timeout=timedelta(seconds=0),
         stream_idle_timeout=timedelta(seconds=600),
         request_headers_timeout=timedelta(seconds=300),
@@ -87,7 +106,7 @@ def make_http_listener() -> Listener:
         skip_xff_append=False,
         rds=Rds(
             config_source=_ads_config(),
-            route_config_name=HTTP_ROUTES_NAME,
+            route_config_name=routes_name,
         ),
         http_filters=[
             HttpFilter(
@@ -100,8 +119,8 @@ def make_http_listener() -> Listener:
         ],
     )
     return Listener(
-        name=HTTP_LISTENER_NAME,
-        address=_socket_address("0.0.0.0", HTTP_LISTEN_PORT),
+        name=name,
+        address=_socket_address(host, port),
         filter_chains=[
             FilterChain(
                 filters=[
@@ -119,8 +138,26 @@ def make_http_listener() -> Listener:
     )
 
 
+def make_http_listener() -> Listener:
+    return _http_listener(
+        HTTP_LISTENER_NAME,
+        "0.0.0.0",
+        HTTP_LISTEN_PORT,
+        HTTP_ROUTES_NAME,
+    )
+
+
+def make_tailnet_listener() -> Listener:
+    return _http_listener(
+        TAILNET_LISTENER_NAME,
+        "127.0.0.1",
+        TAILNET_LISTEN_PORT,
+        TAILNET_ROUTES_NAME,
+    )
+
+
 def make_tcp_listener(ep: ResolvedEndpoint) -> Listener:
-    cluster_name = _cluster_name(ep)
+    cluster_name = _cluster_name(ep.id)
     proxy = TcpProxy(
         stat_prefix=f"tcp_{ep.id}",
         cluster=cluster_name,
@@ -145,12 +182,12 @@ def make_tcp_listener(ep: ResolvedEndpoint) -> Listener:
     )
 
 
-def _cluster_name(ep: ResolvedEndpoint) -> str:
-    return f"cluster_{ep.id.replace('/', '_')}"
+def _cluster_name(endpoint_id: str) -> str:
+    return f"cluster_{endpoint_id.replace('/', '_')}"
 
 
 def make_cluster(ep: ResolvedEndpoint) -> Cluster:
-    name = _cluster_name(ep)
+    name = _cluster_name(ep.id)
     return Cluster(
         name=name,
         connect_timeout=timedelta(seconds=5),
@@ -188,10 +225,11 @@ def make_route_config(http_endpoints: List[ResolvedEndpoint]) -> RouteConfigurat
         vhosts.append(VirtualHost(
             name=endpoint.name,
             domains=[endpoint.name],
+            request_headers_to_remove=TAILSCALE_IDENTITY_HEADERS,
             routes=[Route(
                 match=RouteMatch(prefix="/"),
                 route=RouteAction(
-                    cluster=_cluster_name(endpoint),
+                    cluster=_cluster_name(endpoint.id),
                     timeout=timedelta(seconds=0),
                     idle_timeout=timedelta(seconds=300),
                 ),
@@ -200,29 +238,67 @@ def make_route_config(http_endpoints: List[ResolvedEndpoint]) -> RouteConfigurat
     return RouteConfiguration(name=HTTP_ROUTES_NAME, virtual_hosts=vhosts)
 
 
+def make_tailnet_route_config(
+    routes: List[TailnetRoute],
+    endpoints: List[ResolvedEndpoint],
+) -> RouteConfiguration:
+    endpoints_by_id = {endpoint.id: endpoint for endpoint in endpoints}
+    missing = [
+        route.endpoint_id for route in routes
+        if route.endpoint_id not in endpoints_by_id
+    ]
+    if missing:
+        raise ValueError(f"tailnet routes reference missing endpoints: {missing}")
+    ordered = sorted(routes, key=lambda route: len(route.path_prefix), reverse=True)
+    return RouteConfiguration(
+        name=TAILNET_ROUTES_NAME,
+        virtual_hosts=[VirtualHost(
+            name="tailnet_private",
+            domains=["*"],
+            routes=[
+                Route(
+                    match=RouteMatch(prefix=route.path_prefix),
+                    route=RouteAction(
+                        cluster=_cluster_name(route.endpoint_id),
+                        prefix_rewrite="/",
+                        host_rewrite_literal=endpoints_by_id[route.endpoint_id].name,
+                        timeout=timedelta(seconds=0),
+                        idle_timeout=timedelta(seconds=300),
+                    ),
+                )
+                for route in ordered
+            ],
+        )],
+    )
+
+
 @dataclass
 class Snapshot:
-    """A self-contained xDS snapshot keyed by monotonic version."""
     version: str
     listeners: List[Listener]
     routes: List[RouteConfiguration]
     clusters: List[Cluster]
 
 
-def build_snapshot(version: str, endpoints: List[ResolvedEndpoint]) -> Snapshot:
-    http = [e for e in endpoints if e.protocol == "http"]
-    tcp = [e for e in endpoints if e.protocol == "tcp"]
+def build_snapshot(
+    version: str,
+    endpoints: List[ResolvedEndpoint],
+    tailnet_routes: List[TailnetRoute] | None = None,
+) -> Snapshot:
+    http = [endpoint for endpoint in endpoints if endpoint.protocol == "http"]
+    tcp = [endpoint for endpoint in endpoints if endpoint.protocol == "tcp"]
+    private_routes = tailnet_routes or []
 
     listeners: List[Listener] = [make_http_listener()]
-    for ep in tcp:
-        listeners.append(make_tcp_listener(ep))
-
+    listeners.extend(make_tcp_listener(endpoint) for endpoint in tcp)
     routes = [make_route_config(http)]
-    clusters = [make_cluster(e) for e in (http + tcp)]
+    if private_routes:
+        listeners.append(make_tailnet_listener())
+        routes.append(make_tailnet_route_config(private_routes, http))
 
     return Snapshot(
         version=version,
         listeners=listeners,
         routes=routes,
-        clusters=clusters,
+        clusters=[make_cluster(endpoint) for endpoint in (http + tcp)],
     )
